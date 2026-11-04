@@ -1,0 +1,84 @@
+# 프로젝트 파일 구조
+
+- 작성·갱신: 2026-11-04
+- 적용 범위: 1단계 물리 시제품
+- 구성: HTML/CSS + TypeScript + Vite + Phaser 3.90 내장 Matter
+- 글꼴: `@fontsource-variable/noto-sans-kr`의 Noto Sans KR Variable을 의존성으로 포함해 로컬 제공
+
+## 1. 전체 구조
+
+```text
+LeeDamageWeb/
+├── index.html                 # 한국어 HTML 진입점, 앱 마운트, 메타 정보
+├── package.json               # 의존성 버전 및 개발·검사·빌드·테스트 명령
+├── package-lock.json          # 설치 버전 재현을 위한 npm 잠금 파일
+├── tsconfig.json              # 앱·브라우저 테스트 TypeScript 설정
+├── playwright.config.ts       # Chromium 테스트 및 개발 서버 설정
+├── .gitignore                 # 의존성·빌드·테스트 출력 제외
+├── src/
+│   ├── main.ts                # 웹 UI 생성, 버튼·단축키, 설정 전달, Phaser 시작
+│   ├── style.css              # 페이지·도구·설정 패널·반응형 레이아웃
+│   └── game/
+│       ├── config.ts          # 고정 게임 좌표, 물리 간격·속도, 공통 상태 타입
+│       ├── matter.ts          # Phaser 내장 Matter 접근 및 누락된 타입 보완
+│       ├── PhysicsScene.ts    # 방·물리 수명주기, 고정 간격 계산, 재배치·일시정지
+│       ├── Ragdoll.ts         # 신체 10개·관절 9개 생성, 검색·안정성 검사·제거
+│       ├── PointerController.ts # 신체 선택·잡기·던지기·밀치기·포인터 해제
+│       └── draw.ts            # 방 격자, 도형 인형, 잡기 연결·디버그 그리기
+├── tests/
+│   └── physics.spec.ts        # 브라우저 조작·관절·경계·반복 재배치 검증
+├── README.md                  # 설치·실행·조작·검증 방법
+├── PROJECT_STRUCTURE.md       # 이 문서
+├── PROTOTYPE_REPORT.md        # 구현 결과·검증·한계·추가 결정 사항
+├── DEV_PLAN.md                # 개발 단계·완료 기준·진행 상태
+└── GAME_PLAN.md               # 게임 기획·기술 선택·후속 범위
+```
+
+실행 후 생성되며 Git에서 제외하는 디렉터리:
+
+| 디렉터리 | 용도 |
+| --- | --- |
+| `node_modules/` | npm이 설치한 개발·게임 의존성 |
+| `dist/` | `npm run build`의 배포 가능한 정적 산출물 |
+| `test-results/` | Playwright 테스트 실행 결과·실패 정보 |
+| `playwright-report/` | HTML 리포터를 사용할 때 생성하는 보고서 |
+
+현재 이미지·음원·사진·모델 에셋 디렉터리는 없습니다. 도형은 Phaser Graphics로 그립니다. 한글 글꼴은 npm 의존성에서 가져오며 Vite가 `dist/assets/`에 함께 출력합니다. API·DB·백엔드 디렉터리도 없습니다.
+
+## 2. 실행과 데이터 흐름
+
+1. Vite가 `index.html`을 제공하고 `src/main.ts`를 불러옵니다.
+2. `main.ts`가 웹 UI와 `PhysicsScene`을 만들고 캔버스용 한글 글꼴을 준비한 뒤 Phaser를 시작합니다.
+3. `PhysicsScene.create()`가 내장 Matter 월드에 벽 4개와 `Ragdoll`을 추가합니다.
+4. `PointerController`가 화면의 포인터 좌표를 1200×700 게임 좌표로 변환합니다. CSS 크기가 바뀌어도 물리 공간은 같습니다.
+5. 잡기는 월드 연결점과 선택 신체를 잇는 임시 제약 1개를 사용합니다. 밀치기는 선택한 신체의 속도와 각속도를 조절합니다.
+6. `PhysicsScene.update()`는 누적 시간에 따라 120Hz로 물리를 계산한 뒤 `draw.ts`로 그립니다.
+7. 약 150ms마다 FPS·속도·부위 수·관절 수·잡은 부위·복구 횟수를 웹 UI로 전달합니다. 신체의 좌표는 DOM에서 관리하지 않습니다.
+8. 재배치는 잡기 제약과 기존 인형 복합체를 제거하고 인형 1개를 새로 만듭니다. 벽·이벤트 리스너는 다시 만들지 않습니다.
+
+## 3. 수정할 기능별 파일
+
+| 바꾸려는 것 | 주 파일 | 유의점 |
+| --- | --- | --- |
+| 화면 문구·버튼·단축키 | `src/main.ts` | 포커스가 있는 입력 요소의 기본 키 동작을 보호 |
+| 배치·색·화면 대응 | `src/style.css` | 캔버스 비율은 12:7 유지 |
+| 방 크기·최대 속도·물리 간격 | `src/game/config.ts` | 방의 렌더링·벽 생성 값도 함께 확인 |
+| 벽·중력·복구·시간 처리 | `src/game/PhysicsScene.ts` | Phaser의 Matter 자동 업데이트는 꺼 둔 상태 |
+| 신체 비율·질량·관절 감각 | `src/game/Ragdoll.ts` | 초기 위치와 관절 로컬 연결점을 함께 수정 |
+| 잡기 탄성·포인터 추종·밀치기 | `src/game/PointerController.ts` | 창 밖 해제·취소·도구 변경 경로에서도 제약 제거 |
+| 도형·얼굴·디버그 표시 | `src/game/draw.ts` | 그림 좌표는 해당 신체의 위치·각도를 기준으로 계산 |
+| 회귀 검증 | `tests/physics.spec.ts` | 실제 포인터 조작과 가속된 물리 반복 검증 포함 |
+
+`matter.ts`는 Phaser의 런타임 내장 Matter와 배포 타입 선언 사이의 차이만 보완합니다. 별도의 Matter 엔진이나 업데이트 루프를 추가하는 파일이 아닙니다.
+
+## 4. 다음 단계 확장 원칙
+
+- 2단계 사진 선택·보정 UI와 특징점 분석·워핑은 새 모듈로 분리하고 `main.ts`에 계산을 몰아넣지 않습니다.
+- 사진 렌더링은 `draw.ts`의 도형 머리를 대체하거나 확장하되 물리 머리의 위치·회전을 기준으로 합니다.
+- 3단계에서는 현재 임시 밀치기를 무기 정의 데이터와 명중 이벤트로 확장합니다.
+- 사진과 게임 상태 저장은 아직 없으며, 추가 시 메모리 사진과 로컬 진행 저장을 분리합니다.
+- 새로운 파일이나 디렉터리를 추가할 때 이 문서의 구조와 역할 표도 함께 갱신합니다.
+
+## 5. 개발용 진단 접근
+
+`/?diagnostics`로 열면 브라우저 자동 검증을 위한 `window.__physicsLab`에 현재 장면을 노출합니다. 일반 주소에서는 노출하지 않습니다. 테스트는 이 접근으로 몸체 수·관절 간격·복구 횟수를 읽고, 물리 반복을 빠르게 실행합니다. 일반 사용자가 보는 화면이나 저장 데이터와는 별개입니다.
