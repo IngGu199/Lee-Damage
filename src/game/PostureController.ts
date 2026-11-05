@@ -1,139 +1,99 @@
-import Phaser from "phaser";
-import { Matter } from "./matter";
-import { ROOM, type LabSettings, type PostureState } from "./config";
+import { type LabSettings, type PostureState } from "./config";
 import type { Ragdoll } from "./Ragdoll";
-import type { BodyPose } from "./SelfCollision";
+import { PoseRecovery } from "./PoseRecovery";
 
-const { Body, Vector } = Matter;
-
-/** Explicitly release the standing pose for play; recover only after genuine rest. */
+/** Input-free rest and explicit recovery cannot be kept awake by contact jitter. */
 export class PostureController {
   state: PostureState = "standing";
   quietMs = 0;
-  private elapsed = 0;
-  private origin: BodyPose[] = [];
-  private standingX = 600;
-  private responseMs = 0;
+  private inputFreeMs = 0;
   private sampleMs = 0;
-  private sample: BodyPose[] = [];
-  private moving = true;
+  private sample = { x: 0, y: 0 };
+  private travelSpeed = Infinity;
+  private readonly recovery: PoseRecovery;
 
   constructor(private readonly doll: Ragdoll) {
+    this.recovery = new PoseRecovery(doll);
     doll.setDynamic(false);
+    doll.clearMotion();
+  }
+
+  get controlsPose() {
+    return this.state !== "active";
   }
 
   interact = () => {
-    if (this.state === "standing") this.doll.setDynamic(true);
+    if (this.state !== "active") {
+      this.doll.setDynamic(true);
+      this.doll.clearMotion();
+    }
     this.state = "active";
     this.quietMs = 0;
-    this.elapsed = 0;
-    this.responseMs = 0;
+    this.inputFreeMs = 0;
     this.sampleMs = 0;
-    this.sample = this.doll.capturePose();
-    this.moving = true;
+    this.sample = this.doll.centerOfMass;
+    this.travelSpeed = Infinity;
   };
 
   beforeStep(delta: number, held: boolean, settings: LabSettings) {
-    if (held) this.interact();
-    if (this.state === "standing") return;
-    if (this.state !== "recovering") {
-      this.sampleMs += delta;
-      if (this.sampleMs >= 200) {
-        const current = this.doll.capturePose();
-        // Use observed motion, not solver velocities, which can retain contact impulses at rest.
-        this.moving = current.some(
-          (pose, index) =>
-            Math.hypot(
-              pose.x - this.sample[index].x,
-              pose.y - this.sample[index].y,
-            ) > 2.5 ||
-            Math.abs(
-              Phaser.Math.Angle.Wrap(pose.angle - this.sample[index].angle),
-            ) > 0.055,
-        );
-        this.sample = current;
-        this.sampleMs = 0;
-      }
-      if (held || this.moving) {
-        this.quietMs = 0;
-        this.state = "active";
-      } else {
-        this.quietMs += delta;
-        this.state = "waiting";
-      }
-      if (this.quietMs >= settings.idleSeconds * 1000) {
-        this.state = "recovering";
-        this.elapsed = 0;
-        this.origin = this.doll.capturePose();
-        this.standingX = Phaser.Math.Clamp(
-          this.doll.parts[1].body.position.x,
-          ROOM.left + 85,
-          ROOM.right - 85,
-        );
-      }
+    if (held) {
+      this.interact();
+      this.doll.configureLag(settings.lag);
+      this.doll.followThrough(delta, settings.lag, 1);
+      return;
     }
-    this.doll.configureLag(settings.lag);
-    if (this.state !== "recovering") {
-      this.responseMs += delta;
-      if (this.responseMs < 800)
-        this.doll.followThrough(delta, settings.lag, 1 - this.responseMs / 800);
+    if (this.state === "standing") return;
+    if (this.state === "untangling") {
+      if (this.recovery.step(delta)) {
+        this.state = "waiting";
+        this.quietMs = 0;
+      }
+      return;
+    }
+    if (this.state === "waiting") {
+      this.quietMs += delta;
+      if (this.quietMs >= settings.idleSeconds * 1000) {
+        this.recovery.stand();
+        this.state = "recovering";
+      }
+      return;
+    }
+    if (this.state === "recovering") {
+      if (this.recovery.step(delta)) {
+        this.state = "standing";
+        this.quietMs = 0;
+      }
       return;
     }
 
-    this.elapsed += delta;
-    const progress = Math.min(1, this.elapsed / 1500);
-    const blend = progress * progress * (3 - 2 * progress);
-    this.doll.parts.forEach(({ body }, index) => {
-      const from = this.origin[index],
-        pose = this.doll.standingPose[index];
-      const target = {
-        x: Phaser.Math.Linear(from.x, this.standingX + pose.x, blend),
-        y: Phaser.Math.Linear(from.y, pose.y, blend),
-      };
-      const error = Vector.sub(target, body.position);
-      // Mass-normalized spring and damping plus gravity compensation keep the rise smooth.
-      let acceleration = Vector.sub(
-        Vector.mult(error, 0.00012),
-        Vector.mult(body.velocity, 0.0035),
-      );
-      const magnitude = Vector.magnitude(acceleration);
-      if (magnitude > 0.018)
-        acceleration = Vector.mult(acceleration, 0.018 / magnitude);
-      Body.applyForce(body, body.position, {
-        x: acceleration.x * body.mass,
-        y: (acceleration.y - settings.gravity * 0.001) * body.mass,
-      });
-      const targetAngle =
-        from.angle + Phaser.Math.Angle.Wrap(-from.angle) * blend;
-      body.torque +=
-        body.inertia *
-        (Phaser.Math.Angle.Wrap(targetAngle - body.angle) * 0.00015 -
-          body.angularVelocity * 0.0035);
-    });
-  }
-
-  afterStep() {
-    if (this.state !== "recovering" || this.elapsed < 1500) return;
-    const ready = this.doll.parts.every(({ body }, index) => {
-      const pose = this.doll.standingPose[index];
-      return (
-        Math.hypot(
-          body.position.x - this.standingX - pose.x,
-          body.position.y - pose.y,
-        ) < 3 && Math.abs(Phaser.Math.Angle.Wrap(body.angle)) < 0.05
-      );
-    });
-    if (!ready) return;
-    this.doll.parts.forEach(({ body }, index) => {
-      const pose = this.doll.standingPose[index];
-      Body.setPosition(body, { x: this.standingX + pose.x, y: pose.y });
-      Body.setAngle(body, 0);
-      Body.setVelocity(body, { x: 0, y: 0 });
-      Body.setAngularVelocity(body, 0);
-    });
-    this.doll.syncAnchors();
-    this.doll.setDynamic(false);
-    this.state = "standing";
-    this.quietMs = 0;
+    this.inputFreeMs += delta;
+    this.sampleMs += delta;
+    if (this.sampleMs >= 200) {
+      const center = this.doll.centerOfMass;
+      this.travelSpeed =
+        (Math.hypot(center.x - this.sample.x, center.y - this.sample.y) *
+          1000) /
+        this.sampleMs;
+      this.sample = center;
+      this.sampleMs = 0;
+    }
+    // Quiet translation qualifies even if a trapped limb keeps rattling. Fast flight does not.
+    const settled =
+      this.inputFreeMs >= 700 &&
+      this.travelSpeed < 12 &&
+      (this.doll.grounded || settings.gravity === 0);
+    const groundedJitter =
+      this.inputFreeMs >= 1500 && this.doll.grounded && this.travelSpeed < 90;
+    if (settled || groundedJitter) {
+      if (this.doll.needsJointRepair) {
+        this.recovery.untangle();
+        this.state = "untangling";
+      } else {
+        this.doll.setDynamic(false);
+        this.doll.clearMotion();
+        this.state = "waiting";
+      }
+      this.quietMs = 0;
+    }
   }
 }

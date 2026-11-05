@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { Matter } from "./matter";
-import { MAX_SPEED, ROOM, STANDING_OFFSET_Y } from "./config";
+import { ROOM, STANDING_OFFSET_Y } from "./config";
 import {
   capturePose,
   maxOverlap,
@@ -16,6 +16,7 @@ export interface Part {
   width: number;
   height: number;
   radius?: number;
+  mass: number;
 }
 
 /** The composite belongs to Phaser's existing Matter world; no second engine. */
@@ -64,7 +65,7 @@ export class Ragdoll {
         y: y + STANDING_OFFSET_Y,
         angle: 0,
       });
-      this.parts.push({ name, body, color, width, height, radius });
+      this.parts.push({ name, body, color, width, height, radius, mass });
       Composite.add(this.composite, body);
       return body;
     };
@@ -100,7 +101,7 @@ export class Ragdoll {
         pointA,
         pointB,
         length,
-        stiffness: 0.94,
+        stiffness: 1,
         damping: 0.05,
         label: "joint",
       });
@@ -126,6 +127,53 @@ export class Ragdoll {
   }
   get maxOverlap() {
     return maxOverlap(this.bodies);
+  }
+
+  get centerOfMass() {
+    const mass = this.parts.reduce((sum, part) => sum + part.mass, 0);
+    return this.parts.reduce(
+      (center, part) => ({
+        x: center.x + (part.body.position.x * part.mass) / mass,
+        y: center.y + (part.body.position.y * part.mass) / mass,
+      }),
+      { x: 0, y: 0 },
+    );
+  }
+
+  get grounded() {
+    return this.parts.some((part) =>
+      part.body.vertices!.some((vertex) => vertex.y >= ROOM.bottom - 2),
+    );
+  }
+
+  get needsJointRepair() {
+    return (
+      this.maxJointGap > 2 ||
+      this.joints.some(
+        (joint) =>
+          Math.abs(
+            Phaser.Math.Angle.Wrap(joint.bodyB!.angle - joint.bodyA!.angle),
+          ) > 0.2,
+      )
+    );
+  }
+
+  clearMotion() {
+    for (const { body } of this.parts) {
+      Body.setVelocity(body, { x: 0, y: 0 });
+      Body.setAngularVelocity(body, 0);
+      body.force.x = body.force.y = body.torque = 0;
+      body.positionImpulse.x = body.positionImpulse.y = 0;
+      body.constraintImpulse.x = body.constraintImpulse.y = 0;
+      (body.constraintImpulse as MatterJS.Vector & { angle: number }).angle = 0;
+    }
+  }
+
+  launch(velocity: MatterJS.Vector) {
+    this.setDynamic(true);
+    this.clearMotion();
+    // A common translation preserves the pointer's momentum across the whole character.
+    for (const { body } of this.parts) Body.setVelocity(body, velocity);
   }
 
   setDynamic(dynamic: boolean) {
@@ -155,6 +203,7 @@ export class Ragdoll {
       this.followAngles[index] +=
         wrap(parent.angle - this.followAngles[index]) * alpha;
       const difference = wrap(this.followAngles[index] - child.angle);
+      if (child.isStatic) return;
       child.torque +=
         strength *
         child.inertia *
@@ -166,12 +215,44 @@ export class Ragdoll {
     return capturePose(this.bodies);
   }
 
+  poseFromAngles(angles: number[], center: MatterJS.Vector) {
+    const pose = this.parts.map((_, index) => ({
+      x: 0,
+      y: 0,
+      angle: angles[index],
+    }));
+    pose[1] = { ...center, angle: angles[1] };
+    this.joints.forEach((joint, index) => {
+      const parent = this.parts.findIndex((part) => part.body === joint.bodyA);
+      const child = this.parts.findIndex((part) => part.body === joint.bodyB);
+      const a = this.anchors[index].a,
+        b = this.anchors[index].b;
+      const gap = Vector.sub(
+        Vector.add(this.standingPose[child], b),
+        Vector.add(this.standingPose[parent], a),
+      );
+      const endpoint = Vector.add(
+        pose[parent],
+        Vector.rotate(Vector.add(a, gap), angles[parent]),
+      );
+      const position = Vector.sub(endpoint, Vector.rotate(b, angles[child]));
+      pose[child] = { ...position, angle: angles[child] };
+    });
+    return pose;
+  }
+
   finishStep(previous: ReturnType<typeof capturePose>) {
     // Never display a penetrating result, including crowded wall/limb contacts.
-    const separated = separateBodies(this.bodies);
+    const separated = separateBodies(
+      this.bodies,
+      this.bodies.some((body) => body.isStatic) ? 128 : 32,
+    );
     this.syncAnchors();
-    if (!separated || this.maxJointGap > 12) {
+    if (!separated) {
       restorePose(this.bodies, previous);
+      // The held point already follows the cursor in `previous`; clear any new
+      // contacts with the restored limbs without moving that pinned point back.
+      separateBodies(this.bodies, 512);
       this.syncAnchors();
     }
   }
@@ -200,11 +281,9 @@ export class Ragdoll {
     });
   }
 
-  limitSpeeds() {
+  limitAngularSpeed() {
     for (const { body } of this.parts) {
-      const speed = Vector.magnitude(body.velocity);
-      if (speed > MAX_SPEED)
-        Body.setVelocity(body, Vector.mult(body.velocity, MAX_SPEED / speed));
+      if (body.isStatic) continue;
       if (Math.abs(body.angularVelocity) > 0.35)
         Body.setAngularVelocity(body, Math.sign(body.angularVelocity) * 0.35);
     }
@@ -221,21 +300,19 @@ export class Ragdoll {
   }
 
   get unstable(): boolean {
-    return (
-      this.parts.some(
-        ({ body }) =>
-          !Number.isFinite(
-            body.position.x +
-              body.position.y +
-              body.angle +
-              body.velocity.x +
-              body.velocity.y,
-          ) ||
-          body.position.x < ROOM.left - 80 ||
-          body.position.x > ROOM.right + 80 ||
-          body.position.y < ROOM.top - 80 ||
-          body.position.y > ROOM.bottom + 80,
-      ) || this.maxJointGap > 95
+    return this.parts.some(
+      ({ body }) =>
+        !Number.isFinite(
+          body.position.x +
+            body.position.y +
+            body.angle +
+            body.velocity.x +
+            body.velocity.y,
+        ) ||
+        body.position.x < ROOM.left - 80 ||
+        body.position.x > ROOM.right + 80 ||
+        body.position.y < ROOM.top - 80 ||
+        body.position.y > ROOM.bottom + 80,
     );
   }
 

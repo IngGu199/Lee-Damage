@@ -13,7 +13,7 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <header class="site-header">
     <a class="brand" href="./" aria-label="Lee Damage 홈"><span class="brand-mark">L<span>↗</span></span>LEE DAMAGE<span class="brand-dot">®</span></a>
-    <div class="header-meta"><span class="status-dot"></span>개발 중인 작은 실험<span class="version">BUILD 0.2</span></div>
+    <div class="header-meta"><span class="status-dot"></span>개발 중인 작은 실험<span class="version">BUILD 0.3</span></div>
   </header>
   <main>
     <section class="intro" aria-labelledby="title">
@@ -78,6 +78,7 @@ function renderStats(stats: LabStats) {
   element("posture-status").textContent = {
     standing: "기립 상태",
     active: "물리 반응 중",
+    untangling: "꼬인 관절을 푸는 중",
     waiting: `기립까지 ${stats.idleRemaining.toFixed(1)}초`,
     recovering: "현재 위치에서 일어나는 중",
   }[stats.posture];
@@ -183,7 +184,7 @@ new Phaser.Game({
       gravity: { x: 0, y: 1 },
       positionIterations: 10,
       velocityIterations: 8,
-      constraintIterations: 8,
+      constraintIterations: 24,
       enableSleeping: false,
     },
   },

@@ -16,8 +16,6 @@ export function restorePose(bodies: MatterJS.BodyType[], pose: BodyPose[]) {
   bodies.forEach((body, index) => {
     Body.setPosition(body, pose[index]);
     Body.setAngle(body, pose[index].angle);
-    Body.setVelocity(body, Vector.mult(body.velocity, 0.5));
-    Body.setAngularVelocity(body, body.angularVelocity * 0.5);
   });
 }
 
@@ -32,8 +30,24 @@ export function maxOverlap(bodies: MatterJS.BodyType[]): number {
 }
 
 /** Matter permits contact slop. Project it out before displaying any physics step. */
-export function separateBodies(bodies: MatterJS.BodyType[]): boolean {
-  for (let iteration = 0; iteration < 32; iteration++) {
+export function separateBodies(
+  bodies: MatterJS.BodyType[],
+  iterations = 32,
+  options: {
+    moveStatic?: boolean;
+    pinned?: MatterJS.BodyType;
+    resolveVelocity?: boolean;
+  } = {},
+): boolean {
+  const weight = (body: MatterJS.BodyType) =>
+    body === options.pinned
+      ? 0
+      : body.isStatic
+        ? options.moveStatic
+          ? 1
+          : 0
+        : body.inverseMass;
+  for (let iteration = 0; iteration < iterations; iteration++) {
     let touched = false;
     for (let a = 0; a < bodies.length; a++)
       for (let b = a + 1; b < bodies.length; b++) {
@@ -42,17 +56,46 @@ export function separateBodies(bodies: MatterJS.BodyType[]): boolean {
         touched = true;
         const first: MatterJS.BodyType = hit.bodyA,
           second: MatterJS.BodyType = hit.bodyB;
-        const total = first.inverseMass + second.inverseMass;
+        const massA = weight(first),
+          massB = weight(second);
+        const total = massA + massB;
         if (!total) continue;
-        const distance = hit.depth + 0.35;
+        const distance = hit.depth + 0.001;
         Body.translate(
           first,
-          Vector.mult(hit.normal, (distance * first.inverseMass) / total),
+          Vector.mult(hit.normal, (distance * massA) / total),
         );
         Body.translate(
           second,
-          Vector.mult(hit.normal, (-distance * second.inverseMass) / total),
+          Vector.mult(hit.normal, (-distance * massB) / total),
         );
+        if (options.resolveVelocity !== false) {
+          const relative = Vector.sub(first.velocity, second.velocity);
+          const closing = relative.x * hit.normal.x + relative.y * hit.normal.y;
+          if (closing < 0) {
+            const bounce =
+              closing < -1
+                ? Math.max(first.restitution, second.restitution)
+                : 0;
+            const impulse = (-(1 + bounce) * closing) / total;
+            if (massA)
+              Body.setVelocity(
+                first,
+                Vector.add(
+                  first.velocity,
+                  Vector.mult(hit.normal, impulse * massA),
+                ),
+              );
+            if (massB)
+              Body.setVelocity(
+                second,
+                Vector.sub(
+                  second.velocity,
+                  Vector.mult(hit.normal, impulse * massB),
+                ),
+              );
+          }
+        }
       }
     for (const body of bodies) {
       const vertices = body.vertices!;
@@ -74,6 +117,18 @@ export function separateBodies(bodies: MatterJS.BodyType[]): boolean {
         Math.max(0, bounds.max.y - ROOM.bottom + 0.5);
       if (dx || dy) {
         Body.translate(body, { x: dx, y: dy });
+        if (!body.isStatic && options.resolveVelocity !== false) {
+          const velocity = { ...body.velocity };
+          if (dx * velocity.x < 0)
+            velocity.x =
+              Math.abs(velocity.x) < 1 ? 0 : -velocity.x * body.restitution;
+          if (dy * velocity.y < 0)
+            velocity.y =
+              Math.abs(velocity.y) < 1 ? 0 : -velocity.y * body.restitution;
+          Body.setVelocity(body, velocity);
+          body.positionImpulse.x = 0;
+          body.positionImpulse.y = 0;
+        }
         touched = true;
       }
     }

@@ -3,6 +3,9 @@ import { Matter } from "./matter";
 import {
   DEFAULT_SETTINGS,
   FIXED_STEP,
+  REFERENCE_STEP,
+  MAX_TRAVEL_PER_SUBSTEP,
+  MAX_SUBSTEPS,
   ROOM,
   type LabSettings,
   type LabStats,
@@ -88,20 +91,20 @@ export class PhysicsScene extends Phaser.Scene {
   };
 
   setTool(tool: Tool) {
-    this.pointer.release();
+    this.pointer.cancel();
     this.pointer.tool = tool;
     this.game.canvas.dataset.tool = tool;
   }
 
   setPaused(value: boolean) {
-    this.pointer.release();
+    this.pointer.cancel();
     this.paused = value;
     this.accumulator = 0;
     this.publishStats();
   }
 
   reset() {
-    this.pointer.release();
+    this.pointer.cancel();
     this.doll.destroy();
     // Clear obsolete collision pairs before repeatedly recreating the doll.
     Matter.Engine.clear(this.matter.world.engine);
@@ -125,18 +128,42 @@ export class PhysicsScene extends Phaser.Scene {
       // Drop excess elapsed time after a stall rather than run an unbounded catch-up.
       this.accumulator += Math.min(delta, 50);
       while (this.accumulator >= FIXED_STEP) {
-        this.posture.beforeStep(
-          FIXED_STEP,
-          Boolean(this.pointer.grip),
-          this.settings,
+        const speed = Math.max(
+          ...this.doll.parts.map((part) =>
+            part.body.isStatic
+              ? 0
+              : Math.hypot(part.body.velocity.x, part.body.velocity.y),
+          ),
         );
-        this.pointer.step();
-        this.doll.limitSpeeds();
-        const previous = this.doll.capturePose();
-        this.matter.world.step(FIXED_STEP);
-        this.doll.finishStep(previous);
-        this.doll.limitSpeeds();
-        this.posture.afterStep();
+        const slices = this.pointer.grip
+          ? 1
+          : Math.min(
+              MAX_SUBSTEPS,
+              Math.max(
+                1,
+                Math.ceil(
+                  (speed * FIXED_STEP) /
+                    REFERENCE_STEP /
+                    MAX_TRAVEL_PER_SUBSTEP,
+                ),
+              ),
+            );
+        const step = FIXED_STEP / slices;
+        for (let slice = 0; slice < slices; slice++) {
+          this.posture.beforeStep(
+            step,
+            Boolean(this.pointer.grip),
+            this.settings,
+          );
+          this.pointer.step();
+          if (!this.posture.controlsPose) {
+            this.doll.limitAngularSpeed();
+            const previous = this.doll.capturePose();
+            this.matter.world.step(step);
+            this.doll.finishStep(previous);
+            this.doll.limitAngularSpeed();
+          }
+        }
         this.accumulator -= FIXED_STEP;
       }
       if (this.doll.unstable) {

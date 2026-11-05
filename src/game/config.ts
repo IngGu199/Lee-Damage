@@ -7,9 +7,16 @@ export const ROOM = {
   bottom: 650,
 };
 export const FIXED_STEP = 1000 / 120;
-export const MAX_SPEED = 24;
+export const REFERENCE_STEP = 1000 / 60;
+export const MAX_TRAVEL_PER_SUBSTEP = 6;
+export const MAX_SUBSTEPS = 64;
 export const STANDING_OFFSET_Y = 124;
-export type PostureState = "standing" | "active" | "waiting" | "recovering";
+export type PostureState =
+  | "standing"
+  | "active"
+  | "untangling"
+  | "waiting"
+  | "recovering";
 export type Tool = "grab" | "push";
 export interface LabSettings {
   gravity: number;
