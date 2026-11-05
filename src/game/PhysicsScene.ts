@@ -56,7 +56,7 @@ export class PhysicsScene extends Phaser.Scene {
     drawRoom(this);
     this.graphics = this.add.graphics();
     this.doll = new Ragdoll(this.matter.world, this.settings.bounce);
-    this.posture = new PostureController(this.doll);
+    this.posture = new PostureController(this.doll, this.settings.experiment);
     const canvas = this.game.canvas;
     canvas.tabIndex = 0;
     canvas.setAttribute(
@@ -71,6 +71,7 @@ export class PhysicsScene extends Phaser.Scene {
       (point) => this.flash(point),
       () => this.posture.interact(),
     );
+    this.pointer.experiment = this.settings.experiment;
     window.addEventListener("blur", this.blur, { signal: this.abort.signal });
     document.addEventListener("visibilitychange", this.visibility, {
       signal: this.abort.signal,
@@ -109,13 +110,16 @@ export class PhysicsScene extends Phaser.Scene {
     // Clear obsolete collision pairs before repeatedly recreating the doll.
     Matter.Engine.clear(this.matter.world.engine);
     this.doll = new Ragdoll(this.matter.world, this.settings.bounce);
-    this.posture = new PostureController(this.doll);
+    this.posture = new PostureController(this.doll, this.settings.experiment);
     this.accumulator = 0;
     this.publishStats();
   }
 
   configure(settings: LabSettings) {
+    if (this.settings.experiment !== settings.experiment) this.pointer.cancel();
     this.settings = { ...settings };
+    this.pointer.experiment = settings.experiment;
+    this.posture.setExperiment(settings.experiment);
     this.matter.world.setGravity(0, settings.gravity);
     this.doll.setBounce(settings.bounce);
     this.doll.configureLag(settings.lag);
@@ -200,6 +204,8 @@ export class PhysicsScene extends Phaser.Scene {
     const world = this.matter.world
       .localWorld as unknown as MatterJS.CompositeType;
     return {
+      experiment: this.settings.experiment,
+      alignmentRemaining: this.posture.alignmentRemaining(this.settings.repairSeconds),
       fps: Math.round(this.game.loop.actualFps),
       speed: Math.round(
         Math.max(...this.doll.parts.map((part) => part.body.speed)) * 60,

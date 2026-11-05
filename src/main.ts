@@ -6,6 +6,7 @@ import {
   DEFAULT_SETTINGS,
   ROOM,
   type LabStats,
+  type PhysicsExperiment,
   type Tool,
 } from "./game/config";
 
@@ -34,19 +35,21 @@ app.innerHTML = `
       </section>
       <aside class="lab-panel" aria-label="실험 설정">
         <div class="panel-heading"><h2>실험 노트</h2><span>LAB NOTES</span></div>
-        <p class="panel-copy">실험 1 · 놓은 뒤 자기 충돌 해제<br>기립할 때 관절을 정렬하고 다시 켭니다.</p>
+        <div class="setting experiment-setting"><label for="experiment">실험 방식</label><select id="experiment"><option value="1">1 · 놓은 뒤 충돌 해제</option><option value="2" selected>2 · N초 뒤 관절 정렬</option></select></div>
+        <p class="panel-copy" id="experiment-description">실험 2 · 움직이는 중에도 설정 시간 뒤<br>몸통 기준으로 관절을 정렬합니다.</p>
         <div class="setting"><label for="gravity">중력 <output id="gravity-value">1.0×</output></label><input id="gravity" type="range" min="0" max="2" step="0.1" value="1"><div class="range-labels"><span>둥실둥실</span><span>묵직하게</span></div></div>
         <div class="setting"><label for="bounce">탄성 <output id="bounce-value">55%</output></label><input id="bounce" type="range" min="0" max="0.95" step="0.05" value="0.55"><div class="range-labels"><span>툭</span><span>통통</span></div></div>
         <div class="setting"><label for="strength">밀치는 힘 <output id="strength-value">1.0×</output></label><input id="strength" type="range" min="0.3" max="2" step="0.1" value="1"><div class="range-labels"><span>살짝</span><span>힘껏</span></div></div>
         <div class="setting"><label for="throwScale">던지기 강도 <output id="throwScale-value">35%</output></label><input id="throwScale" type="range" min="0" max="1.5" step="0.05" value="0.35"><div class="range-labels"><span>0% · 던지기 없음</span><span>150%</span></div></div>
-        <p class="panel-copy" id="repair-policy">관절 복구: 기립할 때 함께 정렬합니다.</p>
+        <div class="setting" id="alignment-setting"><label for="repairSeconds">관절 정렬 대기 <output id="repairSeconds-value">1.5초</output></label><input id="repairSeconds" type="range" min="1" max="2" step="0.1" value="1.5"><div class="range-labels"><span>마지막 조작 후 1초</span><span>2초</span></div></div>
+        <p class="panel-copy" id="repair-policy">현재 몸통 위치·방향과 이동 벡터를 유지하며 정렬합니다.</p>
         <div class="setting"><label for="lag">관절 지연 <output id="lag-value">65%</output></label><input id="lag" type="range" min="0" max="1" step="0.05" value="0.65"><div class="range-labels"><span>빠른 추종</span><span>느린 추종</span></div></div>
         <div class="setting"><label for="idleSeconds">기립 대기 <output id="idleSeconds-value">3초</output></label><input id="idleSeconds" type="range" min="1" max="8" step="0.5" value="3"><div class="range-labels"><span>1초</span><span>8초</span></div></div>
         <label class="debug-toggle"><span>관절·물리 표시<small>연결점과 이동 방향 보기</small></span><input id="debug" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
-        <div class="telemetry"><div class="telemetry-title"><span class="status-dot"></span> LIVE TELEMETRY</div><div class="metrics"><div><strong id="fps">—</strong><span>FPS</span></div><div><strong id="speed">0</strong><span>최대 속도 · px/s</span></div></div><div class="metric-detail"><span>신체 <b id="bodies">10</b> / 관절 <b id="joints">9</b></span><span>120 Hz</span></div><p id="self-collision-status">자기 충돌 ON</p><p id="posture-status">기립 상태</p><p id="recovery-status">안정성 복구 0회</p></div>
+        <div class="telemetry"><div class="telemetry-title"><span class="status-dot"></span> LIVE TELEMETRY</div><div class="metrics"><div><strong id="fps">—</strong><span>FPS</span></div><div><strong id="speed">0</strong><span>최대 속도 · px/s</span></div></div><div class="metric-detail"><span>신체 <b id="bodies">10</b> / 관절 <b id="joints">9</b></span><span>120 Hz</span></div><p id="self-collision-status">자기 충돌 ON</p><p id="alignment-status">조작 후 관절 정렬 대기</p><p id="posture-status">기립 상태</p><p id="recovery-status">안정성 복구 0회</p></div>
       </aside>
     </div>
-    <section class="instructions" aria-label="조작 방법"><div><span class="instruction-number">01</span><p><strong>잡고, 흔들고</strong><span>잡고 있는 동안 신체끼리 충돌해요.</span></p></div><div><span class="instruction-number">02</span><p><strong>손을 놓으면, 휙</strong><span>놓으면 자기 충돌을 끄고 벽·바닥과 부딪혀요.</span></p></div><div><span class="instruction-number">03</span><p><strong>쉬면 다시 일어나요</strong><span>기립할 때 관절 정렬 후 자기 충돌을 다시 켜요.</span></p></div></section>
+    <section class="instructions" aria-label="조작 방법"><div><span class="instruction-number">01</span><p><strong>잡고, 흔들고</strong><span>잡고 있는 동안 신체끼리 충돌해요.</span></p></div><div><span class="instruction-number">02</span><p><strong>손을 놓으면, 휙</strong><span id="release-instruction">놓은 뒤에도 신체·벽·바닥과 계속 부딪혀요.</span></p></div><div><span class="instruction-number">03</span><p><strong>쉬면 다시 일어나요</strong><span id="alignment-instruction">N초 뒤 관절 정렬, 잠잠해지면 현재 위치에서 기립해요.</span></p></div></section>
     <p id="notice" role="status" aria-live="polite"></p>
     <footer class="page-footer"><span>아직은 도형이지만, 움직임부터 제대로.</span><span>PHYSICS FIRST. FUN FOLLOWS.</span></footer>
   </main>`;
@@ -69,6 +72,23 @@ function selectTool(tool: Tool) {
     });
 }
 
+function renderExperiment() {
+  const timed = settings.experiment === 2;
+  element("experiment-description").textContent = timed
+    ? "실험 2 · 이동 중에도 설정 시간 뒤 몸통 기준으로 관절을 정렬합니다."
+    : "실험 1 · 놓으면 자기 충돌을 끄고, 기립 완료 후 다시 켭니다.";
+  element("alignment-setting").hidden = !timed;
+  element("repair-policy").textContent = timed
+    ? "현재 몸통 위치·방향과 이동 벡터를 유지하며 정렬합니다."
+    : "관절 복구: 기립할 때 함께 정렬합니다.";
+  element("release-instruction").textContent = timed
+    ? "놓은 뒤에도 신체·벽·바닥과 계속 부딪혀요."
+    : "놓으면 자기 충돌을 끄고 벽·바닥과 부딪혀요.";
+  element("alignment-instruction").textContent = timed
+    ? "N초 뒤 관절 정렬, 잠잠해지면 현재 위치에서 기립해요."
+    : "기립할 때 관절 정렬 후 자기 충돌을 다시 켜요.";
+}
+
 function renderStats(stats: LabStats) {
   element("fps").textContent = String(stats.fps);
   element("speed").textContent = String(stats.speed);
@@ -79,11 +99,17 @@ function renderStats(stats: LabStats) {
   element("self-collision-status").textContent = stats.selfCollision
     ? "자기 충돌 ON"
     : "자기 충돌 OFF · 벽·바닥 충돌 유지";
+  element("alignment-status").hidden = stats.experiment !== 2;
+  element("alignment-status").textContent = stats.alignmentRemaining !== null
+    ? `관절 정렬까지 ${stats.alignmentRemaining.toFixed(1)}초`
+    : stats.posture === "untangling"
+      ? "이동을 유지하며 관절 정렬 중"
+      : "다음 조작 후 관절 정렬";
   element("recovery-status").textContent = `안정성 복구 ${stats.recoveries}회`;
   element("posture-status").textContent = {
     standing: "기립 상태",
     active: "물리 반응 중",
-    untangling: "꼬인 관절을 푸는 중",
+    untangling: stats.experiment === 2 ? "몸통 기준으로 관절 정렬 중" : "꼬인 관절을 푸는 중",
     waiting: `기립까지 ${stats.idleRemaining.toFixed(1)}초`,
     recovering: "현재 위치에서 일어나는 중",
   }[stats.posture];
@@ -112,6 +138,7 @@ scene.onReady = () => {
   app.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
     button.disabled = false;
   });
+  scene.configure(settings);
   selectTool("grab");
 };
 
@@ -130,18 +157,26 @@ element("reset").addEventListener("click", () => {
   scene.reset();
   element("notice").textContent = "인형을 처음 위치로 재배치했습니다.";
 });
+element<HTMLSelectElement>("experiment").addEventListener("change", (event) => {
+  settings.experiment = Number((event.target as HTMLSelectElement).value) as PhysicsExperiment;
+  renderExperiment();
+  if (ready) scene.configure(settings);
+});
+renderExperiment();
+
 for (const key of [
   "gravity",
   "bounce",
   "strength",
   "idleSeconds",
+  "repairSeconds",
   "throwScale",
   "lag",
 ] as const) {
   element<HTMLInputElement>(key).addEventListener("input", (event) => {
     settings[key] = Number((event.target as HTMLInputElement).value);
     element(`${key}-value`).textContent =
-      key === "idleSeconds"
+      key === "idleSeconds" || key === "repairSeconds"
         ? `${settings[key]}초`
         : key === "bounce" || key === "lag" || key === "throwScale"
           ? `${Math.round(settings[key] * 100)}%`

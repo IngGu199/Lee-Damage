@@ -14,6 +14,8 @@ export const STANDING_OFFSET_Y = 124;
 export const REST_SPEED = 12; // px/s, includes rotational motion at each part's edge
 export const REST_CONFIRM_MS = 300;
 export const REST_OBSERVATION_MS = 200;
+export const TORSO_ALIGNMENT_MS = 600;
+export type PhysicsExperiment = 1 | 2;
 export type PostureState =
   | "standing"
   | "active"
@@ -22,6 +24,7 @@ export type PostureState =
   | "recovering";
 export type Tool = "grab" | "push";
 export interface LabSettings {
+  experiment: PhysicsExperiment;
   gravity: number;
   bounce: number;
   strength: number;
@@ -32,6 +35,8 @@ export interface LabSettings {
   lag: number;
 }
 export interface LabStats {
+  experiment: PhysicsExperiment;
+  alignmentRemaining: number | null;
   fps: number;
   speed: number;
   bodies: number;
@@ -46,6 +51,7 @@ export interface LabStats {
   selfCollision: boolean;
 }
 export const DEFAULT_SETTINGS: LabSettings = {
+  experiment: 2,
   gravity: 1,
   bounce: 0.55,
   strength: 1,

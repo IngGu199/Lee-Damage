@@ -219,6 +219,13 @@ export class Ragdoll {
       Body.setVelocity(body, { x: 0, y: 0 });
       Body.setAngularVelocity(body, 0);
       body.force.x = body.force.y = body.torque = 0;
+    }
+    this.clearCorrectionImpulses();
+  }
+
+  /** Clear pose-solver warm starts without changing forces or movement vectors. */
+  clearCorrectionImpulses() {
+    for (const { body } of this.parts) {
       body.positionImpulse.x = body.positionImpulse.y = 0;
       body.constraintImpulse.x = body.constraintImpulse.y = 0;
       (body.constraintImpulse as MatterJS.Vector & { angle: number }).angle = 0;

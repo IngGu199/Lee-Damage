@@ -1,13 +1,16 @@
 import {
+  DEFAULT_SETTINGS,
   REST_CONFIRM_MS,
   REST_OBSERVATION_MS,
   REST_SPEED,
   type LabSettings,
+  type PhysicsExperiment,
   type PostureState,
 } from "./config";
 import type { Ragdoll } from "./Ragdoll";
 import { PoseRecovery } from "./PoseRecovery";
 import { JointRepair } from "./JointRepair";
+import { TorsoAlignment } from "./TorsoAlignment";
 
 /** Joint repair and the standing countdown keep free physics running until the rise. */
 export class PostureController {
@@ -19,11 +22,17 @@ export class PostureController {
   private observedSpeed: number | null = null;
   private readonly recovery: PoseRecovery;
   private readonly jointRepair: JointRepair;
+  private readonly torsoAlignment: TorsoAlignment;
+  private alignmentPending = false;
   private repairCooldown = 0;
 
-  constructor(private readonly doll: Ragdoll) {
+  constructor(
+    private readonly doll: Ragdoll,
+    private experiment: PhysicsExperiment = DEFAULT_SETTINGS.experiment,
+  ) {
     this.recovery = new PoseRecovery(doll);
     this.jointRepair = new JointRepair(doll);
+    this.torsoAlignment = new TorsoAlignment(doll);
     this.previousPose = doll.capturePose();
     doll.setDynamic(false);
     doll.clearMotion();
@@ -35,6 +44,7 @@ export class PostureController {
 
   interact = () => {
     this.jointRepair.cancel();
+    this.torsoAlignment.cancel();
     if (this.controlsPose) {
       this.doll.setDynamic(true);
       this.doll.clearMotion();
@@ -42,11 +52,27 @@ export class PostureController {
     this.state = "active";
     this.quietMs = 0;
     this.inputFreeMs = 0;
+    this.alignmentPending = this.experiment === 2;
     this.repairCooldown = 0;
     this.settledMs = 0;
     this.previousPose = this.doll.capturePose();
     this.observedSpeed = null;
   };
+
+  setExperiment(experiment: PhysicsExperiment) {
+    if (this.experiment === experiment) return;
+    this.jointRepair.cancel();
+    this.torsoAlignment.cancel();
+    this.experiment = experiment;
+    if (this.state !== "standing") this.interact();
+    this.doll.setSelfCollision(experiment === 2 || this.state === "standing");
+  }
+
+  alignmentRemaining(delaySeconds: number): number | null {
+    return this.experiment === 2 && this.alignmentPending
+      ? Math.max(0, delaySeconds - this.inputFreeMs / 1000)
+      : null;
+  }
 
   beforeStep(delta: number, held: boolean, settings: LabSettings) {
     if (held) {
@@ -68,7 +94,21 @@ export class PostureController {
     this.inputFreeMs += delta;
     this.repairCooldown = Math.max(0, this.repairCooldown - delta);
     if (this.state === "untangling") return;
+    if (this.experiment === 2 && this.alignmentPending) {
+      // A deadline, not a rest or angle threshold. Even a nearly straight,
+      // airborne or rapidly moving doll must run this alignment once per input.
+      if (this.inputFreeMs >= settings.repairSeconds * 1000) {
+        this.alignmentPending = false;
+        this.torsoAlignment.begin();
+        this.state = "untangling";
+      } else {
+        this.state = "active";
+      }
+      this.settledMs = this.quietMs = 0;
+      return;
+    }
     if (
+      this.experiment === 1 &&
       this.doll.selfCollisionEnabled &&
       this.inputFreeMs >= settings.repairSeconds * 1000 &&
       this.repairCooldown === 0
@@ -86,7 +126,9 @@ export class PostureController {
       this.inputFreeMs >= 700 &&
       (this.observedSpeed ?? this.doll.motionSpeed) < REST_SPEED &&
       (this.doll.grounded || settings.gravity === 0) &&
-      (!this.doll.selfCollisionEnabled || this.doll.twistedJoints.length === 0);
+      (this.experiment === 2 ||
+        !this.doll.selfCollisionEnabled ||
+        this.doll.twistedJoints.length === 0);
     if (!resting) {
       this.state = "active";
       this.settledMs = this.quietMs = 0;
@@ -108,10 +150,15 @@ export class PostureController {
   }
 
   afterStep(delta: number) {
-    if (this.state === "untangling" && this.jointRepair.step(delta)) {
-      this.state = "active";
-      this.repairCooldown = 300;
-      this.settledMs = this.quietMs = 0;
+    if (this.state === "untangling") {
+      const done = this.experiment === 2
+        ? this.torsoAlignment.step(delta)
+        : this.jointRepair.step(delta);
+      if (done) {
+        this.state = "active";
+        this.repairCooldown = 300;
+        this.settledMs = this.quietMs = 0;
+      }
     }
     // Solver velocities can include contact correction that was projected away.
     // Measure actual per-part travel and rotation, rather than just the net center shift.

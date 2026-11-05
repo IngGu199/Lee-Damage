@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { Matter } from "./matter";
-import { DEFAULT_SETTINGS, ROOM, type Tool } from "./config";
+import { DEFAULT_SETTINGS, ROOM, type PhysicsExperiment, type Tool } from "./config";
 import { PointerVelocity } from "./PointerVelocity";
 import type { Ragdoll } from "./Ragdoll";
 
@@ -13,6 +13,7 @@ export class PointerController {
   grabbed: string | null = null;
   target = { x: 600, y: 300 };
   strength = 1;
+  experiment: PhysicsExperiment = DEFAULT_SETTINGS.experiment;
   throwScale = DEFAULT_SETTINGS.throwScale;
   private pointerId: number | null = null;
   private lastPush = -Infinity;
@@ -200,7 +201,7 @@ export class PointerController {
       const bounce = body.restitution;
       Body.setStatic(body, false);
       body.restitution = bounce;
-      this.doll().setSelfCollision(false);
+      this.doll().setSelfCollision(this.experiment === 2);
       if (throwBody)
         this.doll().launch(Vector.mult(this.motion.at(time), this.throwScale));
       else Body.setVelocity(body, { x: 0, y: 0 });
