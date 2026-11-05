@@ -1,6 +1,12 @@
 import Phaser from "phaser";
 import { Matter } from "./matter";
-import { MAX_SPEED, ROOM } from "./config";
+import { MAX_SPEED, ROOM, STANDING_OFFSET_Y } from "./config";
+import {
+  capturePose,
+  maxOverlap,
+  restorePose,
+  separateBodies,
+} from "./SelfCollision";
 
 const { Bodies, Body, Composite, Constraint, Vector, Query } = Matter;
 export interface Part {
@@ -17,12 +23,15 @@ export class Ragdoll {
   readonly composite = Composite.create({ label: "ragdoll" });
   readonly parts: Part[] = [];
   readonly joints: MatterJS.ConstraintType[] = [];
+  readonly standingPose: { x: number; y: number; angle: number }[] = [];
+  private readonly inertia: number[] = [];
+  private readonly followAngles: number[] = [];
+  private readonly anchors: { a: MatterJS.Vector; b: MatterJS.Vector }[] = [];
 
   constructor(
     private readonly world: Phaser.Physics.Matter.World,
-    bounce: number,
+    private bounce: number,
   ) {
-    const group = Body.nextGroup(true);
     const part = (
       name: string,
       x: number,
@@ -35,29 +44,36 @@ export class Ragdoll {
     ) => {
       const options = {
         label: name,
-        collisionFilter: { group, category: 1, mask: 0xffffffff },
+        collisionFilter: { group: 0, category: 1, mask: 0xffffffff },
         restitution: bounce,
         friction: 0.35,
         frictionStatic: 0.65,
-        frictionAir: 0.012,
+        frictionAir: 0.018,
+        slop: 0,
       };
       const body = radius
-        ? Bodies.circle(x, y, radius, options)
-        : Bodies.rectangle(x, y, width, height, {
+        ? Bodies.circle(x, y + STANDING_OFFSET_Y, radius + 2, options)
+        : Bodies.rectangle(x, y + STANDING_OFFSET_Y, width, height, {
             ...options,
             chamfer: { radius: 11 },
           });
       Body.setMass(body, mass);
+      this.inertia.push(body.inertia);
+      this.standingPose.push({
+        x: x - 600,
+        y: y + STANDING_OFFSET_Y,
+        angle: 0,
+      });
       this.parts.push({ name, body, color, width, height, radius });
       Composite.add(this.composite, body);
       return body;
     };
     const head = part("머리", 600, 205, 72, 72, 0xe8bd8b, 2.3, 36);
     const torso = part("몸통", 600, 302, 68, 110, 0xc4dc77, 4.5);
-    const upperLeft = part("왼쪽 위팔", 549, 291, 27, 66, 0xc4dc77, 1);
-    const lowerLeft = part("왼쪽 아래팔", 545, 360, 25, 63, 0xe8bd8b, 0.8);
-    const upperRight = part("오른쪽 위팔", 651, 291, 27, 66, 0xc4dc77, 1);
-    const lowerRight = part("오른쪽 아래팔", 655, 360, 25, 63, 0xe8bd8b, 0.8);
+    const upperLeft = part("왼쪽 위팔", 543, 291, 27, 66, 0xc4dc77, 1);
+    const lowerLeft = part("왼쪽 아래팔", 539, 360, 25, 63, 0xe8bd8b, 0.8);
+    const upperRight = part("오른쪽 위팔", 657, 291, 27, 66, 0xc4dc77, 1);
+    const lowerRight = part("오른쪽 아래팔", 661, 360, 25, 63, 0xe8bd8b, 0.8);
     const thighLeft = part("왼쪽 허벅지", 580, 404, 30, 80, 0x687e91, 1.7);
     const shinLeft = part("왼쪽 종아리", 580, 486, 27, 76, 0x91a4b0, 1.2);
     const thighRight = part("오른쪽 허벅지", 620, 404, 30, 80, 0x687e91, 1.7);
@@ -84,14 +100,16 @@ export class Ragdoll {
         pointA,
         pointB,
         length,
-        stiffness: 0.96,
-        damping: 0.16,
+        stiffness: 0.94,
+        damping: 0.05,
         label: "joint",
       });
       this.joints.push(link);
+      this.anchors.push({ a: { ...pointA }, b: { ...pointB } });
+      this.followAngles.push(a.angle);
       Composite.add(this.composite, link);
     };
-    joint(head, torso, 0, 34, 0, -53);
+    joint(torso, head, 0, -53, 0, 36);
     joint(torso, upperLeft, -32, -40, 0, -29);
     joint(torso, upperRight, 32, -40, 0, -29);
     joint(upperLeft, lowerLeft, 0, 30, 0, -28);
@@ -103,6 +121,70 @@ export class Ragdoll {
     world.add(this.composite);
   }
 
+  get bodies() {
+    return this.parts.map((part) => part.body);
+  }
+  get maxOverlap() {
+    return maxOverlap(this.bodies);
+  }
+
+  setDynamic(dynamic: boolean) {
+    for (const { body } of this.parts) {
+      Body.setStatic(body, !dynamic);
+      if (dynamic) body.restitution = this.bounce;
+    }
+    this.followAngles.forEach((_, index) => {
+      this.followAngles[index] = this.joints[index].bodyA!.angle;
+    });
+  }
+
+  configureLag(lag: number) {
+    this.parts.forEach(({ body }, index) => {
+      // Keep lengths firm; extra rotational inertia produces follow-through instead of stretching.
+      if (!body.isStatic)
+        Body.setInertia(body, this.inertia[index] * (1 + lag * 1.8));
+    });
+  }
+
+  followThrough(delta: number, lag: number, strength: number) {
+    const alpha = 1 - Math.exp(-delta / (45 + lag * 180));
+    this.joints.forEach((joint, index) => {
+      const parent = joint.bodyA!,
+        child = joint.bodyB!;
+      const wrap = Phaser.Math.Angle.Wrap;
+      this.followAngles[index] +=
+        wrap(parent.angle - this.followAngles[index]) * alpha;
+      const difference = wrap(this.followAngles[index] - child.angle);
+      child.torque +=
+        strength *
+        child.inertia *
+        (difference * 0.000025 - child.angularVelocity * 0.00012);
+    });
+  }
+
+  capturePose() {
+    return capturePose(this.bodies);
+  }
+
+  finishStep(previous: ReturnType<typeof capturePose>) {
+    // Never display a penetrating result, including crowded wall/limb contacts.
+    const separated = separateBodies(this.bodies);
+    this.syncAnchors();
+    if (!separated || this.maxJointGap > 12) {
+      restorePose(this.bodies, previous);
+      this.syncAnchors();
+    }
+  }
+
+  syncAnchors() {
+    this.joints.forEach((joint, index) => {
+      joint.pointA = Vector.rotate(this.anchors[index].a, joint.bodyA!.angle);
+      joint.pointB = Vector.rotate(this.anchors[index].b, joint.bodyB!.angle);
+      joint.angleA = joint.bodyA!.angle;
+      joint.angleB = joint.bodyB!.angle;
+    });
+  }
+
   at(point: MatterJS.Vector): Part | undefined {
     const hits = Query.point(
       this.parts.map((part) => part.body),
@@ -112,6 +194,7 @@ export class Ragdoll {
   }
 
   setBounce(value: number) {
+    this.bounce = value;
     this.parts.forEach((part) => {
       part.body.restitution = value;
     });

@@ -32,7 +32,7 @@ export function drawRoom(scene: Phaser.Scene) {
     })
     .setOrigin(1, 0);
   scene.add
-    .text(600, 605, "잡아서 위로 들어 보세요", {
+    .text(600, 110, "잡아서 위로 들어 보세요", {
       fontFamily: '"Noto Sans KR Variable", sans-serif',
       fontSize: "20px",
       color: "#a2ab96",
@@ -77,7 +77,13 @@ export function drawDoll(
         .lineBetween(a.x, a.y, b.x, b.y)
         .lineBetween(b.x, b.y, c.x, c.y);
     } else {
-      g.fillPoints(body.vertices!, true).strokePoints(body.vertices!, true);
+      // Inset the visual outline inside the collision polygon, so contact never overlays outlines.
+      const insetScale = 1 - 3 / Math.min(part.width, part.height);
+      const outline = body.vertices!.map((vertex) => ({
+        x: body.position.x + (vertex.x - body.position.x) * insetScale,
+        y: body.position.y + (vertex.y - body.position.y) * insetScale,
+      }));
+      g.fillPoints(outline, true).strokePoints(outline, true);
     }
     if (debug) {
       g.lineStyle(1, 0xe98360).strokePoints(body.vertices!, true);

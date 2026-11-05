@@ -11,11 +11,13 @@ import {
 import { Ragdoll } from "./Ragdoll";
 import { PointerController } from "./PointerController";
 import { drawDoll, drawRoom } from "./draw";
+import { PostureController } from "./PostureController";
 
 export class PhysicsScene extends Phaser.Scene {
   settings: LabSettings = { ...DEFAULT_SETTINGS };
   doll!: Ragdoll;
   pointer!: PointerController;
+  posture!: PostureController;
   paused = false;
   recoveries = 0;
   private accumulator = 0;
@@ -51,6 +53,7 @@ export class PhysicsScene extends Phaser.Scene {
     drawRoom(this);
     this.graphics = this.add.graphics();
     this.doll = new Ragdoll(this.matter.world, this.settings.bounce);
+    this.posture = new PostureController(this.doll);
     const canvas = this.game.canvas;
     canvas.tabIndex = 0;
     canvas.setAttribute(
@@ -63,6 +66,7 @@ export class PhysicsScene extends Phaser.Scene {
       () => this.doll,
       () => this.paused,
       (point) => this.flash(point),
+      () => this.posture.interact(),
     );
     window.addEventListener("blur", this.blur, { signal: this.abort.signal });
     document.addEventListener("visibilitychange", this.visibility, {
@@ -102,6 +106,7 @@ export class PhysicsScene extends Phaser.Scene {
     // Clear obsolete collision pairs before repeatedly recreating the doll.
     Matter.Engine.clear(this.matter.world.engine);
     this.doll = new Ragdoll(this.matter.world, this.settings.bounce);
+    this.posture = new PostureController(this.doll);
     this.accumulator = 0;
     this.publishStats();
   }
@@ -110,6 +115,7 @@ export class PhysicsScene extends Phaser.Scene {
     this.settings = { ...settings };
     this.matter.world.setGravity(0, settings.gravity);
     this.doll.setBounce(settings.bounce);
+    this.doll.configureLag(settings.lag);
     this.pointer.strength = settings.strength;
   }
 
@@ -119,10 +125,18 @@ export class PhysicsScene extends Phaser.Scene {
       // Drop excess elapsed time after a stall rather than run an unbounded catch-up.
       this.accumulator += Math.min(delta, 50);
       while (this.accumulator >= FIXED_STEP) {
+        this.posture.beforeStep(
+          FIXED_STEP,
+          Boolean(this.pointer.grip),
+          this.settings,
+        );
         this.pointer.step();
         this.doll.limitSpeeds();
+        const previous = this.doll.capturePose();
         this.matter.world.step(FIXED_STEP);
+        this.doll.finishStep(previous);
         this.doll.limitSpeeds();
+        this.posture.afterStep();
         this.accumulator -= FIXED_STEP;
       }
       if (this.doll.unstable) {
@@ -167,6 +181,12 @@ export class PhysicsScene extends Phaser.Scene {
       paused: this.paused,
       recoveries: this.recoveries,
       maxJointGap: this.doll.maxJointGap,
+      maxOverlap: this.doll.maxOverlap,
+      posture: this.posture.state,
+      idleRemaining: Math.max(
+        0,
+        this.settings.idleSeconds - this.posture.quietMs / 1000,
+      ),
     };
   }
 

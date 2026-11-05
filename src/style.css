@@ -362,10 +362,10 @@ canvas[data-tool="push"] {
   font-size: 11px;
   line-height: 1.9;
   color: #7b8373;
-  margin: 13px 0 26px;
+  margin: 13px 0 20px;
 }
 .setting {
-  margin-bottom: 24px;
+  margin-bottom: 12px;
 }
 .setting label {
   display: flex;
@@ -375,7 +375,7 @@ canvas[data-tool="push"] {
   font-weight: 500;
 }
 .setting output {
-  font: 12px monospace;
+  font: 12px "Noto Sans KR Variable", monospace;
   color: #526b32;
   background: #e1e7d4;
   border-radius: 5px;
@@ -383,7 +383,7 @@ canvas[data-tool="push"] {
 }
 input[type="range"] {
   width: 100%;
-  margin: 16px 0 8px;
+  margin: 12px 0 6px;
   accent-color: #637d3f;
   height: 4px;
   cursor: pointer;
@@ -489,7 +489,7 @@ input[type="range"] {
   gap: 10px;
   border-top: 1px solid #cfd6c2;
   padding-top: 11px;
-  font: 9px monospace;
+  font: 9px "Noto Sans KR Variable", monospace;
   color: #7c886e;
 }
 .metric-detail b {
@@ -586,7 +586,7 @@ input[type="range"] {
     display: none;
   }
   .setting {
-    margin-bottom: 20px;
+    margin-bottom: 12px;
   }
   .panel-copy {
     margin-bottom: 20px;

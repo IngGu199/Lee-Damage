@@ -22,6 +22,7 @@ export class PointerController {
     private readonly doll: () => Ragdoll,
     private readonly paused: () => boolean,
     private readonly onPush: (point: MatterJS.Vector) => void,
+    private readonly onInteract: () => void,
   ) {
     const options = { signal: this.abort.signal };
     canvas.addEventListener("pointerdown", this.down, options);
@@ -59,6 +60,7 @@ export class PointerController {
     if (this.tool === "push") {
       if (performance.now() - this.lastPush < 100) return;
       this.lastPush = performance.now();
+      this.onInteract();
       // Push away from the clicked side, with enough lift to leave the floor.
       const direction = Vector.normalise({
         x: part.body.position.x - point.x || (point.x < 600 ? 1 : -1),
@@ -82,6 +84,7 @@ export class PointerController {
       this.onPush(point);
       return;
     }
+    this.onInteract();
     this.pointerId = event.pointerId;
     this.canvas.setPointerCapture(event.pointerId);
     this.target = point;
@@ -113,6 +116,14 @@ export class PointerController {
     // Slew the anchor so a cursor teleport cannot tear apart the joints.
     const movement = length > 18 ? Vector.mult(delta, 18 / length) : delta;
     this.grip.pointA = Vector.add(this.grip.pointA, movement);
+    const attachment = Vector.add(this.grip.bodyB!.position, this.grip.pointB);
+    const stretch = Vector.sub(this.grip.pointA, attachment);
+    const distance = Vector.magnitude(stretch);
+    if (distance > 45)
+      this.grip.pointA = Vector.add(
+        attachment,
+        Vector.mult(stretch, 45 / distance),
+      );
   }
 
   release = () => {
