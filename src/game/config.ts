@@ -11,6 +11,9 @@ export const REFERENCE_STEP = 1000 / 60;
 export const MAX_TRAVEL_PER_SUBSTEP = 6;
 export const MAX_SUBSTEPS = 64;
 export const STANDING_OFFSET_Y = 124;
+export const REST_SPEED = 12; // px/s, includes rotational motion at each part's edge
+export const REST_CONFIRM_MS = 300;
+export const REST_OBSERVATION_MS = 200;
 export type PostureState =
   | "standing"
   | "active"
@@ -24,6 +27,8 @@ export interface LabSettings {
   strength: number;
   debug: boolean;
   idleSeconds: number;
+  repairSeconds: number;
+  throwScale: number;
   lag: number;
 }
 export interface LabStats {
@@ -38,6 +43,7 @@ export interface LabStats {
   maxOverlap: number;
   posture: PostureState;
   idleRemaining: number;
+  selfCollision: boolean;
 }
 export const DEFAULT_SETTINGS: LabSettings = {
   gravity: 1,
@@ -45,5 +51,7 @@ export const DEFAULT_SETTINGS: LabSettings = {
   strength: 1,
   debug: false,
   idleSeconds: 3,
+  repairSeconds: 1.5,
+  throwScale: 0.35,
   lag: 0.65,
 };

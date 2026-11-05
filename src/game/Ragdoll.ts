@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { Matter } from "./matter";
-import { ROOM, STANDING_OFFSET_Y } from "./config";
+import { REFERENCE_STEP, ROOM, STANDING_OFFSET_Y } from "./config";
 import {
   capturePose,
   maxOverlap,
@@ -28,6 +28,8 @@ export class Ragdoll {
   private readonly inertia: number[] = [];
   private readonly followAngles: number[] = [];
   private readonly anchors: { a: MatterJS.Vector; b: MatterJS.Vector }[] = [];
+  private readonly nonCollidingGroup = Body.nextGroup(true);
+  private selfCollision = true;
 
   constructor(
     private readonly world: Phaser.Physics.Matter.World,
@@ -129,6 +131,21 @@ export class Ragdoll {
     return maxOverlap(this.bodies);
   }
 
+  get selfCollisionEnabled() {
+    return this.selfCollision;
+  }
+
+  setSelfCollision(enabled: boolean) {
+    if (enabled === this.selfCollision) return;
+    this.selfCollision = enabled;
+    for (const { body } of this.parts) {
+      // A shared negative group disables only collisions within this doll.
+      // Room walls keep group 0, so their collisions remain enabled.
+      body.collisionFilter.group = enabled ? 0 : this.nonCollidingGroup;
+      body.positionImpulse.x = body.positionImpulse.y = 0;
+    }
+  }
+
   get centerOfMass() {
     const mass = this.parts.reduce((sum, part) => sum + part.mass, 0);
     return this.parts.reduce(
@@ -146,15 +163,54 @@ export class Ragdoll {
     );
   }
 
-  get needsJointRepair() {
-    return (
-      this.maxJointGap > 2 ||
-      this.joints.some(
-        (joint) =>
-          Math.abs(
-            Phaser.Math.Angle.Wrap(joint.bodyB!.angle - joint.bodyA!.angle),
-          ) > 0.2,
-      )
+  get motionSpeed() {
+    return Math.max(...this.parts.map(({ body, width, height, radius }) => {
+      const reach = radius ? radius + 2 : Math.hypot(width, height) / 2;
+      return (
+        Math.hypot(body.velocity.x, body.velocity.y) +
+        Math.abs(body.angularVelocity) * reach
+      ) * 1000 / REFERENCE_STEP;
+    }));
+  }
+
+  motionSpeedSince(previous: ReturnType<typeof capturePose>, delta: number) {
+    return Math.max(...this.parts.map(({ body, width, height, radius }, index) => {
+      const reach = radius ? radius + 2 : Math.hypot(width, height) / 2;
+      const translation = Math.hypot(
+        body.position.x - previous[index].x, body.position.y - previous[index].y,
+      );
+      const rotation = Math.abs(
+        Phaser.Math.Angle.Wrap(body.angle - previous[index].angle),
+      ) * reach;
+      return (translation + rotation) * 1000 / delta;
+    }));
+  }
+
+  get twistedJoints() {
+    // Ordinary bent elbows/knees are valid. Only a joint folded back beyond 120° qualifies.
+    return this.joints.flatMap((joint, index) =>
+      Math.abs(Phaser.Math.Angle.Wrap(joint.bodyB!.angle - joint.bodyA!.angle)) >
+      (Math.PI * 2) / 3
+        ? [index]
+        : [],
+    );
+  }
+
+  jointChildPosition(index: number, angle: number) {
+    const joint = this.joints[index],
+      parent = this.parts.findIndex((part) => part.body === joint.bodyA),
+      child = this.parts.findIndex((part) => part.body === joint.bodyB),
+      { a, b } = this.anchors[index];
+    const gap = Vector.sub(
+      Vector.add(this.standingPose[child], b),
+      Vector.add(this.standingPose[parent], a),
+    );
+    return Vector.sub(
+      Vector.add(
+        joint.bodyA!.position,
+        Vector.rotate(Vector.add(a, gap), joint.bodyA!.angle),
+      ),
+      Vector.rotate(b, angle),
     );
   }
 
@@ -242,17 +298,22 @@ export class Ragdoll {
   }
 
   finishStep(previous: ReturnType<typeof capturePose>) {
-    // Never display a penetrating result, including crowded wall/limb contacts.
-    const separated = separateBodies(
+    // Only project body overlaps while self-collision is enabled; room bounds always apply.
+    const options = { selfCollision: this.selfCollisionEnabled };
+    let separated = separateBodies(
       this.bodies,
       this.bodies.some((body) => body.isStatic) ? 128 : 32,
+      options,
     );
+    // Crowded floor contacts often need more iterations. Continue the current
+    // solution before considering a rollback, or every frame can restore the same pose.
+    if (!separated) separated = separateBodies(this.bodies, 512, options);
     this.syncAnchors();
     if (!separated) {
       restorePose(this.bodies, previous);
       // The held point already follows the cursor in `previous`; clear any new
       // contacts with the restored limbs without moving that pinned point back.
-      separateBodies(this.bodies, 512);
+      separateBodies(this.bodies, 512, options);
       this.syncAnchors();
     }
   }

@@ -159,7 +159,8 @@ test("repeated resets and aggressive throws keep body counts, room bounds and jo
       if (i % 30 === 20) scene.pointer.release();
       scene.update(0, 1000 / 60);
       maxGap = Math.max(maxGap, scene.doll.maxJointGap);
-      overlap = Math.max(overlap, scene.doll.maxOverlap);
+      if (scene.doll.selfCollisionEnabled)
+        overlap = Math.max(overlap, scene.doll.maxOverlap);
       escaped ||= scene.doll.parts.some(
         ({ body }) =>
           body.position.x < 20 ||
@@ -208,6 +209,9 @@ test("push tool, settings, keyboard shortcuts and resized canvas coordinates wor
   await page.locator("#strength").fill("1.8");
   await page.locator("#idleSeconds").fill("4.5");
   await page.locator("#lag").fill("0.9");
+  await page.getByLabel("던지기 강도").fill("0.7");
+  await expect(page.locator("#repair-policy")).toContainText("기립할 때");
+  await expect(page.locator("#throwScale-value")).toHaveText("70%");
   await page.getByRole("switch").check();
   const settings = await page.evaluate(() => window.__physicsLab.settings);
   expect(settings).toEqual({
@@ -216,6 +220,8 @@ test("push tool, settings, keyboard shortcuts and resized canvas coordinates wor
     strength: 1.8,
     debug: true,
     idleSeconds: 4.5,
+    repairSeconds: 1.5,
+    throwScale: 0.7,
     lag: 0.9,
   });
   await page.locator("canvas").focus();
@@ -506,21 +512,25 @@ test("a fast flick releases a moving dynamic body and holding still releases wit
   await page.evaluate(() => {
     const s = window.__physicsLab;
     s.configure({ ...s.settings, gravity: 0 });
+    // Observe release before the next physics frame can alter it through contact.
+    const canvas = document.querySelector("canvas")!;
+    canvas.addEventListener("pointerup", () => {
+      const body = s.doll.parts[0].body;
+      canvas.dataset.releaseResult = JSON.stringify({
+        dynamic: !body.isStatic,
+        velocity: { ...body.velocity },
+        joints: s.snapshot().joints,
+      });
+    });
   });
   const head = await partPosition(page, "머리");
   await page.mouse.move(head.x, head.y);
   await page.mouse.down();
   await page.mouse.move(head.x + 180, head.y - 30, { steps: 8 });
   await page.mouse.up();
-  const thrown = await page.evaluate(() => {
-    const s = window.__physicsLab,
-      body = s.doll.parts[0].body;
-    return {
-      dynamic: !body.isStatic,
-      velocity: { ...body.velocity },
-      joints: s.snapshot().joints,
-    };
-  });
+  const thrown = await page.evaluate(() =>
+    JSON.parse(document.querySelector("canvas")!.dataset.releaseResult!),
+  );
   expect(thrown.dynamic).toBe(true);
   expect(thrown.velocity.x).toBeGreaterThan(1);
   expect(thrown.joints).toBe(9);
@@ -532,95 +542,86 @@ test("a fast flick releases a moving dynamic body and holding still releases wit
   await page.waitForTimeout(160);
   await page.mouse.up();
   const stopped = await page.evaluate(
-    () => window.__physicsLab.doll.parts[0].body.velocity.x,
+    () => JSON.parse(document.querySelector("canvas")!.dataset.releaseResult!).velocity.x,
   );
   expect(Math.abs(stopped)).toBeLessThan(0.5);
 });
 
-test("idle repairs a reversed joint without spinning the torso and the resting pose never jitters", async ({
-  page,
-}) => {
+test("input-only delay untwists just the affected joint without an extraction path", async ({ page }) => {
   await openLab(page);
   const result = await page.evaluate(() => {
     const s = window.__physicsLab;
-    s.configure({ ...s.settings, idleSeconds: 8 });
+    s.configure({ ...s.settings, gravity: 0, repairSeconds: 1.5, idleSeconds: 8 });
     s.posture.interact();
     const arm = s.doll.parts[3].body;
+    s.matter.body.setPosition(arm, { x: 450, y: 380 });
     s.matter.body.setAngle(arm, Math.PI);
+    // A normal bend elsewhere must survive this local repair.
+    s.matter.body.setAngle(s.doll.parts[5].body, 0.6);
+    s.doll.parts.forEach(({ body }) => s.matter.body.setVelocity(body, { x: 12, y: -3 }));
     s.doll.syncAnchors();
-    let reference: number | null = null,
-      overlap = 0,
-      repaired = false;
-    for (let i = 0; i < 1200; i++) {
-      s.update(0, 1000 / 60);
-      overlap = Math.max(overlap, s.doll.maxOverlap);
-      if (reference === null && s.posture.state === "untangling")
-        reference = s.doll.parts[1].body.angle;
-      if (s.posture.state === "waiting") {
-        repaired = true;
-        break;
-      }
-    }
-    const pose = s.doll.capturePose();
-    const torsoAngle = s.doll.parts[1].body.angle;
-    const relativeAngles = s.doll.joints.map((joint) =>
-      Math.atan2(
-        Math.sin(joint.bodyB!.angle - joint.bodyA!.angle),
-        Math.cos(joint.bodyB!.angle - joint.bodyA!.angle),
-      ),
-    );
-    for (let i = 0; i < 180; i++) {
-      s.update(0, 1000 / 60);
+    const before = s.doll.capturePose();
+    for (let i = 0; i < 149; i++) s.posture.beforeStep(10, false, s.settings);
+    const beforeDeadline = s.posture.state;
+    s.posture.beforeStep(10, false, s.settings);
+    const onDeadline = s.posture.state;
+    const initialConnection = s.doll.jointChildPosition(3, arm.angle);
+    const initialGap = { x: arm.position.x - initialConnection.x, y: arm.position.y - initialConnection.y };
+    let pathError = 0, overlap = 0;
+    for (let i = 0; i < 95; i++) {
+      s.posture.afterStep(10);
+      const progress = Math.min(1, (i + 1) / 90);
+      const blend = progress * progress * (3 - 2 * progress);
+      const connection = s.doll.jointChildPosition(3, arm.angle);
+      // The first 200ms are clear of other bodies; later contact may project the limb.
+      if (i < 20) pathError = Math.max(pathError, Math.hypot(
+        arm.position.x - connection.x - initialGap.x * (1 - blend),
+        arm.position.y - connection.y - initialGap.y * (1 - blend),
+      ));
       overlap = Math.max(overlap, s.doll.maxOverlap);
     }
     return {
-      repaired,
-      reference,
-      torsoAngle,
-      relativeAngles,
-      pose,
-      after: s.doll.capturePose(),
-      overlap,
-      speed: s.snapshot().speed,
-      state: s.posture.state,
-      recoveries: s.recoveries,
+      beforeDeadline, onDeadline, pathError, overlap,
+      before, after: s.doll.capturePose(), state: s.posture.state,
+      velocities: s.doll.parts.map(({ body }) => ({ ...body.velocity })),
+      dynamic: s.doll.parts.every(({ body }) => !body.isStatic),
+      relative: arm.angle - s.doll.parts[2].body.angle,
+      stiffness: s.doll.joints[3].stiffness,
     };
   });
-  expect(result.repaired).toBe(true);
-  expect(result.reference).not.toBeNull();
-  expect(
-    Math.abs(
-      Math.atan2(
-        Math.sin(result.torsoAngle - result.reference!),
-        Math.cos(result.torsoAngle - result.reference!),
-      ),
-    ),
-  ).toBeLessThan(0.001);
-  expect(result.relativeAngles.every((angle) => Math.abs(angle) < 0.001)).toBe(
-    true,
-  );
-  expect(result.after).toEqual(result.pose);
-  expect(result.speed).toBe(0);
-  expect(result.state).toBe("waiting");
+  expect(result.beforeDeadline).toBe("active");
+  expect(result.onDeadline).toBe("untangling");
+  expect(result.state).toBe("active");
+  expect(result.pathError).toBeLessThan(0.001);
+  expect(result.relative).toBeCloseTo(0.45, 5);
+  expect(result.dynamic).toBe(true);
+  expect(result.stiffness).toBe(1);
   expect(result.overlap).toBe(0);
-  expect(result.recoveries).toBe(0);
+  result.after.forEach((pose, index) => {
+    if (index !== 3) expect(pose).toEqual(result.before[index]);
+    expect(result.velocities[index].x).toBeCloseTo(12);
+    expect(result.velocities[index].y).toBeCloseTo(-3);
+  });
 });
 
 test("release preserves pointer direction and magnitude across the whole doll, including the next airborne frame", async ({
   page,
 }) => {
   await openLab(page);
-  for (const { scale, direction, coalesced } of [
-    { scale: 1, direction: 1, coalesced: false },
-    { scale: 2, direction: 1, coalesced: false },
-    { scale: 1, direction: -1, coalesced: false },
-    { scale: 1, direction: 1, coalesced: true },
+  for (const { scale, direction, coalesced, throwScale } of [
+    { scale: 1, direction: 1, coalesced: false, throwScale: 1 },
+    { scale: 1, direction: 1, coalesced: false, throwScale: 0.35 },
+    { scale: 1, direction: 1, coalesced: false, throwScale: 0 },
+    { scale: 1, direction: 1, coalesced: false, throwScale: 1.5 },
+    { scale: 2, direction: 1, coalesced: false, throwScale: 1 },
+    { scale: 1, direction: -1, coalesced: false, throwScale: 1 },
+    { scale: 1, direction: 1, coalesced: true, throwScale: 1 },
   ]) {
-    await page.evaluate(() => {
+    await page.evaluate((throwScale) => {
       const s = window.__physicsLab;
       s.reset();
-      s.configure({ ...s.settings, gravity: 0 });
-    });
+      s.configure({ ...s.settings, gravity: 0, throwScale });
+    }, throwScale);
     const head = await partPosition(page, "머리");
     await page.mouse.move(head.x, head.y);
     await page.mouse.down();
@@ -699,11 +700,11 @@ test("release preserves pointer direction and magnitude across the whole doll, i
       { scale, direction, coalesced },
     );
     for (const velocity of result.velocities) {
-      expect(velocity.x).toBeCloseTo(100 * scale * direction);
-      expect(velocity.y).toBeCloseTo(-50 * scale);
+      expect(velocity.x).toBeCloseTo(100 * scale * direction * throwScale);
+      expect(velocity.y).toBeCloseTo(-50 * scale * throwScale);
     }
-    expect(result.dx).toBeCloseTo(100 * scale * direction, 5);
-    expect(result.dy).toBeCloseTo(-50 * scale, 5);
+    expect(result.dx).toBeCloseTo(100 * scale * direction * throwScale, 5);
+    expect(result.dy).toBeCloseTo(-50 * scale * throwScale, 5);
     expect(result.overlap).toBe(0);
     expect(result.held).toBeNull();
     await page.mouse.up();
@@ -719,8 +720,8 @@ test("grabbing interrupts joint repair and wakes all limbs immediately", async (
     s.posture.interact();
     s.matter.body.setAngle(s.doll.parts[3].body, Math.PI);
     s.doll.syncAnchors();
-    for (let i = 0; i < 900 && s.posture.state !== "untangling"; i++)
-      s.update(0, 1000 / 60);
+    for (let i = 0; i < 200 && s.posture.state !== "untangling"; i++)
+      s.posture.beforeStep(10, false, s.settings);
   });
   expect(await page.evaluate(() => window.__physicsLab.posture.state)).toBe(
     "untangling",
@@ -790,4 +791,249 @@ test("floor projection stops inward contact velocity and high-speed throws canno
   expect(result.recoveries).toBe(0);
   expect(result.floorVelocity).toBe(0);
   expect(result.bottom).toBeLessThanOrEqual(650);
+});
+
+test("repair delay is adjustable, new input restarts it, and ordinary bends are left alone", async ({ page }) => {
+  await openLab(page);
+  const results = await page.evaluate(() => {
+    const s = window.__physicsLab;
+    return [1, 2].map((repairSeconds) => {
+      s.reset();
+      s.configure({ ...s.settings, gravity: 0, repairSeconds });
+      s.posture.interact();
+      const arm = s.doll.parts[3].body;
+      s.matter.body.setAngle(arm, Math.PI);
+      for (let i = 0; i < repairSeconds * 100 - 1; i++) s.posture.beforeStep(10, false, s.settings);
+      const before = s.posture.state;
+      s.posture.interact();
+      for (let i = 0; i < repairSeconds * 100 - 1; i++) s.posture.beforeStep(10, false, s.settings);
+      const restarted = s.posture.state;
+      s.posture.beforeStep(10, false, s.settings);
+      const after = s.posture.state;
+      const detachedStiffness = s.doll.joints[3].stiffness;
+      s.posture.interact();
+      const restoredStiffness = s.doll.joints[3].stiffness;
+      s.matter.body.setAngle(arm, 0.8);
+      const pose = s.doll.capturePose();
+      for (let i = 0; i < 250; i++) s.posture.beforeStep(10, false, s.settings);
+      return { before, restarted, after, detachedStiffness, restoredStiffness,
+        unchanged: JSON.stringify(pose) === JSON.stringify(s.doll.capturePose()),
+        state: s.posture.state, twisted: s.doll.twistedJoints };
+    });
+  });
+  for (const result of results) {
+    expect(result.before).toBe("active");
+    expect(result.restarted).toBe("active");
+    expect(result.after).toBe("untangling");
+    expect(result.detachedStiffness).toBe(0);
+    expect(result.restoredStiffness).toBe(1);
+    expect(result.unchanged).toBe(true);
+    expect(result.twisted).toEqual([]);
+    expect(result.state).not.toBe("untangling");
+  }
+});
+
+test("airborne repair keeps the physics running and a repaired shoulder carries its forearm only", async ({ page }) => {
+  await openLab(page);
+  const result = await page.evaluate(() => {
+    const s = window.__physicsLab;
+    s.configure({ ...s.settings, gravity: 0, repairSeconds: 1 });
+    s.posture.interact();
+    // A disconnected, reversed shoulder represents a branch trapped after a fast drag.
+    const upper = s.doll.parts[2].body, lower = s.doll.parts[3].body;
+    s.doll.parts.forEach(({ body }) => {
+      s.matter.body.translate(body, { x: 0, y: -120 });
+      body.frictionAir = 0;
+      s.matter.body.setVelocity(body, { x: 4, y: -1 });
+    });
+    s.matter.body.setPosition(upper, { x: 430, y: 270 });
+    s.matter.body.setAngle(upper, Math.PI);
+    s.matter.body.setPosition(lower, { x: 430, y: 201 });
+    s.matter.body.setAngle(lower, Math.PI + 0.5);
+    s.doll.syncAnchors();
+    for (let i = 0; i < 100; i++) s.posture.beforeStep(10, false, s.settings);
+    const triggered = s.posture.state;
+    const before = s.doll.capturePose();
+    const forearmBend = lower.angle - upper.angle;
+    for (let i = 0; i < 90; i++) s.posture.afterStep(10);
+    const local = s.doll.capturePose();
+    const finalBend = lower.angle - upper.angle;
+    const center = s.doll.centerOfMass;
+    s.update(0, 1000 / 60);
+    return { triggered, before, local, forearmBend, finalBend,
+      moved: Math.hypot(s.doll.centerOfMass.x - center.x, s.doll.centerOfMass.y - center.y),
+      dynamic: s.doll.parts.every(({ body }) => !body.isStatic),
+      overlap: s.doll.maxOverlap, state: s.posture.state, recoveries: s.recoveries };
+  });
+  expect(result.triggered).toBe("untangling");
+  expect(result.finalBend).toBeCloseTo(result.forearmBend, 5);
+  result.local.forEach((pose, index) => {
+    if (index !== 2 && index !== 3) expect(pose).toEqual(result.before[index]);
+  });
+  expect(result.moved).toBeGreaterThan(1);
+  expect(result.dynamic).toBe(true);
+  expect(result.overlap).toBe(0);
+  expect(result.state).toBe("active");
+  expect(result.recoveries).toBe(0);
+});
+
+test("local arm and leg repairs finish during continuous airborne physics without freezing or overlap", async ({ page }) => {
+  await openLab(page);
+  const results = await page.evaluate(() => {
+    const s = window.__physicsLab;
+    return [3, 2, 7].map((index) => {
+      s.reset();
+      s.configure({ ...s.settings, gravity: 0, repairSeconds: 1 });
+      s.posture.interact();
+      s.doll.parts.forEach(({ body }) => {
+        s.matter.body.translate(body, { x: 0, y: -100 });
+        body.frictionAir = 0;
+        s.matter.body.setVelocity(body, { x: 3, y: -1 });
+      });
+      s.matter.body.setAngle(s.doll.parts[index].body, Math.PI);
+      if (index === 3) s.matter.body.setPosition(s.doll.parts[index].body, { x: 450, y: 330 });
+      if (index === 2) {
+        s.matter.body.setPosition(s.doll.parts[2].body, { x: 430, y: 270 });
+        s.matter.body.setAngle(s.doll.parts[3].body, Math.PI + 0.5);
+        s.matter.body.setPosition(s.doll.parts[3].body, { x: 430, y: 201 });
+      }
+      s.doll.syncAnchors();
+      for (let i = 0; i < 100; i++) s.posture.beforeStep(10, false, s.settings);
+      const triggered = s.posture.state;
+      const center = s.doll.centerOfMass;
+      let overlap = 0, frozen = false;
+      for (let i = 0; i < 150; i++) {
+        s.update(0, 1000 / 120);
+        overlap = Math.max(overlap, s.doll.maxOverlap);
+        frozen ||= s.doll.parts.some(({ body }) => body.isStatic);
+        if (s.posture.state === "active") break;
+      }
+      return { triggered, overlap, frozen, state: s.posture.state,
+        dx: s.doll.centerOfMass.x - center.x, twisted: s.doll.twistedJoints,
+        recoveries: s.recoveries };
+    });
+  });
+  for (const result of results) {
+    expect(result.triggered).toBe("untangling");
+    expect(result.state).toBe("active");
+    expect(result.dx).toBeGreaterThan(100);
+    expect(result.frozen).toBe(false);
+    expect(result.twisted).toEqual([]);
+    expect(result.overlap).toBe(0);
+    expect(result.recoveries).toBe(0);
+  }
+});
+
+test("grounded sliding and rotation around a still center never freeze the ragdoll", async ({ page }) => {
+  await openLab(page);
+  const results = await page.evaluate(() => {
+    const s = window.__physicsLab;
+    return ["sliding", "rotating"].map((mode) => {
+      s.reset();
+      s.configure({ ...s.settings, gravity: mode === "rotating" ? 0 : 1 });
+      s.posture.interact();
+      if (mode === "rotating")
+        s.doll.parts.forEach(({ body }) => s.matter.body.translate(body, { x: 0, y: -100 }));
+      const origin = s.doll.capturePose(), center = s.doll.centerOfMass;
+      let frozen = false, lostMotion = false;
+      for (let i = 1; i <= 200; i++) {
+        const angle = i * 0.01;
+        s.doll.parts.forEach(({ body }, index) => {
+          if (mode === "sliding") {
+            s.matter.body.setPosition(body, { x: origin[index].x + i * 0.6, y: origin[index].y });
+            s.matter.body.setVelocity(body, { x: 1, y: 0 });
+          } else {
+            const dx = origin[index].x - center.x, dy = origin[index].y - center.y;
+            s.matter.body.setPosition(body, {
+              x: center.x + dx * Math.cos(angle) - dy * Math.sin(angle),
+              y: center.y + dx * Math.sin(angle) + dy * Math.cos(angle),
+            });
+            s.matter.body.setAngle(body, angle);
+            s.matter.body.setAngularVelocity(body, 1 / 60);
+          }
+        });
+        s.doll.syncAnchors();
+        s.posture.beforeStep(10, false, s.settings);
+        frozen ||= s.doll.parts.some(({ body }) => body.isStatic);
+        lostMotion ||= s.doll.parts.some(({ body }) =>
+          mode === "sliding" ? body.velocity.x === 0 : body.angularVelocity === 0);
+      }
+      return { mode, frozen, lostMotion, state: s.posture.state, quiet: s.posture.quietMs };
+    });
+  });
+  for (const result of results) {
+    expect(result.frozen, result.mode).toBe(false);
+    expect(result.lostMotion, result.mode).toBe(false);
+    expect(result.state).toBe("active");
+    expect(result.quiet).toBe(0);
+  }
+});
+
+test("waiting keeps simulating, and renewed motion cancels the standing countdown", async ({ page }) => {
+  await openLab(page);
+  const result = await page.evaluate(() => {
+    const s = window.__physicsLab;
+    s.configure({ ...s.settings, gravity: 0, idleSeconds: 3 });
+    s.posture.interact();
+    s.doll.parts.forEach(({ body }) => {
+      s.matter.body.translate(body, { x: 0, y: -100 });
+      body.frictionAir = 0;
+    });
+    // Begin observation at the prepared airborne pose, after fixture placement.
+    s.posture.interact();
+    for (let i = 0; i < 120; i++) s.update(0, 10);
+    const waiting = s.posture.state;
+    const dynamic = s.doll.parts.every(({ body }) => !body.isStatic);
+    const before = s.doll.centerOfMass;
+    s.doll.parts.forEach(({ body }) => s.matter.body.setVelocity(body, { x: 0.02, y: 0 }));
+    s.update(0, 1000 / 60);
+    const drift = s.doll.centerOfMass.x - before.x;
+    s.doll.parts.forEach(({ body }) => s.matter.body.setVelocity(body, { x: 1, y: 0 }));
+    s.update(0, 1000 / 60);
+    return { waiting, dynamic, drift, state: s.posture.state, quiet: s.posture.quietMs,
+      speed: s.doll.parts[1].body.velocity.x, overlap: s.doll.maxOverlap };
+  });
+  expect(result.waiting).toBe("waiting");
+  expect(result.dynamic).toBe(true);
+  expect(result.drift).toBeCloseTo(0.02, 5);
+  expect(result.state).toBe("active");
+  expect(result.quiet).toBe(0);
+  expect(result.speed).toBeGreaterThan(0.9);
+  expect(result.overlap).toBe(0);
+});
+
+test("crowded floor contacts continue solving instead of replaying a frozen pose", async ({ page }) => {
+  await openLab(page);
+  const result = await page.evaluate(() => {
+    const s = window.__physicsLab;
+    s.configure({ ...s.settings, idleSeconds: 8 });
+    s.posture.interact();
+    s.doll.capturePose().forEach((pose, index) => {
+      s.matter.body.setPosition(s.doll.parts[index].body, {
+        x: 800 - (pose.y - 426), y: 550 + (pose.x - 600),
+      });
+      s.matter.body.setAngle(s.doll.parts[index].body, Math.PI / 2);
+    });
+    s.doll.syncAnchors();
+    let previous = s.doll.capturePose(), stationary = 0, maxStationary = 0;
+    let overlap = 0, staticDuringPhysics = false;
+    for (let i = 0; i < 240; i++) {
+      s.update(0, 1000 / 60);
+      const pose = s.doll.capturePose();
+      const moved = pose.some((point, index) =>
+        Math.hypot(point.x - previous[index].x, point.y - previous[index].y) > 0.000001 ||
+        Math.abs(point.angle - previous[index].angle) > 0.000001);
+      if (!moved && s.doll.motionSpeed > 20) stationary++;
+      else stationary = 0;
+      maxStationary = Math.max(maxStationary, stationary);
+      staticDuringPhysics ||= s.doll.parts.some(({ body }) => body.isStatic);
+      overlap = Math.max(overlap, s.doll.maxOverlap);
+      previous = pose;
+    }
+    return { maxStationary, staticDuringPhysics, overlap, recoveries: s.recoveries };
+  });
+  expect(result.maxStationary).toBeLessThan(6);
+  expect(result.staticDuringPhysics).toBe(false);
+  expect(result.overlap).toBe(0);
+  expect(result.recoveries).toBe(0);
 });

@@ -18,10 +18,11 @@ export class PoseRecovery {
   private elapsed = 0;
   private duration = 0;
   private unfold = false;
+  private standingNext = false;
 
   constructor(private readonly doll: Ragdoll) {}
 
-  untangle() {
+  prepareToStand() {
     const torso = this.doll.parts[1].body;
     const reference = this.doll.standingPose[1];
     const angle = Phaser.Math.Angle.Wrap(torso.angle);
@@ -38,6 +39,7 @@ export class PoseRecovery {
     });
     this.fitToRoom(target);
     this.begin(target, 800, true);
+    this.standingNext = true;
   }
 
   stand() {
@@ -129,10 +131,16 @@ export class PoseRecovery {
       moveStatic: true,
       pinned: this.doll.parts[1].body,
       resolveVelocity: false,
+      selfCollision: this.doll.selfCollisionEnabled,
     });
     if (!separated) restorePose(this.doll.bodies, previous);
     this.doll.syncAnchors();
     this.doll.clearMotion();
+    if (progress === 1 && separated && this.standingNext) {
+      this.standingNext = false;
+      this.stand();
+      return false;
+    }
     return progress === 1 && separated;
   }
 

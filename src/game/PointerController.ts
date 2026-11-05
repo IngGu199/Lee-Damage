@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { Matter } from "./matter";
-import { ROOM, type Tool } from "./config";
+import { DEFAULT_SETTINGS, ROOM, type Tool } from "./config";
 import { PointerVelocity } from "./PointerVelocity";
 import type { Ragdoll } from "./Ragdoll";
 
@@ -13,6 +13,7 @@ export class PointerController {
   grabbed: string | null = null;
   target = { x: 600, y: 300 };
   strength = 1;
+  throwScale = DEFAULT_SETTINGS.throwScale;
   private pointerId: number | null = null;
   private lastPush = -Infinity;
   private heldBody: MatterJS.BodyType | null = null;
@@ -151,6 +152,10 @@ export class PointerController {
     const bounce = body.restitution;
     Body.setStatic(body, true);
     body.restitution = bounce;
+    const doll = this.doll();
+    const restoreCollision = !doll.selfCollisionEnabled;
+    doll.setSelfCollision(true);
+    if (restoreCollision) doll.finishStep(doll.capturePose());
   }
 
   private gripTarget(): MatterJS.Vector {
@@ -195,7 +200,9 @@ export class PointerController {
       const bounce = body.restitution;
       Body.setStatic(body, false);
       body.restitution = bounce;
-      if (throwBody) this.doll().launch(this.motion.at(time));
+      this.doll().setSelfCollision(false);
+      if (throwBody)
+        this.doll().launch(Vector.mult(this.motion.at(time), this.throwScale));
       else Body.setVelocity(body, { x: 0, y: 0 });
       this.heldBody = null;
       this.onInteract();

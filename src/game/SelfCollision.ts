@@ -37,10 +37,13 @@ export function separateBodies(
     moveStatic?: boolean;
     pinned?: MatterJS.BodyType;
     resolveVelocity?: boolean;
+    movable?: ReadonlySet<MatterJS.BodyType>;
+    selfCollision?: boolean;
   } = {},
 ): boolean {
+  const collidingCount = options.selfCollision === false ? 0 : bodies.length;
   const weight = (body: MatterJS.BodyType) =>
-    body === options.pinned
+    body === options.pinned || (options.movable && !options.movable.has(body))
       ? 0
       : body.isStatic
         ? options.moveStatic
@@ -49,8 +52,8 @@ export function separateBodies(
         : body.inverseMass;
   for (let iteration = 0; iteration < iterations; iteration++) {
     let touched = false;
-    for (let a = 0; a < bodies.length; a++)
-      for (let b = a + 1; b < bodies.length; b++) {
+    for (let a = 0; a < collidingCount; a++)
+      for (let b = a + 1; b < collidingCount; b++) {
         const hit = Collision.collides(bodies[a], bodies[b], null);
         if (!hit || hit.depth <= 0) continue;
         touched = true;
@@ -98,6 +101,7 @@ export function separateBodies(
         }
       }
     for (const body of bodies) {
+      if (options.movable && !options.movable.has(body)) continue;
       const vertices = body.vertices!;
       const bounds = {
         min: {
@@ -134,5 +138,5 @@ export function separateBodies(
     }
     if (!touched) return true;
   }
-  return maxOverlap(bodies) === 0;
+  return options.selfCollision === false || maxOverlap(bodies) === 0;
 }

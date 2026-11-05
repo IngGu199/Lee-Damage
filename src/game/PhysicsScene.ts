@@ -38,7 +38,7 @@ export class PhysicsScene extends Phaser.Scene {
   create() {
     const { Bodies } = Matter;
     this.matter.world.autoUpdate = false;
-    // Thick static walls plus 120Hz substeps reduce tunneling at capped speeds.
+    // Thick static walls plus adaptive substeps reduce high-speed tunneling.
     for (const [x, y, width, height] of [
       [-70, 350, 200, 1100],
       [1270, 350, 200, 1100],
@@ -120,6 +120,7 @@ export class PhysicsScene extends Phaser.Scene {
     this.doll.setBounce(settings.bounce);
     this.doll.configureLag(settings.lag);
     this.pointer.strength = settings.strength;
+    this.pointer.throwScale = settings.throwScale;
   }
 
   update(_time: number, delta: number) {
@@ -161,6 +162,7 @@ export class PhysicsScene extends Phaser.Scene {
             const previous = this.doll.capturePose();
             this.matter.world.step(step);
             this.doll.finishStep(previous);
+            this.posture.afterStep(step);
             this.doll.limitAngularSpeed();
           }
         }
@@ -210,6 +212,7 @@ export class PhysicsScene extends Phaser.Scene {
       maxJointGap: this.doll.maxJointGap,
       maxOverlap: this.doll.maxOverlap,
       posture: this.posture.state,
+      selfCollision: this.doll.selfCollisionEnabled,
       idleRemaining: Math.max(
         0,
         this.settings.idleSeconds - this.posture.quietMs / 1000,
