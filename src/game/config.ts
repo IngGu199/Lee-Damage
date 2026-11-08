@@ -16,6 +16,9 @@ export const STANDING_SPEED = 50; // px/s, maximum linear speed among all body p
 export const REST_CONFIRM_MS = 300;
 export const REST_OBSERVATION_MS = 200;
 export const TORSO_ALIGNMENT_MS = 600;
+export const ANGULAR_INERTIA_SCALE = 0.65;
+export const JOINT_DAMPING = 0.025;
+export const MAX_ANGULAR_SPEED = 0.7; // radians per 60Hz reference step
 export type PhysicsExperiment = 1 | 2;
 export type PostureState =
   | "standing"
@@ -50,6 +53,7 @@ export interface LabStats {
   selfCollision: boolean;
 }
 export const FIXED_SETTINGS = Object.freeze({
+  bounce: 0.95,
   gravity: 2.5,
   idleSeconds: 2,
   repairSeconds: 2,
@@ -58,8 +62,7 @@ export const FIXED_SETTINGS = Object.freeze({
 });
 export const DEFAULT_SETTINGS: LabSettings = {
   ...FIXED_SETTINGS,
-  // Adopted stage 1 baseline (2026-11-08); experiment 1 remains for comparison.
+  // Adopted stage 1 baseline; experiment 1 remains only for internal comparison.
   experiment: 2,
-  bounce: 0.55,
   debug: false,
 };

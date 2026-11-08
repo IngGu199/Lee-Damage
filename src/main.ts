@@ -3,10 +3,13 @@ import "@fontsource-variable/noto-sans-kr";
 import "./style.css";
 import { PhysicsScene } from "./game/PhysicsScene";
 import {
+  ANGULAR_INERTIA_SCALE,
   DEFAULT_SETTINGS,
+  JOINT_DAMPING,
+  MAX_ANGULAR_SPEED,
+  REFERENCE_STEP,
   ROOM,
   type LabStats,
-  type PhysicsExperiment,
 } from "./game/config";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -31,18 +34,26 @@ app.innerHTML = `
       </section>
       <aside class="lab-panel" aria-label="실험 설정">
         <div class="panel-heading"><h2>실험 노트</h2><span>LAB NOTES</span></div>
-        <div class="setting experiment-setting"><label for="experiment">관절 복구 방식</label><select id="experiment"><option value="1">1 · 충돌 해제 (비교용)</option><option value="2" selected>2 · 몸통 정렬 (채택)</option></select></div>
-        <p class="panel-copy" id="experiment-description">채택 방식 2 · 조작 종료 2초 뒤<br>몸통 기준으로 관절을 정렬합니다.</p>
-        <div class="setting"><label for="bounce">탄성 <output id="bounce-value">55%</output></label><input id="bounce" type="range" min="0" max="3" step="0.05" value="0.55"><div class="range-labels"><span>0% · 툭</span><span>300% · 통통</span></div></div>
+        <p class="panel-copy">조작 종료 2초 뒤<br>몸통 기준으로 관절을 정렬합니다.</p>
         <dl class="fixed-settings" aria-label="확정된 물리 설정">
+          <div><dt>탄성</dt><dd>95%</dd></div>
           <div><dt>던지기 강도</dt><dd>50%</dd></div>
           <div><dt>중력</dt><dd>2.5×</dd></div>
-          <div id="alignment-setting"><dt>관절 정렬 대기</dt><dd>2초</dd></div>
+          <div><dt>관절 정렬 대기</dt><dd>2초</dd></div>
           <div><dt>관절 지연</dt><dd>0%</dd></div>
           <div><dt>기립 대기</dt><dd>2초</dd></div>
         </dl>
         <p class="panel-copy" id="repair-policy">현재 몸통 위치·방향과 이동 벡터를 유지하며 정렬합니다.</p>
         <p class="panel-copy">기존 안정 조건 또는 최대 속력 50px/s 이하가<br>2초 이어지면 현재 위치에서 일어납니다.</p>
+        <section class="angular-note" aria-labelledby="angular-title">
+          <h3 id="angular-title">각운동</h3>
+          <p class="panel-copy">잡은 지점을 축으로 중력과 관성에 따라 회전하며, 놓은 뒤에도 회전이 이어집니다. 관성과 감쇠를 낮춰 더 쉽게 회전하고 오래 흔들리도록 했습니다.</p>
+          <dl class="fixed-settings" aria-label="각운동 적용값">
+            <div><dt>회전 관성 · 기본 대비</dt><dd>${Math.round(ANGULAR_INERTIA_SCALE * 100)}%</dd></div>
+            <div><dt>관절 감쇠</dt><dd>${JOINT_DAMPING}</dd></div>
+            <div><dt>각속도 상한</dt><dd>${(MAX_ANGULAR_SPEED * 1000 / REFERENCE_STEP).toFixed(0)} rad/s</dd></div>
+          </dl>
+        </section>
         <label class="debug-toggle"><span>관절·물리 표시<small>연결점과 이동 방향 보기</small></span><input id="debug" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
         <div class="telemetry"><div class="telemetry-title"><span class="status-dot"></span> LIVE TELEMETRY</div><div class="metrics"><div><strong id="fps">—</strong><span>FPS</span></div><div><strong id="speed">0</strong><span>최대 속도 · px/s</span></div></div><div class="metric-detail"><span>신체 <b id="bodies">10</b> / 관절 <b id="joints">9</b></span><span>120 Hz</span></div><p id="self-collision-status">자기 충돌 ON</p><p id="alignment-status">조작 후 관절 정렬 대기</p><p id="posture-status">기립 상태</p><p id="recovery-status">안정성 복구 0회</p></div>
       </aside>
@@ -57,23 +68,6 @@ const settings = { ...DEFAULT_SETTINGS };
 let ready = false;
 const element = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
-
-function renderExperiment() {
-  const timed = settings.experiment === 2;
-  element("experiment-description").textContent = timed
-    ? "채택 방식 2 · 조작 종료 2초 뒤 몸통 기준으로 관절을 정렬합니다."
-    : "실험 1 · 놓으면 자기 충돌을 끄고, 기립 완료 후 다시 켭니다.";
-  element("alignment-setting").hidden = !timed;
-  element("repair-policy").textContent = timed
-    ? "현재 몸통 위치·방향과 이동 벡터를 유지하며 정렬합니다."
-    : "관절 복구: 기립할 때 함께 정렬합니다.";
-  element("release-instruction").textContent = timed
-    ? "놓은 뒤에도 신체·벽·바닥과 계속 부딪혀요."
-    : "놓으면 자기 충돌을 끄고 벽·바닥과 부딪혀요.";
-  element("alignment-instruction").textContent = timed
-    ? "조작 종료 2초 뒤 정렬하고, 안정되거나 50px/s 이하면 2초 뒤 기립해요."
-    : "기립할 때 관절 정렬 후 자기 충돌을 다시 켜요.";
-}
 
 function renderStats(stats: LabStats) {
   element("fps").textContent = String(stats.fps);
@@ -134,18 +128,6 @@ element("resume").addEventListener("click", () => scene.setPaused(false));
 element("reset").addEventListener("click", () => {
   scene.reset();
   element("notice").textContent = "인형을 처음 위치로 재배치했습니다.";
-});
-element<HTMLSelectElement>("experiment").addEventListener("change", (event) => {
-  settings.experiment = Number((event.target as HTMLSelectElement).value) as PhysicsExperiment;
-  renderExperiment();
-  if (ready) scene.configure(settings);
-});
-renderExperiment();
-
-element<HTMLInputElement>("bounce").addEventListener("input", (event) => {
-  settings.bounce = Number((event.target as HTMLInputElement).value);
-  element("bounce-value").textContent = `${Math.round(settings.bounce * 100)}%`;
-  if (ready) scene.configure(settings);
 });
 element<HTMLInputElement>("debug").addEventListener("change", (event) => {
   settings.debug = (event.target as HTMLInputElement).checked;

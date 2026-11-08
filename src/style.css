@@ -355,50 +355,6 @@ canvas[data-dragging] {
   color: #7b8373;
   margin: 13px 0 20px;
 }
-.setting {
-  margin-bottom: 12px;
-}
-.setting label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 12px;
-  font-weight: 500;
-}
-.setting output {
-  font: 12px "Noto Sans KR Variable", monospace;
-  color: #526b32;
-  background: #e1e7d4;
-  border-radius: 5px;
-  padding: 4px 7px;
-}
-.experiment-setting select {
-  width: 100%;
-  margin-top: 10px;
-  padding: 8px;
-  font: inherit;
-  font-size: 11px;
-  color: inherit;
-  background: #fafbf6;
-  border: 1px solid #cfd6c2;
-  border-radius: 7px;
-}
-.setting[hidden] {
-  display: none;
-}
-input[type="range"] {
-  width: 100%;
-  margin: 12px 0 6px;
-  accent-color: #637d3f;
-  height: 4px;
-  cursor: pointer;
-}
-.range-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 9px;
-  color: #959c8a;
-}
 .fixed-settings {
   margin: 18px 0;
   font-size: 11px;
@@ -418,6 +374,16 @@ input[type="range"] {
 .fixed-settings dd {
   margin: 0;
   color: #526b32;
+  font-weight: 600;
+}
+.angular-note {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid #dadfd0;
+}
+.angular-note h3 {
+  margin: 0;
+  font-size: 12px;
   font-weight: 600;
 }
 .debug-toggle {
@@ -607,9 +573,6 @@ input[type="range"] {
   }
   .tool {
     padding: 9px;
-  }
-  .setting {
-    margin-bottom: 12px;
   }
   .panel-copy {
     margin-bottom: 20px;

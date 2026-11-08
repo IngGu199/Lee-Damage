@@ -1,6 +1,13 @@
 import Phaser from "phaser";
 import { Matter } from "./matter";
-import { REFERENCE_STEP, ROOM, STANDING_OFFSET_Y } from "./config";
+import {
+  ANGULAR_INERTIA_SCALE,
+  JOINT_DAMPING,
+  MAX_ANGULAR_SPEED,
+  REFERENCE_STEP,
+  ROOM,
+  STANDING_OFFSET_Y,
+} from "./config";
 import {
   capturePose,
   maxOverlap,
@@ -61,6 +68,8 @@ export class Ragdoll {
             chamfer: { radius: 11 },
           });
       Body.setMass(body, mass);
+      // Respond more readily to pivot/contact torque while keeping the same mass.
+      Body.setInertia(body, body.inertia * ANGULAR_INERTIA_SCALE);
       this.inertia.push(body.inertia);
       this.standingPose.push({
         x: x - 600,
@@ -105,7 +114,7 @@ export class Ragdoll {
         pointB,
         length,
         stiffness: 1,
-        damping: 0.05,
+        damping: JOINT_DAMPING,
         label: "joint",
       });
       this.joints.push(link);
@@ -367,8 +376,10 @@ export class Ragdoll {
   limitAngularSpeed() {
     for (const { body } of this.parts) {
       if (body.isStatic) continue;
-      if (Math.abs(body.angularVelocity) > 0.35)
-        Body.setAngularVelocity(body, Math.sign(body.angularVelocity) * 0.35);
+      if (Math.abs(body.angularVelocity) > MAX_ANGULAR_SPEED)
+        Body.setAngularVelocity(
+          body, Math.sign(body.angularVelocity) * MAX_ANGULAR_SPEED,
+        );
     }
   }
 

@@ -4,7 +4,6 @@ import {
   DEFAULT_SETTINGS,
   FIXED_SETTINGS,
   FIXED_STEP,
-  REFERENCE_STEP,
   MAX_TRAVEL_PER_SUBSTEP,
   MAX_SUBSTEPS,
   ROOM,
@@ -115,7 +114,7 @@ export class PhysicsScene extends Phaser.Scene {
     this.pointer.experiment = settings.experiment;
     this.posture.setExperiment(settings.experiment);
     this.matter.world.setGravity(0, this.settings.gravity);
-    this.doll.setBounce(settings.bounce);
+    this.doll.setBounce(this.settings.bounce);
     this.doll.configureLag(this.settings.lag);
     this.pointer.throwScale = this.settings.throwScale;
   }
@@ -126,20 +125,15 @@ export class PhysicsScene extends Phaser.Scene {
       // Drop excess elapsed time after a stall rather than run an unbounded catch-up.
       this.accumulator += Math.min(delta, 50);
       while (this.accumulator >= FIXED_STEP) {
-        const speed = Math.max(
-          ...this.doll.parts.map((part) =>
-            part.body.isStatic
-              ? 0
-              : Math.hypot(part.body.velocity.x, part.body.velocity.y),
-          ),
-        );
+        // Include rotational edge travel when subdividing faster angular motion.
+        const speed = this.doll.motionSpeed;
         const slices = Math.min(
           MAX_SUBSTEPS,
           Math.max(
             1,
             Math.ceil(
               Math.max(
-                (speed * FIXED_STEP) / REFERENCE_STEP,
+                (speed * FIXED_STEP) / 1000,
                 this.pointer.travelDistance,
               ) / MAX_TRAVEL_PER_SUBSTEP,
             ),
