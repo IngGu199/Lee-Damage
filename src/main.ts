@@ -35,8 +35,8 @@ app.innerHTML = `
       </section>
       <aside class="lab-panel" aria-label="실험 설정">
         <div class="panel-heading"><h2>실험 노트</h2><span>LAB NOTES</span></div>
-        <div class="setting experiment-setting"><label for="experiment">실험 방식</label><select id="experiment"><option value="1">1 · 놓은 뒤 충돌 해제</option><option value="2" selected>2 · N초 뒤 관절 정렬</option></select></div>
-        <p class="panel-copy" id="experiment-description">실험 2 · 움직이는 중에도 설정 시간 뒤<br>몸통 기준으로 관절을 정렬합니다.</p>
+        <div class="setting experiment-setting"><label for="experiment">관절 복구 방식</label><select id="experiment"><option value="1">1 · 충돌 해제 (비교용)</option><option value="2" selected>2 · 몸통 정렬 (채택)</option></select></div>
+        <p class="panel-copy" id="experiment-description">채택 방식 2 · 움직이는 중에도 설정 시간 뒤<br>몸통 기준으로 관절을 정렬합니다.</p>
         <div class="setting"><label for="gravity">중력 <output id="gravity-value">1.0×</output></label><input id="gravity" type="range" min="0" max="2" step="0.1" value="1"><div class="range-labels"><span>둥실둥실</span><span>묵직하게</span></div></div>
         <div class="setting"><label for="bounce">탄성 <output id="bounce-value">55%</output></label><input id="bounce" type="range" min="0" max="0.95" step="0.05" value="0.55"><div class="range-labels"><span>툭</span><span>통통</span></div></div>
         <div class="setting"><label for="strength">밀치는 힘 <output id="strength-value">1.0×</output></label><input id="strength" type="range" min="0.3" max="2" step="0.1" value="1"><div class="range-labels"><span>살짝</span><span>힘껏</span></div></div>
@@ -75,7 +75,7 @@ function selectTool(tool: Tool) {
 function renderExperiment() {
   const timed = settings.experiment === 2;
   element("experiment-description").textContent = timed
-    ? "실험 2 · 이동 중에도 설정 시간 뒤 몸통 기준으로 관절을 정렬합니다."
+    ? "채택 방식 2 · 이동 중에도 설정 시간 뒤 몸통 기준으로 관절을 정렬합니다."
     : "실험 1 · 놓으면 자기 충돌을 끄고, 기립 완료 후 다시 켭니다.";
   element("alignment-setting").hidden = !timed;
   element("repair-policy").textContent = timed

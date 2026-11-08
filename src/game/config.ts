@@ -51,6 +51,7 @@ export interface LabStats {
   selfCollision: boolean;
 }
 export const DEFAULT_SETTINGS: LabSettings = {
+  // Adopted stage 1 baseline (2026-11-08); experiment 1 remains for comparison.
   experiment: 2,
   gravity: 1,
   bounce: 0.55,
