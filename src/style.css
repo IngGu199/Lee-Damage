@@ -213,9 +213,6 @@ h1 {
   border-color: #cbd9aa;
   color: #3b4e28;
 }
-.tool:hover {
-  background: #eaf0dd;
-}
 kbd {
   font: 10px monospace;
   display: inline-block;
@@ -226,9 +223,6 @@ kbd {
   color: #7b846f;
   min-width: 17px;
   text-align: center;
-}
-.tool kbd {
-  margin-left: 4px;
 }
 .icon-button {
   border: 0;
@@ -271,9 +265,6 @@ canvas {
 }
 canvas[data-dragging] {
   cursor: grabbing;
-}
-canvas[data-tool="push"] {
-  cursor: crosshair;
 }
 .game-overlay {
   position: absolute;
@@ -407,6 +398,27 @@ input[type="range"] {
   justify-content: space-between;
   font-size: 9px;
   color: #959c8a;
+}
+.fixed-settings {
+  margin: 18px 0;
+  font-size: 11px;
+}
+.fixed-settings > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+}
+.fixed-settings > div[hidden] {
+  display: none;
+}
+.fixed-settings dt {
+  color: #7b8373;
+}
+.fixed-settings dd {
+  margin: 0;
+  color: #526b32;
+  font-weight: 600;
 }
 .debug-toggle {
   display: flex;
@@ -595,9 +607,6 @@ input[type="range"] {
   }
   .tool {
     padding: 9px;
-  }
-  .tool kbd {
-    display: none;
   }
   .setting {
     margin-bottom: 12px;

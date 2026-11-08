@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { Matter } from "./matter";
-import { DEFAULT_SETTINGS, ROOM, type PhysicsExperiment, type Tool } from "./config";
+import { DEFAULT_SETTINGS, ROOM, type PhysicsExperiment } from "./config";
 import { PointerVelocity } from "./PointerVelocity";
 import type { Ragdoll } from "./Ragdoll";
 
@@ -8,18 +8,14 @@ const { Constraint, Body, Vector } = Matter;
 
 /** DOM pointer capture keeps releases reliable outside the game canvas. */
 export class PointerController {
-  tool: Tool = "grab";
   grip: MatterJS.ConstraintType | null = null;
   grabbed: string | null = null;
   target = { x: 600, y: 300 };
-  strength = 1;
   experiment: PhysicsExperiment = DEFAULT_SETTINGS.experiment;
   throwScale = DEFAULT_SETTINGS.throwScale;
   private pointerId: number | null = null;
-  private lastPush = -Infinity;
   private heldBody: MatterJS.BodyType | null = null;
   private heldOffset = { x: 0, y: 0 };
-  private heldAngle = 0;
   private readonly motion = new PointerVelocity();
   private readonly abort = new AbortController();
 
@@ -28,7 +24,6 @@ export class PointerController {
     private readonly world: Phaser.Physics.Matter.World,
     private readonly doll: () => Ragdoll,
     private readonly paused: () => boolean,
-    private readonly onPush: (point: MatterJS.Vector) => void,
     private readonly onInteract: () => void,
   ) {
     const options = { signal: this.abort.signal };
@@ -56,33 +51,6 @@ export class PointerController {
     if (!part) return;
     event.preventDefault();
     this.canvas.focus({ preventScroll: true });
-    if (this.tool === "push") {
-      if (performance.now() - this.lastPush < 100) return;
-      this.lastPush = performance.now();
-      this.onInteract();
-      // Push away from the clicked side, with enough lift to leave the floor.
-      const direction = Vector.normalise({
-        x: part.body.position.x - point.x || (point.x < 600 ? 1 : -1),
-        y: -0.65 * Math.max(12, Math.abs(part.body.position.x - point.x)),
-      });
-      Body.setVelocity(
-        part.body,
-        Vector.add(
-          part.body.velocity,
-          Vector.mult(direction, 13 * this.strength),
-        ),
-      );
-      Body.setAngularVelocity(
-        part.body,
-        Phaser.Math.Clamp(
-          (point.x - part.body.position.x) * 0.012 * this.strength,
-          -0.3,
-          0.3,
-        ),
-      );
-      this.onPush(point);
-      return;
-    }
     this.onInteract();
     this.pointerId = event.pointerId;
     this.canvas.setPointerCapture(event.pointerId);
@@ -95,10 +63,19 @@ export class PointerController {
       length: 0,
       stiffness: 1,
       damping: 0,
+      angularStiffness: 0,
       label: "pointer-grip",
     });
     this.world.add(this.grip);
-    this.pinBody();
+    this.heldBody = part.body;
+    // Store a body-local point, so the same clicked spot stays attached as it rotates.
+    this.heldOffset = Vector.rotate(
+      Vector.sub(point, part.body.position), -part.body.angle,
+    );
+    const doll = this.doll();
+    const restoreCollision = !doll.selfCollisionEnabled;
+    doll.setSelfCollision(true);
+    if (restoreCollision) doll.finishStep(doll.capturePose(), part.body);
     this.motion.reset(point, event.timeStamp);
     this.canvas.dataset.dragging = "true";
   };
@@ -130,38 +107,58 @@ export class PointerController {
     const point = this.point(event);
     if (Math.hypot(point.x - this.target.x, point.y - this.target.y) > 0.001)
       this.motion.record(point, event.timeStamp);
+    this.target = point;
+    // A release can arrive before the next physics frame; keep its final anchor position.
+    const doll = this.doll();
+    const previous = doll.capturePose();
+    this.step();
+    this.afterStep();
+    doll.finishStep(previous, this.held);
     this.endGrab(true, event.timeStamp);
   };
 
-  step() {
-    if (!this.grip) return;
-    this.pinBody();
+  get held() {
+    return this.heldBody ?? undefined;
+  }
+
+  get travelDistance() {
+    if (!this.grip) return 0;
+    return Vector.magnitude(Vector.sub(this.gripTarget(), this.grip.pointA));
+  }
+
+  step(remainingSlices = 1) {
+    if (!this.grip || !this.heldBody) return;
     const point = this.gripTarget();
-    this.grip.pointA = point;
-    this.grip.pointB = { ...this.heldOffset };
-    // The selected point follows the pointer exactly; other parts remain dynamic.
-    Body.setAngle(this.heldBody!, this.heldAngle);
-    Body.setPosition(this.heldBody!, Vector.sub(point, this.heldOffset));
+    // Spread a fast cursor move across this frame's substeps, with no speed cap.
+    this.grip.pointA = Vector.add(
+      this.grip.pointA,
+      Vector.mult(Vector.sub(point, this.grip.pointA), 1 / remainingSlices),
+    );
+    this.syncGrip();
+    // Matter solves the off-center pivot, including torque, inertia and gravity.
+    // The held body remains dynamic; no angle or angular velocity is prescribed.
   }
 
-  private pinBody() {
-    const body = this.grip!.bodyB!;
-    if (this.heldBody === body) return;
-    this.heldBody = body;
-    this.heldAngle = body.angle;
-    this.heldOffset = { ...this.grip!.pointB };
-    const bounce = body.restitution;
-    Body.setStatic(body, true);
-    body.restitution = bounce;
-    const doll = this.doll();
-    const restoreCollision = !doll.selfCollisionEnabled;
-    doll.setSelfCollision(true);
-    if (restoreCollision) doll.finishStep(doll.capturePose());
+  afterStep() {
+    if (!this.grip || !this.heldBody) return;
+    this.syncGrip();
+    // Remove residual positional error without overwriting the engine's rotation.
+    // Recheck bounds because a freely rotating shape can touch a wall mid-step.
+    this.grip.pointA = this.gripTarget(this.grip.pointA);
+    Body.setPosition(
+      this.heldBody, Vector.sub(this.grip.pointA, this.grip.pointB),
+    );
   }
 
-  private gripTarget(): MatterJS.Vector {
-    if (!this.heldBody) return { ...this.target };
+  private syncGrip() {
+    this.grip!.pointB = Vector.rotate(this.heldOffset, this.heldBody!.angle);
+    this.grip!.angleB = this.heldBody!.angle;
+  }
+
+  private gripTarget(target = this.target): MatterJS.Vector {
+    if (!this.heldBody) return { ...target };
     const body = this.heldBody;
+    const offset = Vector.rotate(this.heldOffset, body.angle);
     const vertices = body.vertices!;
     const minX = Math.min(
       ...vertices.map((vertex) => vertex.x - body.position.x),
@@ -178,17 +175,17 @@ export class PointerController {
     // Keep the held shape inside the room without limiting its movement speed.
     const center = {
       x: Phaser.Math.Clamp(
-        this.target.x - this.heldOffset.x,
+        target.x - offset.x,
         ROOM.left + 0.5 - minX,
         ROOM.right - 0.5 - maxX,
       ),
       y: Phaser.Math.Clamp(
-        this.target.y - this.heldOffset.y,
+        target.y - offset.y,
         ROOM.top + 0.5 - minY,
         ROOM.bottom - 0.5 - maxY,
       ),
     };
-    return Vector.add(center, this.heldOffset);
+    return Vector.add(center, offset);
   }
 
   release = () => this.endGrab(true, performance.now());
@@ -197,14 +194,11 @@ export class PointerController {
   private endGrab(throwBody: boolean, time: number) {
     if (this.grip) this.world.removeConstraint(this.grip);
     if (this.heldBody) {
-      const body = this.heldBody;
-      const bounce = body.restitution;
-      Body.setStatic(body, false);
-      body.restitution = bounce;
       this.doll().setSelfCollision(this.experiment === 2);
       if (throwBody)
-        this.doll().launch(Vector.mult(this.motion.at(time), this.throwScale));
-      else Body.setVelocity(body, { x: 0, y: 0 });
+        this.doll().launch(
+          Vector.mult(this.motion.at(time), this.throwScale), true,
+        );
       this.heldBody = null;
       this.onInteract();
     }

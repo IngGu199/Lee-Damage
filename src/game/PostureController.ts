@@ -3,6 +3,7 @@ import {
   REST_CONFIRM_MS,
   REST_OBSERVATION_MS,
   REST_SPEED,
+  STANDING_SPEED,
   type LabSettings,
   type PhysicsExperiment,
   type PostureState,
@@ -78,7 +79,7 @@ export class PostureController {
     if (held) {
       this.interact();
       this.doll.configureLag(settings.lag);
-      this.doll.followThrough(delta, settings.lag, 1);
+      if (settings.lag > 0) this.doll.followThrough(delta, settings.lag, 1);
       return;
     }
     if (this.state === "standing") return;
@@ -121,11 +122,13 @@ export class PostureController {
         return;
       }
     }
-    // A still center does not imply still limbs: include every part's translation and spin.
+    // Preserve the previous rest check, OR allow a slow-moving doll to stand.
+    // Use the fastest part so opposite limb velocities cannot cancel each other.
     const resting =
       this.inputFreeMs >= 700 &&
-      (this.observedSpeed ?? this.doll.motionSpeed) < REST_SPEED &&
-      (this.doll.grounded || settings.gravity === 0) &&
+      (((this.observedSpeed ?? this.doll.motionSpeed) < REST_SPEED &&
+        (this.doll.grounded || settings.gravity === 0)) ||
+        this.doll.linearSpeed <= STANDING_SPEED) &&
       (this.experiment === 2 ||
         !this.doll.selfCollisionEnabled ||
         this.doll.twistedJoints.length === 0);
@@ -138,7 +141,8 @@ export class PostureController {
     if (this.settledMs < REST_CONFIRM_MS) return;
     if (this.state !== "waiting") {
       this.state = "waiting";
-      this.quietMs = 0;
+      // The 300ms confirmation is part of the fixed two-second wait.
+      this.quietMs = this.settledMs;
       return;
     }
     // Waiting is only a timer. No static bodies or velocity clearing here.
@@ -170,6 +174,7 @@ export class PostureController {
     this.previousPose = this.doll.capturePose();
     if (
       this.state === "waiting" &&
+      this.doll.linearSpeed > STANDING_SPEED &&
       (this.observedSpeed >= REST_SPEED || speed >= REST_SPEED * 4)
     ) {
       this.state = "active";

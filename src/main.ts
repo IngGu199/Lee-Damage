@@ -7,7 +7,6 @@ import {
   ROOM,
   type LabStats,
   type PhysicsExperiment,
-  type Tool,
 } from "./game/config";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -24,10 +23,7 @@ app.innerHTML = `
     <div class="workspace">
       <section class="playground" aria-label="물리 시제품">
         <div class="toolbar">
-          <div class="tools" role="group" aria-label="조작 도구">
-            <button class="tool active" data-tool="grab" aria-pressed="true" disabled><span aria-hidden="true">✥</span> 잡기 <kbd>1</kbd></button>
-            <button class="tool" data-tool="push" aria-pressed="false" disabled><span aria-hidden="true">↗</span> 밀치기 <kbd>2</kbd></button>
-          </div>
+          <div class="tools"><span class="tool active"><span aria-hidden="true">✥</span> 잡기 · 던지기</span></div>
           <div class="play-actions"><button id="pause" class="icon-button" aria-label="일시정지" disabled>Ⅱ</button><span class="toolbar-divider"></span><button id="reset" class="reset-button" disabled><span aria-hidden="true">↻</span> 재배치 <kbd>R</kbd></button></div>
         </div>
         <div class="canvas-wrap"><div id="game"></div><div id="loading" class="game-overlay">물리 실험실을 준비하고 있어요…</div><div id="pause-overlay" class="game-overlay" hidden><span class="pause-symbol">Ⅱ</span><strong>잠깐 쉬는 중</strong><p>창을 벗어나면 자동으로 멈춥니다.</p><button id="resume">실험 계속하기 <span>→</span></button></div></div>
@@ -36,20 +32,22 @@ app.innerHTML = `
       <aside class="lab-panel" aria-label="실험 설정">
         <div class="panel-heading"><h2>실험 노트</h2><span>LAB NOTES</span></div>
         <div class="setting experiment-setting"><label for="experiment">관절 복구 방식</label><select id="experiment"><option value="1">1 · 충돌 해제 (비교용)</option><option value="2" selected>2 · 몸통 정렬 (채택)</option></select></div>
-        <p class="panel-copy" id="experiment-description">채택 방식 2 · 움직이는 중에도 설정 시간 뒤<br>몸통 기준으로 관절을 정렬합니다.</p>
-        <div class="setting"><label for="gravity">중력 <output id="gravity-value">1.0×</output></label><input id="gravity" type="range" min="0" max="2" step="0.1" value="1"><div class="range-labels"><span>둥실둥실</span><span>묵직하게</span></div></div>
-        <div class="setting"><label for="bounce">탄성 <output id="bounce-value">55%</output></label><input id="bounce" type="range" min="0" max="0.95" step="0.05" value="0.55"><div class="range-labels"><span>툭</span><span>통통</span></div></div>
-        <div class="setting"><label for="strength">밀치는 힘 <output id="strength-value">1.0×</output></label><input id="strength" type="range" min="0.3" max="2" step="0.1" value="1"><div class="range-labels"><span>살짝</span><span>힘껏</span></div></div>
-        <div class="setting"><label for="throwScale">던지기 강도 <output id="throwScale-value">35%</output></label><input id="throwScale" type="range" min="0" max="1.5" step="0.05" value="0.35"><div class="range-labels"><span>0% · 던지기 없음</span><span>150%</span></div></div>
-        <div class="setting" id="alignment-setting"><label for="repairSeconds">관절 정렬 대기 <output id="repairSeconds-value">1.5초</output></label><input id="repairSeconds" type="range" min="1" max="2" step="0.1" value="1.5"><div class="range-labels"><span>마지막 조작 후 1초</span><span>2초</span></div></div>
+        <p class="panel-copy" id="experiment-description">채택 방식 2 · 조작 종료 2초 뒤<br>몸통 기준으로 관절을 정렬합니다.</p>
+        <div class="setting"><label for="bounce">탄성 <output id="bounce-value">55%</output></label><input id="bounce" type="range" min="0" max="3" step="0.05" value="0.55"><div class="range-labels"><span>0% · 툭</span><span>300% · 통통</span></div></div>
+        <dl class="fixed-settings" aria-label="확정된 물리 설정">
+          <div><dt>던지기 강도</dt><dd>50%</dd></div>
+          <div><dt>중력</dt><dd>2.5×</dd></div>
+          <div id="alignment-setting"><dt>관절 정렬 대기</dt><dd>2초</dd></div>
+          <div><dt>관절 지연</dt><dd>0%</dd></div>
+          <div><dt>기립 대기</dt><dd>2초</dd></div>
+        </dl>
         <p class="panel-copy" id="repair-policy">현재 몸통 위치·방향과 이동 벡터를 유지하며 정렬합니다.</p>
-        <div class="setting"><label for="lag">관절 지연 <output id="lag-value">65%</output></label><input id="lag" type="range" min="0" max="1" step="0.05" value="0.65"><div class="range-labels"><span>빠른 추종</span><span>느린 추종</span></div></div>
-        <div class="setting"><label for="idleSeconds">기립 대기 <output id="idleSeconds-value">3초</output></label><input id="idleSeconds" type="range" min="1" max="8" step="0.5" value="3"><div class="range-labels"><span>1초</span><span>8초</span></div></div>
+        <p class="panel-copy">기존 안정 조건 또는 최대 속력 50px/s 이하가<br>2초 이어지면 현재 위치에서 일어납니다.</p>
         <label class="debug-toggle"><span>관절·물리 표시<small>연결점과 이동 방향 보기</small></span><input id="debug" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
         <div class="telemetry"><div class="telemetry-title"><span class="status-dot"></span> LIVE TELEMETRY</div><div class="metrics"><div><strong id="fps">—</strong><span>FPS</span></div><div><strong id="speed">0</strong><span>최대 속도 · px/s</span></div></div><div class="metric-detail"><span>신체 <b id="bodies">10</b> / 관절 <b id="joints">9</b></span><span>120 Hz</span></div><p id="self-collision-status">자기 충돌 ON</p><p id="alignment-status">조작 후 관절 정렬 대기</p><p id="posture-status">기립 상태</p><p id="recovery-status">안정성 복구 0회</p></div>
       </aside>
     </div>
-    <section class="instructions" aria-label="조작 방법"><div><span class="instruction-number">01</span><p><strong>잡고, 흔들고</strong><span>잡고 있는 동안 신체끼리 충돌해요.</span></p></div><div><span class="instruction-number">02</span><p><strong>손을 놓으면, 휙</strong><span id="release-instruction">놓은 뒤에도 신체·벽·바닥과 계속 부딪혀요.</span></p></div><div><span class="instruction-number">03</span><p><strong>쉬면 다시 일어나요</strong><span id="alignment-instruction">N초 뒤 관절 정렬, 잠잠해지면 현재 위치에서 기립해요.</span></p></div></section>
+    <section class="instructions" aria-label="조작 방법"><div><span class="instruction-number">01</span><p><strong>잡고, 흔들고</strong><span>잡고 있는 동안 신체끼리 충돌해요.</span></p></div><div><span class="instruction-number">02</span><p><strong>손을 놓으면, 휙</strong><span id="release-instruction">놓은 뒤에도 신체·벽·바닥과 계속 부딪혀요.</span></p></div><div><span class="instruction-number">03</span><p><strong>쉬면 다시 일어나요</strong><span id="alignment-instruction">조작 종료 2초 뒤 정렬하고, 안정되거나 50px/s 이하면 2초 뒤 기립해요.</span></p></div></section>
     <p id="notice" role="status" aria-live="polite"></p>
     <footer class="page-footer"><span>아직은 도형이지만, 움직임부터 제대로.</span><span>PHYSICS FIRST. FUN FOLLOWS.</span></footer>
   </main>`;
@@ -60,22 +58,10 @@ let ready = false;
 const element = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 
-function selectTool(tool: Tool) {
-  if (!ready) return;
-  scene.setTool(tool);
-  document
-    .querySelectorAll<HTMLButtonElement>("[data-tool]")
-    .forEach((button) => {
-      const selected = button.dataset.tool === tool;
-      button.classList.toggle("active", selected);
-      button.setAttribute("aria-pressed", String(selected));
-    });
-}
-
 function renderExperiment() {
   const timed = settings.experiment === 2;
   element("experiment-description").textContent = timed
-    ? "채택 방식 2 · 이동 중에도 설정 시간 뒤 몸통 기준으로 관절을 정렬합니다."
+    ? "채택 방식 2 · 조작 종료 2초 뒤 몸통 기준으로 관절을 정렬합니다."
     : "실험 1 · 놓으면 자기 충돌을 끄고, 기립 완료 후 다시 켭니다.";
   element("alignment-setting").hidden = !timed;
   element("repair-policy").textContent = timed
@@ -85,7 +71,7 @@ function renderExperiment() {
     ? "놓은 뒤에도 신체·벽·바닥과 계속 부딪혀요."
     : "놓으면 자기 충돌을 끄고 벽·바닥과 부딪혀요.";
   element("alignment-instruction").textContent = timed
-    ? "N초 뒤 관절 정렬, 잠잠해지면 현재 위치에서 기립해요."
+    ? "조작 종료 2초 뒤 정렬하고, 안정되거나 50px/s 이하면 2초 뒤 기립해요."
     : "기립할 때 관절 정렬 후 자기 충돌을 다시 켜요.";
 }
 
@@ -139,16 +125,8 @@ scene.onReady = () => {
     button.disabled = false;
   });
   scene.configure(settings);
-  selectTool("grab");
 };
 
-document
-  .querySelectorAll<HTMLButtonElement>("[data-tool]")
-  .forEach((button) =>
-    button.addEventListener("click", () =>
-      selectTool(button.dataset.tool as Tool),
-    ),
-  );
 element("pause").addEventListener("click", () =>
   scene.setPaused(!scene.paused),
 );
@@ -164,26 +142,11 @@ element<HTMLSelectElement>("experiment").addEventListener("change", (event) => {
 });
 renderExperiment();
 
-for (const key of [
-  "gravity",
-  "bounce",
-  "strength",
-  "idleSeconds",
-  "repairSeconds",
-  "throwScale",
-  "lag",
-] as const) {
-  element<HTMLInputElement>(key).addEventListener("input", (event) => {
-    settings[key] = Number((event.target as HTMLInputElement).value);
-    element(`${key}-value`).textContent =
-      key === "idleSeconds" || key === "repairSeconds"
-        ? `${settings[key]}초`
-        : key === "bounce" || key === "lag" || key === "throwScale"
-          ? `${Math.round(settings[key] * 100)}%`
-          : `${settings[key].toFixed(1)}×`;
-    if (ready) scene.configure(settings);
-  });
-}
+element<HTMLInputElement>("bounce").addEventListener("input", (event) => {
+  settings.bounce = Number((event.target as HTMLInputElement).value);
+  element("bounce-value").textContent = `${Math.round(settings.bounce * 100)}%`;
+  if (ready) scene.configure(settings);
+});
 element<HTMLInputElement>("debug").addEventListener("change", (event) => {
   settings.debug = (event.target as HTMLInputElement).checked;
   if (ready) scene.configure(settings);
@@ -197,8 +160,6 @@ window.addEventListener("keydown", (event) => {
     )
   )
     return;
-  if (event.code === "Digit1") selectTool("grab");
-  if (event.code === "Digit2") selectTool("push");
   if (event.code === "KeyR") scene.reset();
   if (event.code === "Space") {
     event.preventDefault();
@@ -222,7 +183,7 @@ new Phaser.Game({
   physics: {
     default: "matter",
     matter: {
-      gravity: { x: 0, y: 1 },
+      gravity: { x: 0, y: DEFAULT_SETTINGS.gravity },
       positionIterations: 10,
       velocityIterations: 8,
       constraintIterations: 24,

@@ -71,7 +71,8 @@ export class Ragdoll {
       Composite.add(this.composite, body);
       return body;
     };
-    const head = part("머리", 600, 205, 72, 72, 0xe8bd8b, 2.3, 36);
+    // The head is the heaviest individual part; gravity acts through the full doll's COM.
+    const head = part("머리", 600, 205, 72, 72, 0xe8bd8b, 12, 36);
     const torso = part("몸통", 600, 302, 68, 110, 0xc4dc77, 4.5);
     const upperLeft = part("왼쪽 위팔", 543, 291, 27, 66, 0xc4dc77, 1);
     const lowerLeft = part("왼쪽 아래팔", 539, 360, 25, 63, 0xe8bd8b, 0.8);
@@ -163,6 +164,12 @@ export class Ragdoll {
     );
   }
 
+  get linearSpeed() {
+    return Math.max(...this.parts.map(({ body }) =>
+      Math.hypot(body.velocity.x, body.velocity.y) * 1000 / REFERENCE_STEP,
+    ));
+  }
+
   get motionSpeed() {
     return Math.max(...this.parts.map(({ body, width, height, radius }) => {
       const reach = radius ? radius + 2 : Math.hypot(width, height) / 2;
@@ -232,11 +239,15 @@ export class Ragdoll {
     }
   }
 
-  launch(velocity: MatterJS.Vector) {
+  launch(velocity: MatterJS.Vector, preserveRotation = false) {
+    const spin = this.parts.map(({ body }) => body.angularVelocity);
     this.setDynamic(true);
     this.clearMotion();
     // A common translation preserves the pointer's momentum across the whole character.
-    for (const { body } of this.parts) Body.setVelocity(body, velocity);
+    this.parts.forEach(({ body }, index) => {
+      Body.setVelocity(body, velocity);
+      if (preserveRotation) Body.setAngularVelocity(body, spin[index]);
+    });
   }
 
   setDynamic(dynamic: boolean) {
@@ -304,12 +315,13 @@ export class Ragdoll {
     return pose;
   }
 
-  finishStep(previous: ReturnType<typeof capturePose>) {
+  finishStep(previous: ReturnType<typeof capturePose>, pinned?: MatterJS.BodyType) {
     // Only project body overlaps while self-collision is enabled; room bounds always apply.
-    const options = { selfCollision: this.selfCollisionEnabled };
+    const options = { selfCollision: this.selfCollisionEnabled, pinned };
+    const heldPose = pinned ? { ...pinned.position, angle: pinned.angle } : null;
     let separated = separateBodies(
       this.bodies,
-      this.bodies.some((body) => body.isStatic) ? 128 : 32,
+      pinned || this.bodies.some((body) => body.isStatic) ? 128 : 32,
       options,
     );
     // Crowded floor contacts often need more iterations. Continue the current
@@ -318,8 +330,11 @@ export class Ragdoll {
     this.syncAnchors();
     if (!separated) {
       restorePose(this.bodies, previous);
-      // The held point already follows the cursor in `previous`; clear any new
-      // contacts with the restored limbs without moving that pinned point back.
+      // Keep the current pivot and dynamic rotation even if other limbs need rollback.
+      if (pinned && heldPose) {
+        Body.setPosition(pinned, heldPose);
+        Body.setAngle(pinned, heldPose.angle);
+      }
       separateBodies(this.bodies, 512, options);
       this.syncAnchors();
     }

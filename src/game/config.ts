@@ -12,6 +12,7 @@ export const MAX_TRAVEL_PER_SUBSTEP = 6;
 export const MAX_SUBSTEPS = 64;
 export const STANDING_OFFSET_Y = 124;
 export const REST_SPEED = 12; // px/s, includes rotational motion at each part's edge
+export const STANDING_SPEED = 50; // px/s, maximum linear speed among all body parts
 export const REST_CONFIRM_MS = 300;
 export const REST_OBSERVATION_MS = 200;
 export const TORSO_ALIGNMENT_MS = 600;
@@ -22,12 +23,10 @@ export type PostureState =
   | "untangling"
   | "waiting"
   | "recovering";
-export type Tool = "grab" | "push";
 export interface LabSettings {
   experiment: PhysicsExperiment;
   gravity: number;
   bounce: number;
-  strength: number;
   debug: boolean;
   idleSeconds: number;
   repairSeconds: number;
@@ -50,15 +49,17 @@ export interface LabStats {
   idleRemaining: number;
   selfCollision: boolean;
 }
+export const FIXED_SETTINGS = Object.freeze({
+  gravity: 2.5,
+  idleSeconds: 2,
+  repairSeconds: 2,
+  throwScale: 0.5,
+  lag: 0,
+});
 export const DEFAULT_SETTINGS: LabSettings = {
+  ...FIXED_SETTINGS,
   // Adopted stage 1 baseline (2026-11-08); experiment 1 remains for comparison.
   experiment: 2,
-  gravity: 1,
   bounce: 0.55,
-  strength: 1,
   debug: false,
-  idleSeconds: 3,
-  repairSeconds: 1.5,
-  throwScale: 0.35,
-  lag: 0.65,
 };

@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { Matter } from "./matter";
 import {
   DEFAULT_SETTINGS,
+  FIXED_SETTINGS,
   FIXED_STEP,
   REFERENCE_STEP,
   MAX_TRAVEL_PER_SUBSTEP,
@@ -9,7 +10,6 @@ import {
   ROOM,
   type LabSettings,
   type LabStats,
-  type Tool,
 } from "./config";
 import { Ragdoll } from "./Ragdoll";
 import { PointerController } from "./PointerController";
@@ -61,14 +61,13 @@ export class PhysicsScene extends Phaser.Scene {
     canvas.tabIndex = 0;
     canvas.setAttribute(
       "aria-label",
-      "물리 실험실. 인형을 마우스로 잡고 흔들거나 던지세요. 1 잡기, 2 밀치기, R 재배치, 스페이스 일시정지.",
+      "물리 실험실. 인형을 마우스로 잡고 흔들거나 던지세요. R 재배치, 스페이스 일시정지.",
     );
     this.pointer = new PointerController(
       canvas,
       this.matter.world,
       () => this.doll,
       () => this.paused,
-      (point) => this.flash(point),
       () => this.posture.interact(),
     );
     this.pointer.experiment = this.settings.experiment;
@@ -91,12 +90,6 @@ export class PhysicsScene extends Phaser.Scene {
     if (document.hidden) this.setPaused(true);
   };
 
-  setTool(tool: Tool) {
-    this.pointer.cancel();
-    this.pointer.tool = tool;
-    this.game.canvas.dataset.tool = tool;
-  }
-
   setPaused(value: boolean) {
     this.pointer.cancel();
     this.paused = value;
@@ -117,14 +110,14 @@ export class PhysicsScene extends Phaser.Scene {
 
   configure(settings: LabSettings) {
     if (this.settings.experiment !== settings.experiment) this.pointer.cancel();
-    this.settings = { ...settings };
+    // Fixed stage-one values also apply to configuration calls outside the UI.
+    this.settings = { ...settings, ...FIXED_SETTINGS };
     this.pointer.experiment = settings.experiment;
     this.posture.setExperiment(settings.experiment);
-    this.matter.world.setGravity(0, settings.gravity);
+    this.matter.world.setGravity(0, this.settings.gravity);
     this.doll.setBounce(settings.bounce);
-    this.doll.configureLag(settings.lag);
-    this.pointer.strength = settings.strength;
-    this.pointer.throwScale = settings.throwScale;
+    this.doll.configureLag(this.settings.lag);
+    this.pointer.throwScale = this.settings.throwScale;
   }
 
   update(_time: number, delta: number) {
@@ -140,19 +133,18 @@ export class PhysicsScene extends Phaser.Scene {
               : Math.hypot(part.body.velocity.x, part.body.velocity.y),
           ),
         );
-        const slices = this.pointer.grip
-          ? 1
-          : Math.min(
-              MAX_SUBSTEPS,
+        const slices = Math.min(
+          MAX_SUBSTEPS,
+          Math.max(
+            1,
+            Math.ceil(
               Math.max(
-                1,
-                Math.ceil(
-                  (speed * FIXED_STEP) /
-                    REFERENCE_STEP /
-                    MAX_TRAVEL_PER_SUBSTEP,
-                ),
-              ),
-            );
+                (speed * FIXED_STEP) / REFERENCE_STEP,
+                this.pointer.travelDistance,
+              ) / MAX_TRAVEL_PER_SUBSTEP,
+            ),
+          ),
+        );
         const step = FIXED_STEP / slices;
         for (let slice = 0; slice < slices; slice++) {
           this.posture.beforeStep(
@@ -160,12 +152,13 @@ export class PhysicsScene extends Phaser.Scene {
             Boolean(this.pointer.grip),
             this.settings,
           );
-          this.pointer.step();
+          this.pointer.step(slices - slice);
           if (!this.posture.controlsPose) {
             this.doll.limitAngularSpeed();
             const previous = this.doll.capturePose();
             this.matter.world.step(step);
-            this.doll.finishStep(previous);
+            this.pointer.afterStep();
+            this.doll.finishStep(previous, this.pointer.held);
             this.posture.afterStep(step);
             this.doll.limitAngularSpeed();
           }
@@ -186,19 +179,6 @@ export class PhysicsScene extends Phaser.Scene {
     }
   }
 
-  private flash(point: MatterJS.Vector) {
-    const effect = this.add
-      .circle(point.x, point.y, 10)
-      .setStrokeStyle(4, 0xec9b62);
-    this.tweens.add({
-      targets: effect,
-      radius: 42,
-      alpha: 0,
-      duration: 220,
-      onComplete: () => effect.destroy(),
-    });
-  }
-
   snapshot(): LabStats {
     const { Composite } = Matter;
     const world = this.matter.world
@@ -207,9 +187,7 @@ export class PhysicsScene extends Phaser.Scene {
       experiment: this.settings.experiment,
       alignmentRemaining: this.posture.alignmentRemaining(this.settings.repairSeconds),
       fps: Math.round(this.game.loop.actualFps),
-      speed: Math.round(
-        Math.max(...this.doll.parts.map((part) => part.body.speed)) * 60,
-      ),
+      speed: Math.round(this.doll.linearSpeed),
       bodies: Composite.allBodies(world).length,
       joints: Composite.allConstraints(world).length,
       grabbed: this.pointer.grabbed,
