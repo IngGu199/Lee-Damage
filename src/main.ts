@@ -4,6 +4,8 @@ import "./style.css";
 import { PhysicsScene } from "./game/PhysicsScene";
 import { PhotoSession } from "./photo/PhotoSession";
 import { PhotoEditor } from "./photo/PhotoEditor";
+import { APPEARANCE_LIMITS, defaultAppearanceSettings, INJURY_KINDS, PHOTO_BASE_SIZE } from "./game/appearanceConfig";
+import { APPEARANCE_RULES } from "./game/ImpactAppearance";
 import {
   ANGULAR_INERTIA_SCALE,
   DEFAULT_SETTINGS,
@@ -15,6 +17,8 @@ import {
 } from "./game/config";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
+const initialAppearance = defaultAppearanceSettings();
+const injuryLabels = { bruise: "멍 크기", scratch: "상처 크기", bandage: "반창고 크기" };
 app.innerHTML = `
   <header class="site-header">
     <a class="brand" href="./" aria-label="Lee Damage 홈"><span class="brand-mark">L<span>↗</span></span>LEE DAMAGE<span class="brand-dot">®</span></a>
@@ -37,12 +41,18 @@ app.innerHTML = `
       <aside class="lab-panel" aria-label="실험 설정">
         <section class="photo-panel" aria-labelledby="face-panel-title">
           <p class="eyebrow">MAKE IT YOURS</p><h2 id="face-panel-title">인형의 얼굴</h2>
-          <p class="photo-panel-copy" id="photo-state">내 사진을 원 안에 맞춰 붙여 보세요.</p>
+          <p class="photo-panel-copy" id="photo-state">내 사진을 붙이거나 얼굴 윤곽을 직접 그려 보세요.</p>
           <div class="photo-panel-actions"><button id="photo-open" class="photo-primary" disabled>사진 적용 +</button><button id="photo-remove" disabled>기본 얼굴로</button></div>
           <p class="photo-panel-note">사진은 브라우저 안에서만 처리해요.<br>재배치해도 유지 · 새로고침하면 해제</p>
           <details class="appearance-preview"><summary>충격에 따른 변화 미리보기</summary><p>물리적인 힘 없이 사진과 상처의 변화만 확인해요.</p><label for="impact-part">확인할 부위</label><select id="impact-part"><option value="0">머리</option><option value="1">몸통</option><option value="3">왼팔</option><option value="5">오른팔</option><option value="7">왼다리</option><option value="9">오른다리</option></select><button id="impact-preview" disabled>충격 미리보기</button><button id="appearance-clear" disabled>상처 지우기</button><p id="appearance-state" role="status" aria-live="polite">상처 0개</p></details>
         </section>
         <div class="panel-heading"><h2>실험 노트</h2><span>LAB NOTES</span></div>
+        <section class="appearance-settings" aria-label="사진과 자국 크기 설정">
+          <label for="photo-scale">사진 크기 배수 <output id="photo-scale-value">${initialAppearance.photoScale.toFixed(1)}×</output></label>
+          <input id="photo-scale" type="range" min="${APPEARANCE_LIMITS.photoScale.min}" max="${APPEARANCE_LIMITS.photoScale.max}" step="${APPEARANCE_LIMITS.photoScale.step}" value="${initialAppearance.photoScale}" disabled>
+          ${INJURY_KINDS.map((kind) => `<label for="injury-scale-${kind}">${injuryLabels[kind]} <output id="injury-scale-${kind}-value">1.00×</output></label><input id="injury-scale-${kind}" type="range" min="${APPEARANCE_LIMITS.injuryScale.min}" max="${APPEARANCE_LIMITS.injuryScale.max}" step="${APPEARANCE_LIMITS.injuryScale.step}" value="1" disabled>`).join("")}
+          <p>사진을 키워도 충돌 범위는 원래 머리 도형이에요.<br>자국은 테두리까지 무작위로, 최대 ${APPEARANCE_RULES.maxInjuries}개 표시해요.</p>
+        </section>
         <p class="panel-copy">조작 종료 2초 뒤<br>몸통 기준으로 관절을 정렬합니다.</p>
         <dl class="fixed-settings" aria-label="확정된 물리 설정">
           <div><dt>탄성</dt><dd>95%</dd></div>
@@ -79,7 +89,8 @@ const photoEditor = new PhotoEditor(photoSession, {
   end: () => scene.endPhotoEdit(),
   apply: (photo) => scene.applyPhoto(photo),
   clear: () => scene.clearPhoto(),
-  previewSize: () => scene.game.canvas.getBoundingClientRect().width / ROOM.width * 72,
+  previewSize: () => scene.game.canvas.getBoundingClientRect().width / ROOM.width * Math.max(PHOTO_BASE_SIZE, scene.face.displaySize),
+  photoScale: () => scene.appearanceSettings.photoScale,
 });
 const settings = { ...DEFAULT_SETTINGS };
 let ready = false;
@@ -92,8 +103,8 @@ function renderStats(stats: LabStats) {
   element("photo-open").textContent = face?.active ? "사진 편집 ↗" : "사진 적용 +";
   element("photo-state").textContent = face?.active
     ? face.frameCount > 1 ? `사진 적용 중 · 충격별 변형 ${face.frameCount - 1}단계 준비됨` : "사진 적용 중 · 수동으로 맞춘 얼굴"
-    : "내 사진을 원 안에 맞춰 붙여 보세요.";
-  element("appearance-state").textContent = `상처 ${scene.appearance.injuries.length}개 · 머리 충격 ${scene.appearance.headHits}회`;
+    : "내 사진을 붙이거나 얼굴 윤곽을 직접 그려 보세요.";
+  element("appearance-state").textContent = `자국 ${scene.appearance.injuries.length} / ${APPEARANCE_RULES.maxInjuries}개 · 머리 충격 ${scene.appearance.headHits}회`;
   element("fps").textContent = String(stats.fps);
   element("speed").textContent = String(stats.speed);
   element("bodies").textContent = String(stats.bodies - 4);
@@ -143,7 +154,19 @@ scene.onReady = () => {
     button.disabled = false;
   });
   scene.configure(settings);
+  app.querySelectorAll<HTMLInputElement>(".appearance-settings input").forEach((input) => { input.disabled = false; });
 };
+
+element<HTMLInputElement>("photo-scale").addEventListener("input", (event) => {
+  if (!ready) return;
+  scene.configureAppearance({ photoScale: Number((event.target as HTMLInputElement).value) });
+  element("photo-scale-value").textContent = `${scene.appearanceSettings.photoScale.toFixed(1)}×`;
+});
+for (const kind of INJURY_KINDS) element<HTMLInputElement>(`injury-scale-${kind}`).addEventListener("input", (event) => {
+  if (!ready) return;
+  scene.configureAppearance({ injuryScale: { [kind]: Number((event.target as HTMLInputElement).value) } });
+  element(`injury-scale-${kind}-value`).textContent = `${scene.appearanceSettings.injuryScale[kind].toFixed(2)}×`;
+});
 
 element("photo-open").addEventListener("click", () => photoEditor.show());
 element("photo-remove").addEventListener("click", () => { photoSession.clear(); scene.clearPhoto(); });

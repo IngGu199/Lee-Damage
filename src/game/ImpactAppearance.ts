@@ -1,8 +1,9 @@
 import type { Point } from "../photo/PhotoTransform";
+import type { InjuryKind } from "./appearanceConfig";
 
 /** Initial stage-two tuning, separate from the fixed stage-one physics values. */
 export const APPEARANCE_RULES = Object.freeze({
-  minSpeed: 220, cooldownMs: 450, headHitsPerVariant: 3, maxInjuries: 24,
+  minSpeed: 220, cooldownMs: 450, headHitsPerVariant: 3, maxInjuries: 100,
 });
 export interface AppearanceImpact {
   part: number;
@@ -14,8 +15,9 @@ export interface AppearanceImpact {
 export interface Injury {
   part: number;
   local: Point;
+  photoPoint?: Point; // normalized image coordinates, retained when the photo is resized
   angle: number;
-  kind: "bruise" | "scratch" | "bandage";
+  kind: InjuryKind;
 }
 
 export class ImpactAppearance {

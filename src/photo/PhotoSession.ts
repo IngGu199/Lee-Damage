@@ -1,4 +1,4 @@
-import { canvasOf, type PhotoTransform, type Point } from "./PhotoTransform";
+import { canvasOf, type PhotoTransform, type Point, type PhotoMask } from "./PhotoTransform";
 
 export interface PhotoDraft {
   source: HTMLCanvasElement;
@@ -6,6 +6,7 @@ export interface PhotoDraft {
   faces: Point[][];
   faceIndex: number;
   edit: PhotoTransform;
+  mask: PhotoMask;
 }
 export interface AppliedPhoto extends PhotoDraft {
   frames: HTMLCanvasElement[];

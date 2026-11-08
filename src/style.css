@@ -32,6 +32,11 @@ select {
 button.photo-primary { background: #c4dc77; border-color: #aac660; color: #293b21; font-weight: 700; }
 button.photo-primary:hover { background: #b6d466; }
 .photo-panel-note { margin: 13px 0 0; font-size: 10px; color: #7b8374; line-height: 1.8; }
+.appearance-settings { display: grid; gap: 8px; padding: 14px 0 18px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.appearance-settings label { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; color: #59684f; }
+.appearance-settings output { color: #5d7730; font-variant-numeric: tabular-nums; }
+.appearance-settings input { width: 100%; margin: 0 0 5px; accent-color: #758f45; }
+.appearance-settings p { font-size: 10px; color: #7b8374; line-height: 1.8; margin: 3px 0 0; }
 .appearance-preview { margin-top: 20px; font-size: 11px; }
 .appearance-preview summary { cursor: pointer; color: #657253; }
 .appearance-preview p { line-height: 1.8; color: #7b8374; }
@@ -56,6 +61,13 @@ button.photo-primary:hover { background: #b6d466; }
 .photo-status { min-height: 42px; font-size: 11px; line-height: 1.8; color: #5d704c; margin: 0 0 12px; }
 .photo-faces { display: flex; flex-wrap: wrap; gap: 5px; }
 .photo-faces:not(:empty) { margin-bottom: 12px; }
+.photo-mask-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 12px 0; }
+.photo-mask-modes button { padding: 9px 6px; font-size: 11px; }
+#photo-contour-tools { margin: 0 0 14px; padding: 12px; border: 1px solid #d5dacb; border-radius: 9px; background: #eef1e6; }
+.photo-contour-tool-row, .photo-contour-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.photo-contour-tool-row button, .photo-contour-actions button { padding: 7px 8px; font-size: 10px; }
+.photo-contour-status { font-size: 10px; color: #5c6c4b; line-height: 1.8; margin: 10px 0; }
+#photo-contour-tools .photo-landmark-toggle { margin-top: 10px; font-size: 10px; }
 .photo-dialog [aria-pressed="true"] { background: #d4e5a8; border-color: #7e9b45; }
 .photo-sliders { display: grid; gap: 7px; }
 .photo-sliders label { display: flex; justify-content: space-between; color: #59684e; font-size: 11px; margin-top: 4px; }
@@ -75,6 +87,7 @@ button.photo-primary:hover { background: #b6d466; }
 .photo-dialog .photo-clear { background: transparent; color: #77836c; }
 @media (max-width: 760px) {
   .photo-panel { grid-column: 1 / -1; }
+  .appearance-settings { grid-column: 1 / -1; }
   .photo-dialog { padding: 20px; }
   .photo-layout { grid-template-columns: minmax(0, 1fr) 220px; gap: 18px; }
   .photo-heading h2 { font-size: 23px; }

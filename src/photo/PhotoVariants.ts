@@ -1,14 +1,15 @@
-import { canvasOf, MASK_RADIUS, PHOTO_SIZE, type Point } from "./PhotoTransform";
+import { canvasOf, PHOTO_SIZE, type Point } from "./PhotoTransform";
 
 interface Deformation extends Point { dx: number; dy: number; radius: number }
 
 /** Inverse sampling retains a fixed canvas/mask. Every variant starts from the original. */
 export async function makeVariants(
-  original: HTMLCanvasElement, landmarks: Point[], cancelled: () => boolean,
+  original: HTMLCanvasElement, landmarks: Point[], cancelled: () => boolean, mask: HTMLCanvasElement,
 ): Promise<HTMLCanvasElement[]> {
   if (!landmarks[1] || !landmarks[61] || !landmarks[291]) return [];
   const source = original.getContext("2d")!.getImageData(0, 0, PHOTO_SIZE, PHOTO_SIZE);
   const variants: HTMLCanvasElement[] = [];
+  const maskPixels = mask.getContext("2d")!.getImageData(0, 0, PHOTO_SIZE, PHOTO_SIZE).data;
   for (const strength of [1, 1.7]) {
     const deformations: Deformation[] = [
       { ...landmarks[1], dx: 12 * strength, dy: 5 * strength, radius: 88 },
@@ -23,7 +24,7 @@ export async function makeVariants(
         if (cancelled()) return [];
       }
       for (let x = 0; x < PHOTO_SIZE; x++) {
-        if (Math.hypot(x + 0.5 - PHOTO_SIZE / 2, y + 0.5 - PHOTO_SIZE / 2) > PHOTO_SIZE * MASK_RADIUS) continue;
+        if (!maskPixels[(y * PHOTO_SIZE + x) * 4 + 3]) continue;
         let sx = x, sy = y;
         for (const point of deformations) {
           const d = Math.hypot(x - point.x, y - point.y) / point.radius;
@@ -44,9 +45,9 @@ export async function makeVariants(
       }
     }
     ctx.putImageData(pixels, 0, 0);
-    // Match the base frame's antialiased circular boundary exactly.
+    // Use the same circular or custom silhouette for every frame.
     ctx.globalCompositeOperation = "destination-in";
-    ctx.beginPath(); ctx.arc(PHOTO_SIZE / 2, PHOTO_SIZE / 2, PHOTO_SIZE * MASK_RADIUS, 0, Math.PI * 2); ctx.fill();
+    ctx.drawImage(mask, 0, 0);
     variants.push(output);
   }
   return variants;

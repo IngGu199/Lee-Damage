@@ -7,6 +7,22 @@ export interface PhotoTransform {
   flip: boolean;
 }
 
+/** Contour vertices live in source-image coordinates, so edits move image and mask together. */
+export interface PhotoMask {
+  kind: "circle" | "contour";
+  points: Point[];
+  closed: boolean;
+  smooth: boolean;
+}
+
+export function defaultMask(): PhotoMask {
+  return { kind: "circle", points: [], closed: false, smooth: false };
+}
+
+export function copyMask(mask: PhotoMask): PhotoMask {
+  return { ...mask, points: mask.points.map((point) => ({ ...point })) };
+}
+
 export const PHOTO_SIZE = 512;
 export const MASK_RADIUS = 0.47;
 
@@ -26,6 +42,63 @@ export function transformPoint(point: Point, source: Point, edit: PhotoTransform
     y: PHOTO_SIZE / 2 + edit.y + x * s + y * c };
 }
 
+export function inversePoint(point: Point, source: Point, edit: PhotoTransform): Point {
+  const x = point.x - PHOTO_SIZE / 2 - edit.x, y = point.y - PHOTO_SIZE / 2 - edit.y;
+  const c = Math.cos(edit.rotation), s = Math.sin(edit.rotation);
+  return { x: source.x / 2 + (x * c + y * s) / edit.scale * (edit.flip ? -1 : 1),
+    y: source.y / 2 + (-x * s + y * c) / edit.scale };
+}
+
+export function contourPath(points: Point[], smooth: boolean, closed: boolean): Path2D {
+  const path = new Path2D();
+  if (!points.length) return path;
+  if (smooth && closed && points.length >= 3) {
+    const last = points.at(-1)!, first = points[0];
+    path.moveTo((last.x + first.x) / 2, (last.y + first.y) / 2);
+    points.forEach((point, index) => {
+      const next = points[(index + 1) % points.length];
+      path.quadraticCurveTo(point.x, point.y, (point.x + next.x) / 2, (point.y + next.y) / 2);
+    });
+  } else {
+    path.moveTo(points[0].x, points[0].y);
+    for (const point of points.slice(1)) path.lineTo(point.x, point.y);
+  }
+  if (closed) path.closePath();
+  return path;
+}
+
+export function photoMaskPath(mask: PhotoMask, source: Point, edit: PhotoTransform): Path2D {
+  if (mask.kind === "contour") {
+    if (!mask.closed) return new Path2D();
+    return contourPath(mask.points.map((p) => transformPoint(p, source, edit)), mask.smooth, true);
+  }
+  const path = new Path2D();
+  path.arc(PHOTO_SIZE / 2, PHOTO_SIZE / 2, PHOTO_SIZE * MASK_RADIUS, 0, Math.PI * 2);
+  return path;
+}
+
+export function renderMask(mask: PhotoMask, source: Point, edit: PhotoTransform) {
+  const canvas = canvasOf(PHOTO_SIZE), ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#fff";
+  ctx.fill(photoMaskPath(mask, source, edit), "evenodd");
+  return canvas;
+}
+
+export function fitContour(mask: PhotoMask, source: Point, edit: PhotoTransform): PhotoTransform {
+  if (mask.points.length < 3) return { ...edit };
+  const bounds = (points: Point[]) => ({
+    minX: Math.min(...points.map((p) => p.x)), maxX: Math.max(...points.map((p) => p.x)),
+    minY: Math.min(...points.map((p) => p.y)), maxY: Math.max(...points.map((p) => p.y)),
+  });
+  const first = bounds(mask.points.map((p) => transformPoint(p, source, edit)));
+  const scale = PHOTO_SIZE * MASK_RADIUS * 2 / Math.max(1, first.maxX - first.minX, first.maxY - first.minY);
+  const next = { ...edit, scale: edit.scale * scale, x: 0, y: 0 };
+  const final = bounds(mask.points.map((p) => transformPoint(p, source, next)));
+  next.x = PHOTO_SIZE / 2 - (final.minX + final.maxX) / 2;
+  next.y = PHOTO_SIZE / 2 - (final.minY + final.maxY) / 2;
+  return next;
+}
+
 export function defaultTransform(width: number, height: number): PhotoTransform {
   return { x: 0, y: 0, scale: PHOTO_SIZE / Math.min(width, height), rotation: 0, flip: false };
 }
@@ -43,19 +116,22 @@ export function fitFace(points: Point[], width: number, height: number): PhotoTr
   return edit;
 }
 
-export function renderPhoto(source: HTMLCanvasElement, edit: PhotoTransform, masked = true) {
+export function renderPhoto(source: HTMLCanvasElement, edit: PhotoTransform, masked: boolean | PhotoMask = true) {
   const output = canvasOf(PHOTO_SIZE);
   const ctx = output.getContext("2d")!;
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
-  if (masked) {
-    ctx.beginPath();
-    ctx.arc(PHOTO_SIZE / 2, PHOTO_SIZE / 2, PHOTO_SIZE * MASK_RADIUS, 0, Math.PI * 2);
-    ctx.clip();
-  }
+  ctx.save();
   ctx.translate(PHOTO_SIZE / 2 + edit.x, PHOTO_SIZE / 2 + edit.y);
   ctx.rotate(edit.rotation);
   ctx.scale(edit.scale * (edit.flip ? -1 : 1), edit.scale);
   ctx.drawImage(source, -source.width / 2, -source.height / 2);
+  ctx.restore();
+  if (masked) {
+    // Match the variants' alpha composition, including fractional edge coverage.
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.drawImage(renderMask(typeof masked === "boolean" ? defaultMask() : masked,
+      { x: source.width, y: source.height }, edit), 0, 0);
+  }
   return output;
 }

@@ -47,6 +47,7 @@ export function drawDoll(
   debug: boolean,
   photoActive = false,
   overlay?: Phaser.GameObjects.Graphics,
+  hideHead = false,
 ) {
   const { Vector } = Matter;
   g.clear();
@@ -66,8 +67,10 @@ export function drawDoll(
     g.fillStyle(part.color);
     g.lineStyle(2.5, 0x3c4943);
     if (part.radius) {
-      g.fillCircle(body.position.x, body.position.y, part.radius);
-      g.strokeCircle(body.position.x, body.position.y, part.radius);
+      if (!hideHead) {
+        g.fillCircle(body.position.x, body.position.y, part.radius);
+        g.strokeCircle(body.position.x, body.position.y, part.radius);
+      }
       const local = (x: number, y: number) =>
         Vector.add(body.position, Vector.rotate({ x, y }, body.angle));
       if (!photoActive) {
