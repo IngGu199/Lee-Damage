@@ -1,6 +1,6 @@
 {
   "name": "lee-damage-physics-prototype",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,10 +8,12 @@
     "check": "tsc --noEmit",
     "build": "npm run check && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:photo": "playwright test tests/photo.spec.ts"
   },
   "dependencies": {
     "@fontsource-variable/noto-sans-kr": "5.3.1",
+    "@mediapipe/tasks-vision": "1.2.2",
     "phaser": "3.90.0"
   },
   "devDependencies": {

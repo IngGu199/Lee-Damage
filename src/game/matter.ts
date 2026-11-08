@@ -1,5 +1,12 @@
 import Phaser from "phaser";
 
+// This supported bundled Matter option is missing from Phaser's declaration.
+declare global {
+  namespace MatterJS {
+    interface IConstraintDefinition { angularStiffness?: number }
+  }
+}
+
 // Phaser 3.90 exposes CustomMain at runtime but omits this property from phaser.d.ts.
 // Reuse its bundled Matter declarations rather than installing a second engine.
 export const Matter = (

@@ -2,6 +2,8 @@ import Phaser from "phaser";
 import "@fontsource-variable/noto-sans-kr";
 import "./style.css";
 import { PhysicsScene } from "./game/PhysicsScene";
+import { PhotoSession } from "./photo/PhotoSession";
+import { PhotoEditor } from "./photo/PhotoEditor";
 import {
   ANGULAR_INERTIA_SCALE,
   DEFAULT_SETTINGS,
@@ -16,12 +18,12 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <header class="site-header">
     <a class="brand" href="./" aria-label="Lee Damage 홈"><span class="brand-mark">L<span>↗</span></span>LEE DAMAGE<span class="brand-dot">®</span></a>
-    <div class="header-meta"><span class="status-dot"></span>개발 중인 작은 실험<span class="version">BUILD 0.5</span></div>
+    <div class="header-meta"><span class="status-dot"></span>개발 중인 작은 실험<span class="version">BUILD 0.6</span></div>
   </header>
   <main>
     <section class="intro" aria-labelledby="title">
-      <div><p class="eyebrow">THE RAGDOLL PROJECT <span>/ 01</span></p><h1 id="title">물리 실험실<span class="title-dot">.</span></h1><p class="intro-copy">일단, 잡고 흔들어 보세요. 나머지는 중력에 맡기고.</p></div>
-      <div class="stage-label"><span>PROTOTYPE</span><strong>01 <span>/ 08</span></strong><small>최소 물리 시제품</small></div>
+      <div><p class="eyebrow">THE RAGDOLL PROJECT <span>/ 02</span></p><h1 id="title">사진 실험실<span class="title-dot">.</span></h1><p class="intro-copy">얼굴을 붙이고, 잡고 흔들어 보세요. 나머지는 중력에 맡기고.</p></div>
+      <div class="stage-label"><span>PROTOTYPE</span><strong>02 <span>/ 08</span></strong><small>사진 적용 시제품</small></div>
     </section>
     <div class="workspace">
       <section class="playground" aria-label="물리 시제품">
@@ -33,6 +35,13 @@ app.innerHTML = `
         <div class="game-footer"><span><span class="status-dot" id="live-dot"></span><span id="live-status">준비 중</span></span><span id="grip-status">인형의 어느 부위든 잡을 수 있어요</span><span class="engine-label">PHASER + MATTER</span></div>
       </section>
       <aside class="lab-panel" aria-label="실험 설정">
+        <section class="photo-panel" aria-labelledby="face-panel-title">
+          <p class="eyebrow">MAKE IT YOURS</p><h2 id="face-panel-title">인형의 얼굴</h2>
+          <p class="photo-panel-copy" id="photo-state">내 사진을 원 안에 맞춰 붙여 보세요.</p>
+          <div class="photo-panel-actions"><button id="photo-open" class="photo-primary" disabled>사진 적용 +</button><button id="photo-remove" disabled>기본 얼굴로</button></div>
+          <p class="photo-panel-note">사진은 브라우저 안에서만 처리해요.<br>재배치해도 유지 · 새로고침하면 해제</p>
+          <details class="appearance-preview"><summary>충격에 따른 변화 미리보기</summary><p>물리적인 힘 없이 사진과 상처의 변화만 확인해요.</p><label for="impact-part">확인할 부위</label><select id="impact-part"><option value="0">머리</option><option value="1">몸통</option><option value="3">왼팔</option><option value="5">오른팔</option><option value="7">왼다리</option><option value="9">오른다리</option></select><button id="impact-preview" disabled>충격 미리보기</button><button id="appearance-clear" disabled>상처 지우기</button><p id="appearance-state" role="status" aria-live="polite">상처 0개</p></details>
+        </section>
         <div class="panel-heading"><h2>실험 노트</h2><span>LAB NOTES</span></div>
         <p class="panel-copy">조작 종료 2초 뒤<br>몸통 기준으로 관절을 정렬합니다.</p>
         <dl class="fixed-settings" aria-label="확정된 물리 설정">
@@ -60,16 +69,31 @@ app.innerHTML = `
     </div>
     <section class="instructions" aria-label="조작 방법"><div><span class="instruction-number">01</span><p><strong>잡고, 흔들고</strong><span>잡고 있는 동안 신체끼리 충돌해요.</span></p></div><div><span class="instruction-number">02</span><p><strong>손을 놓으면, 휙</strong><span id="release-instruction">놓은 뒤에도 신체·벽·바닥과 계속 부딪혀요.</span></p></div><div><span class="instruction-number">03</span><p><strong>쉬면 다시 일어나요</strong><span id="alignment-instruction">조작 종료 2초 뒤 정렬하고, 안정되거나 50px/s 이하면 2초 뒤 기립해요.</span></p></div></section>
     <p id="notice" role="status" aria-live="polite"></p>
-    <footer class="page-footer"><span>아직은 도형이지만, 움직임부터 제대로.</span><span>PHYSICS FIRST. FUN FOLLOWS.</span></footer>
+    <footer class="page-footer"><span>작은 인형에, 나만의 얼굴을.</span><span>PHYSICS FIRST. FUN FOLLOWS.</span></footer>
   </main>`;
 
 const scene = new PhysicsScene();
+const photoSession = new PhotoSession();
+const photoEditor = new PhotoEditor(photoSession, {
+  begin: () => scene.beginPhotoEdit(),
+  end: () => scene.endPhotoEdit(),
+  apply: (photo) => scene.applyPhoto(photo),
+  clear: () => scene.clearPhoto(),
+  previewSize: () => scene.game.canvas.getBoundingClientRect().width / ROOM.width * 72,
+});
 const settings = { ...DEFAULT_SETTINGS };
 let ready = false;
 const element = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 
 function renderStats(stats: LabStats) {
+  const face = scene.face;
+  element<HTMLButtonElement>("photo-remove").disabled = !face?.active;
+  element("photo-open").textContent = face?.active ? "사진 편집 ↗" : "사진 적용 +";
+  element("photo-state").textContent = face?.active
+    ? face.frameCount > 1 ? `사진 적용 중 · 충격별 변형 ${face.frameCount - 1}단계 준비됨` : "사진 적용 중 · 수동으로 맞춘 얼굴"
+    : "내 사진을 원 안에 맞춰 붙여 보세요.";
+  element("appearance-state").textContent = `상처 ${scene.appearance.injuries.length}개 · 머리 충격 ${scene.appearance.headHits}회`;
   element("fps").textContent = String(stats.fps);
   element("speed").textContent = String(stats.speed);
   element("bodies").textContent = String(stats.bodies - 4);
@@ -115,11 +139,19 @@ scene.onNotice = (message) => {
 scene.onReady = () => {
   ready = true;
   element("loading").hidden = true;
-  app.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
+  app.querySelectorAll<HTMLButtonElement>("button:not(#photo-remove)").forEach((button) => {
     button.disabled = false;
   });
   scene.configure(settings);
 };
+
+element("photo-open").addEventListener("click", () => photoEditor.show());
+element("photo-remove").addEventListener("click", () => { photoSession.clear(); scene.clearPhoto(); });
+element("impact-preview").addEventListener("click", () => scene.previewImpact(Number(element<HTMLSelectElement>("impact-part").value)));
+element("appearance-clear").addEventListener("click", () => scene.resetAppearance());
+window.addEventListener("pagehide", (event) => {
+  if (!(event as PageTransitionEvent).persisted) photoEditor.destroy();
+});
 
 element("pause").addEventListener("click", () =>
   scene.setPaused(!scene.paused),
@@ -134,7 +166,7 @@ element<HTMLInputElement>("debug").addEventListener("change", (event) => {
   if (ready) scene.configure(settings);
 });
 window.addEventListener("keydown", (event) => {
-  if (!ready || event.repeat || event.ctrlKey || event.metaKey || event.altKey)
+  if (!ready || photoEditor.open || event.repeat || event.ctrlKey || event.metaKey || event.altKey)
     return;
   if (
     (event.target as HTMLElement).closest(

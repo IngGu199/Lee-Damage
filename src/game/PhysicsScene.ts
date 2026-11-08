@@ -14,6 +14,11 @@ import { Ragdoll } from "./Ragdoll";
 import { PointerController } from "./PointerController";
 import { drawDoll, drawRoom } from "./draw";
 import { PostureController } from "./PostureController";
+import { FaceRenderer } from "./FaceRenderer";
+import { InjuryRenderer } from "./InjuryRenderer";
+import { ImpactAppearance, type AppearanceImpact } from "./ImpactAppearance";
+import { ImpactCollector } from "./ImpactCollector";
+import type { AppliedPhoto } from "../photo/PhotoSession";
 
 export class PhysicsScene extends Phaser.Scene {
   settings: LabSettings = { ...DEFAULT_SETTINGS };
@@ -25,6 +30,14 @@ export class PhysicsScene extends Phaser.Scene {
   private accumulator = 0;
   private statsElapsed = 0;
   private graphics!: Phaser.GameObjects.Graphics;
+  private overlay!: Phaser.GameObjects.Graphics;
+  face!: FaceRenderer;
+  readonly appearance = new ImpactAppearance();
+  private injuries!: InjuryRenderer;
+  private readonly impacts = new ImpactCollector();
+  private simulationTime = 0;
+  private photoEditing = false;
+  private resumeAfterPhoto = false;
   private readonly abort = new AbortController();
   onStats: (stats: LabStats) => void = () => {};
   onReady: () => void = () => {};
@@ -32,6 +45,11 @@ export class PhysicsScene extends Phaser.Scene {
 
   constructor() {
     super("PhysicsLab");
+  }
+
+  preload() {
+    for (const kind of ["bruise", "scratch", "bandage"])
+      this.load.svg(`injury-${kind}`, `${import.meta.env.BASE_URL}assets/injuries/${kind}.svg`, { width: 128, height: 128 });
   }
 
   create() {
@@ -54,6 +72,9 @@ export class PhysicsScene extends Phaser.Scene {
       );
     drawRoom(this);
     this.graphics = this.add.graphics();
+    this.overlay = this.add.graphics().setDepth(30);
+    this.face = new FaceRenderer(this);
+    this.injuries = new InjuryRenderer(this);
     this.doll = new Ragdoll(this.matter.world, this.settings.bounce);
     this.posture = new PostureController(this.doll, this.settings.experiment);
     const canvas = this.game.canvas;
@@ -70,12 +91,15 @@ export class PhysicsScene extends Phaser.Scene {
       () => this.posture.interact(),
     );
     this.pointer.experiment = this.settings.experiment;
+    Matter.Events.on(this.matter.world.engine, "collisionStart collisionActive", this.impacts.collisions);
     window.addEventListener("blur", this.blur, { signal: this.abort.signal });
     document.addEventListener("visibilitychange", this.visibility, {
       signal: this.abort.signal,
     });
     this.events.once("shutdown", () => {
       this.pointer.destroy();
+      Matter.Events.off(this.matter.world.engine, "collisionStart collisionActive", this.impacts.collisions);
+      this.face.clear(); this.injuries.clear(); this.impacts.clear(); this.appearance.reset();
       this.abort.abort();
     });
     this.onReady();
@@ -83,17 +107,62 @@ export class PhysicsScene extends Phaser.Scene {
   }
 
   private blur = () => {
+    this.resumeAfterPhoto = false;
     this.setPaused(true);
   };
   private visibility = () => {
-    if (document.hidden) this.setPaused(true);
+    if (document.hidden) this.blur();
   };
 
   setPaused(value: boolean) {
+    if (this.photoEditing && !value) return;
     this.pointer.cancel();
     this.paused = value;
     this.accumulator = 0;
     this.publishStats();
+  }
+
+  beginPhotoEdit() {
+    this.resumeAfterPhoto = !this.paused;
+    this.photoEditing = true;
+    this.setPaused(true);
+  }
+
+  endPhotoEdit() {
+    this.photoEditing = false;
+    this.setPaused(!this.resumeAfterPhoto);
+  }
+
+  applyPhoto(photo: AppliedPhoto) {
+    this.face.apply(photo.frames);
+    this.resetAppearance();
+    this.face.update(this.doll.parts[0]);
+    this.onNotice(photo.frames.length > 1
+      ? "사진을 적용했어요. 머리에 충격이 3번 쌓이면 변형 사진으로 바뀝니다."
+      : "사진을 적용했어요. 얼굴 기준점이 없어 사진 변형은 생략합니다.");
+  }
+
+  clearPhoto() { this.face.clear(); this.resetAppearance(); this.onNotice("기본 얼굴로 돌아왔습니다."); }
+
+  resetAppearance() {
+    this.appearance.reset(); this.injuries.clear(); this.impacts.clear(); this.face.showVariant(0);
+  }
+
+  private applyImpact(impact: AppearanceImpact, preview = false) {
+    const part = this.doll.parts[impact.part];
+    if (!part) return;
+    const injury = this.appearance.accept(impact, part.body, preview);
+    if (!injury) return;
+    this.injuries.add(injury, part);
+    this.face.showVariant(this.appearance.variant);
+  }
+
+  /** Internal prototype check, no physical impulse and no score/weapon behavior. */
+  previewImpact(partIndex = 0) {
+    if (this.photoEditing) return;
+    const part = this.doll.parts[partIndex];
+    if (!part) return;
+    this.applyImpact({ part: partIndex, position: { ...part.body.position }, strength: 600, time: this.simulationTime }, true);
   }
 
   reset() {
@@ -104,6 +173,9 @@ export class PhysicsScene extends Phaser.Scene {
     this.doll = new Ragdoll(this.matter.world, this.settings.bounce);
     this.posture = new PostureController(this.doll, this.settings.experiment);
     this.accumulator = 0;
+    // Reset appearance state, retaining the selected photo and its precomputed frames.
+    this.resetAppearance();
+    this.face.update(this.doll.parts[0]);
     this.publishStats();
   }
 
@@ -141,6 +213,7 @@ export class PhysicsScene extends Phaser.Scene {
         );
         const step = FIXED_STEP / slices;
         for (let slice = 0; slice < slices; slice++) {
+          this.simulationTime += step;
           this.posture.beforeStep(
             step,
             Boolean(this.pointer.grip),
@@ -150,8 +223,10 @@ export class PhysicsScene extends Phaser.Scene {
           if (!this.posture.controlsPose) {
             this.doll.limitAngularSpeed();
             const previous = this.doll.capturePose();
+            this.impacts.beginStep(this.doll, this.posture.state !== "untangling", this.simulationTime);
             this.matter.world.step(step);
             this.pointer.afterStep();
+            this.impacts.boundaries();
             this.doll.finishStep(previous, this.pointer.held);
             this.posture.afterStep(step);
             this.doll.limitAngularSpeed();
@@ -164,8 +239,11 @@ export class PhysicsScene extends Phaser.Scene {
         this.reset();
         this.onNotice("불안정한 물리 상태를 감지해 인형을 재배치했습니다.");
       }
+      for (const impact of this.impacts.flush()) this.applyImpact(impact);
     }
-    drawDoll(this.graphics, this.doll, this.pointer, this.settings.debug);
+    drawDoll(this.graphics, this.doll, this.pointer, this.settings.debug, this.face.active, this.overlay);
+    this.face.update(this.doll.parts[0]);
+    this.injuries.update(this.doll, this.appearance.injuries);
     this.statsElapsed += delta;
     if (this.statsElapsed >= 150) {
       this.publishStats();

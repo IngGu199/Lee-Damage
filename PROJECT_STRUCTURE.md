@@ -2,8 +2,8 @@
 
 - 작성: 2026-11-04
 - 최종 갱신: 2026-11-08
-- 적용 범위: 1단계 물리 시제품, 2번 몸통 기준 관절 정렬 채택
-- 현재 진행·검증 범위: [STAGE_1_PROGRESS.md](STAGE_1_PROGRESS.md)
+- 적용 범위: 2단계 사진 시제품, 1단계의 2번 몸통 기준 관절 정렬 유지
+- 현재 진행·검증 범위: [STAGE_2_PROGRESS.md](STAGE_2_PROGRESS.md), 물리 기준은 [STAGE_1_PROGRESS.md](STAGE_1_PROGRESS.md)
 - 구성: HTML/CSS + TypeScript + Vite + Phaser 3.90 내장 Matter
 - 글꼴: `@fontsource-variable/noto-sans-kr`의 Noto Sans KR Variable을 의존성으로 포함해 로컬 제공
 
@@ -17,9 +17,18 @@ LeeDamageWeb/
 ├── tsconfig.json              # 앱·브라우저 테스트 TypeScript 설정
 ├── playwright.config.ts       # Chromium 테스트 및 개발 서버 설정
 ├── .gitignore                 # 의존성·빌드·테스트 출력 제외
+├── public/
+│   ├── models/                # Face Landmarker 모델과 출처·해시 설명
+│   └── assets/injuries/       # 투명 배경 멍·상처·반창고 SVG 검증 에셋
 ├── src/
 │   ├── main.ts                # 웹 UI 생성, 버튼·단축키, 설정 전달, Phaser 시작
 │   ├── style.css              # 페이지·도구·설정 패널·반응형 레이아웃
+│   ├── photo/
+│   │   ├── PhotoSession.ts    # 파일 검증·방향 보정·메모리 사진 상태
+│   │   ├── PhotoEditor.ts     # 편집창·원형 마스크·보정·미리보기·비동기 취소
+│   │   ├── FaceAnalyzer.ts    # 로컬 모델·WASM 준비와 특징점 검출
+│   │   ├── PhotoTransform.ts  # 사진·특징점의 공통 좌표 변환과 출력
+│   │   └── PhotoVariants.ts   # 특징점 기반 변형 사진 2장 생성
 │   └── game/
 │       ├── config.ts          # 고정 게임 좌표, 물리 간격·세분화, 공통 상태 타입
 │       ├── matter.ts          # Phaser 내장 Matter 접근 및 누락된 타입 보완
@@ -32,13 +41,19 @@ LeeDamageWeb/
 │       ├── SelfCollision.ts    # 신체 간 잔여 침투 제거·벽 경계 보정·안전 자세 복원
 │       ├── Ragdoll.ts         # 신체·관절 생성, 자기 충돌 필터·보정 전환, 안정성 검사
 │       ├── PointerController.ts # 신체 선택·동적 클릭 지점 회전·잡기·던지기·해제
+│       ├── FaceRenderer.ts    # 사진 텍스처 재사용·교체·머리 위치/각도 추종
+│       ├── ImpactCollector.ts # 물리 접촉·수동 방 경계의 충격 관찰·중복 통합
+│       ├── ImpactAppearance.ts # 충격 조건·사진 단계·상처 상태와 개수 상한
+│       ├── InjuryRenderer.ts  # 상처 에셋의 부위 로컬 좌표 부착·회전 추종
 │       └── draw.ts            # 방 격자, 도형 인형, 잡기 연결·디버그 그리기
 ├── tests/
 │   ├── physics.spec.ts        # 브라우저 조작·관절·경계·반복 재배치 검증
-│   └── collision-cycle.spec.ts # 실험 1의 자기 충돌 전환·재잡기·기립 완료 검증
+│   ├── collision-cycle.spec.ts # 실험 1의 자기 충돌 전환·재잡기·기립 완료 검증
+│   └── photo.spec.ts          # 현재 사진 편집·변형·상처·수명주기 검증 13개
 ├── README.md                  # 설치·실행·조작·검증 방법
 ├── STAGE_1_PROGRESS.md        # 1단계 누적 진행·2번 채택·현재 동작·검증 범위
 ├── STAGE_2_PLAN.md            # 2단계 사진·특징점 변형·상처 에셋의 상세 계획
+├── STAGE_2_PROGRESS.md        # 2단계 실제 구현·초기값·검증 및 남은 평가
 ├── PROJECT_STRUCTURE.md       # 이 문서
 ├── PROTOTYPE_REPORT.md        # 실험 1 당시의 구현·검증 기록
 ├── DEV_PLAN.md                # 개발 단계·완료 기준·진행 상태
@@ -54,7 +69,7 @@ LeeDamageWeb/
 | `test-results/` | Playwright 테스트 실행 결과·실패 정보 |
 | `playwright-report/` | HTML 리포터를 사용할 때 생성하는 보고서 |
 
-현재 이미지·음원·사진·모델 에셋 디렉터리는 없습니다. 도형은 Phaser Graphics로 그립니다. 한글 글꼴은 npm 의존성에서 가져오며 Vite가 `dist/assets/`에 함께 출력합니다. API·DB·백엔드 디렉터리도 없습니다.
+기본 도형은 Phaser Graphics로 그립니다. 모델·검증용 상처 SVG는 `public/`에서 제공하며 사용자 사진은 메모리에서만 관리합니다. WASM·한글 글꼴은 npm 의존성에서 가져오고 Vite가 `dist/assets/`에 출력합니다. 음원·API·DB·백엔드 디렉터리는 없습니다.
 
 ## 2. 실행과 데이터 흐름
 
@@ -66,6 +81,8 @@ LeeDamageWeb/
 6. `PhysicsScene.update()`는 120Hz 기준으로 상태 제어 → 포인터 연결점 갱신 → 물리 계산 → 클릭 지점 잔여 위치 오차 보정 → 겹침·경계·속도 보정 → 관절 정렬/복구를 수행합니다. 채택한 2번의 `TorsoAlignment`는 물리 계산 뒤 현재 몸통을 기준으로 보정하고 해당 보정 전의 속도 벡터를 복원합니다. 고속 비행·잡기 이동은 기준 스텝을 추가 분할합니다. 국소 관절 복구 중에는 엔진을 계속 실행합니다. `waiting`에서도 물리 계산을 계속하며, 시작·완료된 기립 상태와 기립 모션에서만 자세를 직접 제어합니다. 기립은 `PoseRecovery`가 담당합니다.
 7. 약 150ms마다 관절 정렬 남은 시간·자기 충돌 ON/OFF·FPS·속도·부위 수·관절 수·잡은 부위·기립 상태·대기 시간·복구 횟수를 웹 UI로 전달합니다. 신체의 좌표는 DOM에서 관리하지 않습니다.
 8. 재배치는 잡기 제약과 기존 인형 복합체를 제거하고 인형 1개를 새로 만듭니다. 벽·이벤트 리스너는 다시 만들지 않습니다.
+9. 사진 편집창은 게임 입력·물리를 멈추고 사진을 보정합니다. 특징점 검출·변형 사진 생성 후 `FaceRenderer`가 기본/변형 사진을 1개의 GPU 텍스처로 교체해 표시합니다. 사진과 편집값은 인형과 별도로 관리하므로 재배치 후에도 유지됩니다.
+10. 실제 물리 접촉과 수동 방 경계 보정에서 얻은 충격은 부위별로 통합하고 `ImpactAppearance`가 반복 간격·강도를 판단합니다. 상처는 충격 당시 부위 로컬 좌표로 저장해 최종 물리 위치·회전을 따라갑니다. 관절 정렬·기립의 자세 보정은 피격으로 누적하지 않습니다.
 
 ## 3. 수정할 기능별 파일
 
@@ -86,6 +103,11 @@ LeeDamageWeb/
 | 신체 비율·질량·관절 감각 | `src/game/Ragdoll.ts` | 머리 12, 몸통 4.5. 초기 위치와 관절 로컬 연결점을 함께 수정 |
 | 클릭 지점 회전·포인터 추종·놓을 때 속도 | `src/game/PointerController.ts` | 창 밖 해제·취소에서도 제약 제거. 각도 고정 없음 |
 | 도형·얼굴·디버그 표시 | `src/game/draw.ts` | 그림 좌표는 해당 신체의 위치·각도를 기준으로 계산 |
+| 사진 선택·편집·특징점·변형 생성 | `src/photo/` | 사진과 특징점의 변환을 일치시키고 취소된 작업 결과는 폐기 |
+| 사진 머리 추종·텍스처 교체 | `src/game/FaceRenderer.ts` | GPU 텍스처 1개 재사용. 재배치와 사진 수명을 분리 |
+| 충격 기준·사진 단계·상처 누적 | `src/game/ImpactCollector.ts`, `src/game/ImpactAppearance.ts` | 실제 충격과 자세 보정·미세 접촉·중복 하위 스텝 구분 |
+| 상처 에셋 부착 | `src/game/InjuryRenderer.ts` | 부위 로컬 좌표 사용, 최대 개수와 표시 크기 제한 |
+| 사진 회귀 검증 | `tests/photo.spec.ts` | `npm run test:photo`. 실제 모델 확인 결과는 2단계 진행 기록 참고 |
 | 회귀 검증 | `tests/physics.spec.ts` | 실제 포인터 조작과 가속된 물리 반복 검증 포함 |
 
 `matter.ts`는 Phaser의 런타임 내장 Matter와 배포 타입 선언 사이의 차이만 보완합니다. 별도의 Matter 엔진이나 업데이트 루프를 추가하는 파일이 아닙니다.
@@ -95,7 +117,7 @@ LeeDamageWeb/
 - 2단계 사진 선택·보정 UI와 특징점 분석은 새 모듈로 분리하고 `main.ts`에 계산을 몰아넣지 않습니다. 마스크·고화질 출력·특징점 기반 변형 사진 교체·투명 상처 에셋의 계획은 [STAGE_2_PLAN.md](STAGE_2_PLAN.md)를 기준으로 합니다. 플레이 중 얼굴 직접 늘이기는 포함하지 않습니다.
 - 사진 렌더링은 `draw.ts`의 도형 머리를 대체하거나 확장하되 물리 머리의 위치·회전을 기준으로 합니다.
 - 3단계에서는 무기 정의 데이터와 명중 이벤트를 별도 추가합니다. 기존 임시 밀치기는 삭제했습니다.
-- 사진과 게임 상태 저장은 아직 없으며, 추가 시 메모리 사진과 로컬 진행 저장을 분리합니다.
+- 사진은 메모리에서만 관리하며 재배치 유지·새로고침 해제를 구현했습니다. 진행·설정의 영구 저장은 아직 없으며 추가 시 사진과 분리합니다.
 - 새로운 파일이나 디렉터리를 추가할 때 이 문서의 구조와 역할 표도 함께 갱신합니다.
 
 ## 5. 개발용 진단 접근
@@ -147,4 +169,4 @@ LeeDamageWeb/
 
 팔다리의 위치·각도는 정렬·충돌 보정에 따라 바뀝니다. 정렬 이후에도 중력·마찰·실제 충돌·기존 각속도 제한은 적용됩니다. 분리 함수가 수렴하지 않는 경우에도 현재 정렬 시간은 완료되므로 경계 접촉과 비겹침을 별도로 검증해야 합니다.
 
-실험 1 당시 자동 시나리오 25개 통과 기록과 현재 2번의 검증 상태는 구분합니다. 실험 2 코드 추가 이후에는 사용자 요청에 따라 타입 검사·빌드·테스트를 실행하지 않았습니다. 기존 테스트의 모드·설정·동작 기대값은 채택 버전에 맞춰 갱신이 필요합니다. 누적 이력·남은 검증 항목은 [STAGE_1_PROGRESS.md](STAGE_1_PROGRESS.md)에 기록합니다.
+실험 1 당시 자동 시나리오 25개 통과 기록과 현재 2번의 검증 상태는 구분합니다. 1단계 마감 당시 사용자 요청에 따라 실행하지 않았던 검사와 별도로, 이번 2단계에서는 타입 검사·빌드·사진 관련 13개 Chromium 검사를 통과했습니다. 기존 물리 테스트의 모드·설정·동작 기대값 갱신과 전체 물리 검증은 별도입니다. 누적 이력은 [STAGE_1_PROGRESS.md](STAGE_1_PROGRESS.md), 이번 결과는 [STAGE_2_PROGRESS.md](STAGE_2_PROGRESS.md)에 기록합니다.
