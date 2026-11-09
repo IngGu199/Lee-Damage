@@ -20,7 +20,8 @@ async function mockFaces(page: Page, count = 1, delay = 0) {
       return Array.from({ length: count }, (_, face) => {
         const points = Array.from({ length: 478 }, () => ({ x: 256, y: 256 }));
         points[10] = { x: 256, y: 70 }; points[152] = { x: 256, y: 440 };
-        points[33] = { x: 180, y: 190 }; points[263] = { x: 330, y: 200 };
+        points[33] = { x: 180, y: 190 }; points[133] = { x: 225, y: 190 };
+        points[362] = { x: 285, y: 200 }; points[263] = { x: 330, y: 200 };
         points[1] = { x: 256, y: 260 };
         points[61] = { x: 200, y: 330 }; points[291] = { x: 310, y: 330 };
         return points.map(({ x, y }) => ({ x: (x + face * 12) * source.width / 512, y: y * source.height / 512 }));
@@ -483,80 +484,70 @@ test("random face injury centers reach photo edges without shrinking and follow 
   expect(new Set(result.map((item) => item.y)).size).toBeGreaterThan(10);
   for (const item of result) {
     expect(item.alpha).toBeGreaterThanOrEqual(128);
-    expect(item.size).toBe(17);
+    expect(item.size).toBe(25.5);
     expect(item.rotation).toBeCloseTo(item.expectedRotation, 6);
     expect(item.x).toBeCloseTo(item.expectedX, 6);
   }
 });
 
-test("photo scale starts at two and changes only visuals, with overhang excluded from grabbing", async ({ page }) => {
-  await open(page); await applyPhoto(page);
-  await expect(page.locator("#photo-scale")).toHaveValue("2");
-  const initial = await page.evaluate(() => {
+test("fixed photo scale is two, visual controls are absent and overhang stays outside the head collider", async ({ page }) => {
+  await open(page);
+  const bodyState = () => page.evaluate(() => {
     const s = window.__physicsLab, head = s.doll.parts[0].body;
-    return { face: s.face.snapshot(), body: { id: head.id, mass: head.mass, inertia: head.inertia, area: head.area,
-      vertices: head.vertices!.map((p) => ({ x: p.x, y: p.y })) }, stats: s.snapshot() };
+    return { id: head.id, mass: head.mass, inertia: head.inertia, area: head.area,
+      vertices: head.vertices!.map((p) => ({ x: p.x, y: p.y })) };
   });
-  expect(initial.face.width).toBe(144);
+  const initial = await bodyState();
+  await applyPhoto(page);
+  await expect(page.locator(".appearance-settings input")).toHaveCount(0);
+  await expect(page.locator("#photo-scale, #deformation-scale, [id^='injury-scale-']:not([id$='-value'])")).toHaveCount(0);
+  await expect(page.locator("#photo-scale-value")).toHaveText("2.0×");
+  await expect(page.locator("#deformation-scale-value")).toHaveText("1.8×");
+  for (const kind of ["bruise", "scratch", "bandage"])
+    await expect(page.locator(`#injury-scale-${kind}-value`)).toHaveText("1.5×");
+  expect(await page.evaluate(() => window.__physicsLab.face.snapshot().width)).toBe(144);
+  expect(await bodyState()).toEqual(initial);
   const box = (await page.locator("#game canvas").boundingBox())!;
   const head = await page.evaluate(() => ({ ...window.__physicsLab.doll.parts[0].body.position }));
   await page.mouse.move(box.x + (head.x + 60) / 1200 * box.width, box.y + head.y / 700 * box.height);
   await page.mouse.down();
   expect(await page.evaluate(() => window.__physicsLab.pointer.grabbed)).toBeNull();
   await page.mouse.up();
-  await page.locator("#photo-scale").fill("3");
-  await expect(page.locator("#photo-scale-value")).toHaveText("3.0×");
-  const changed = await page.evaluate(() => {
-    const s = window.__physicsLab, head = s.doll.parts[0].body;
-    return { face: s.face.snapshot(), body: { id: head.id, mass: head.mass, inertia: head.inertia, area: head.area,
-      vertices: head.vertices!.map((p) => ({ x: p.x, y: p.y })) }, stats: s.snapshot() };
-  });
-  expect(changed.face.width).toBe(216); expect(changed.body).toEqual(initial.body);
-  expect(changed.stats.bodies).toBe(14); expect(changed.stats.joints).toBe(9);
   await page.locator("#reset").click();
-  expect(await page.evaluate(() => window.__physicsLab.face.snapshot().width)).toBe(216);
+  expect(await page.evaluate(() => window.__physicsLab.face.snapshot().width)).toBe(144);
   await page.locator("#photo-open").click();
-  const displaySize = (await page.locator("#game canvas").boundingBox())!.width / 1200 * 216;
+  const displaySize = (await page.locator("#game canvas").boundingBox())!.width / 1200 * 144;
   expect((await page.locator("#photo-small").boundingBox())!.width).toBeCloseTo(displaySize, 1);
 });
 
-test("lab controls resize each injury kind immediately and existing head marks follow photo scaling", async ({ page }) => {
+test("bruise scratch and bandage use the fixed 1.5 multiplier on head and limbs after reset", async ({ page }) => {
   await open(page); await applyPhoto(page);
-  await page.evaluate(() => { const s = window.__physicsLab; s.previewImpact(); s.previewImpact(); s.previewImpact(); s.update(0, 0); });
-  const markState = () => page.evaluate(() => {
+  const marks = () => page.evaluate(() => {
     const s = window.__physicsLab;
+    for (const part of [0, 3]) for (let i = 0; i < 3; i++) s.previewImpact(part);
+    s.update(0, 0);
     const images = (s.children.getAll().filter((o) => o.type === "Image") as import("phaser").GameObjects.Image[])
       .filter((image) => image.depth === 20);
-    return s.appearance.injuries.map((mark, index) => ({ kind: mark.kind, local: { ...mark.local }, uv: { ...mark.photoPoint! },
-      size: images[index].displayWidth, x: images[index].x, y: images[index].y }));
+    return s.appearance.injuries.map((mark, index) => ({ kind: mark.kind, part: mark.part,
+      width: images[index].displayWidth, height: images[index].displayHeight }));
   });
-  const before = await markState();
-  await page.locator("#injury-scale-bruise").fill("2");
-  await page.locator("#injury-scale-scratch").fill("0.5");
-  await page.locator("#injury-scale-bandage").fill("3");
-  const after = await markState(), factors = { bruise: 2, scratch: 0.5, bandage: 3 };
-  for (let i = 0; i < after.length; i++) {
-    expect(after[i].size).toBeCloseTo(before[i].size * factors[after[i].kind], 6);
-    expect(after[i].local).toEqual(before[i].local);
+  for (let run = 0; run < 2; run++) {
+    const result = await marks();
+    expect(result.map((mark) => mark.kind)).toEqual(["bruise", "scratch", "bandage", "bruise", "scratch", "bandage"]);
+    for (const mark of result) {
+      const expected = mark.part === 0 ? 25.5 : 21.75;
+      expect(mark.width).toBeCloseTo(expected, 6); expect(mark.height).toBeCloseTo(expected, 6);
+    }
+    await page.locator("#reset").click();
   }
-  await page.locator("#photo-scale").fill("4");
-  const enlarged = await markState();
-  for (let i = 0; i < enlarged.length; i++) {
-    expect(enlarged[i].uv).toEqual(before[i].uv);
-    expect(enlarged[i].local.x).toBeCloseTo(before[i].local.x * 2, 6);
-    expect(enlarged[i].local.y).toBeCloseTo(before[i].local.y * 2, 6);
-  }
-  await page.evaluate(() => { const s = window.__physicsLab; s.previewImpact(); s.update(0, 0); });
-  expect((await markState()).at(-1)!.size).toBeCloseTo(34, 6);
 });
 
-test("random placement reaches the head rim and all limb edges regardless of mark size", async ({ page }) => {
+test("random placement reaches the head rim and all limb edges with the fixed mark size", async ({ page }) => {
   await open(page);
   const result = await page.evaluate(() => {
     const s = window.__physicsLab, saved = Math.random;
     let seed = 764129;
     Math.random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
-    s.configureAppearance({ injuryScale: { bruise: 4, scratch: 4, bandage: 4 } });
     try {
       const headRadii: number[] = [], left: number[] = [], right: number[] = [], top: number[] = [], bottom: number[] = [];
       for (let i = 0; i < 200; i++) {
@@ -573,4 +564,81 @@ test("random placement reaches the head rim and all limb edges regardless of mar
   expect(result.xMin).toBeLessThan(-9); expect(result.xMax).toBeGreaterThan(9);
   expect(result.yMin).toBeLessThan(-26); expect(result.yMax).toBeGreaterThan(26);
   expect(result.count).toBe(100);
+});
+
+test("mouth and both eyes droop at both corners while midpoints stay fixed through rotation and flip", async ({ page }) => {
+  await open(page);
+  const measurements = await page.evaluate(async () => {
+    const variantPath = "/src/photo/PhotoVariants.ts", transformPath = "/src/photo/PhotoTransform.ts";
+    const { makeVariants } = await import(variantPath) as typeof import("../src/photo/PhotoVariants");
+    const { canvasOf, defaultTransform, renderMask, renderPhoto, transformPoint } =
+      await import(transformPath) as typeof import("../src/photo/PhotoTransform");
+    const points = Array.from({ length: 478 }, () => ({ x: 256, y: 270 }));
+    points[10] = { x: 256, y: 70 }; points[152] = { x: 256, y: 440 };
+    points[61] = { x: 180, y: 350 }; points[291] = { x: 320, y: 350 };
+    points[33] = { x: 160, y: 195 }; points[133] = { x: 220, y: 195 };
+    points[362] = { x: 292, y: 195 }; points[263] = { x: 352, y: 195 };
+    const features = [[61, 291], [33, 133], [362, 263]];
+    const controls = features.flatMap(([a, b]) => [points[a], points[b],
+      { x: (points[a].x + points[b].x) / 2, y: (points[a].y + points[b].y) / 2 }]);
+    controls.push(points[1]);
+    const colors = [[255,50,50], [50,255,50], [50,50,255], [255,255,50], [255,50,255],
+      [50,255,255], [255,150,50], [150,255,50], [50,150,255], [200,200,200]];
+    const source = canvasOf(512), ctx = source.getContext("2d")!;
+    ctx.fillStyle = "#141414"; ctx.fillRect(0, 0, 512, 512);
+    controls.forEach((p, i) => {
+      ctx.fillStyle = `rgb(${colors[i].join(",")})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill();
+    });
+    const mask = { kind: "circle" as const, points: [], closed: false, smooth: false };
+    const results = [];
+    for (const mode of [{ rotation: 0, flip: false }, { rotation: 0.65, flip: false }, { rotation: -0.8, flip: true }]) {
+      const edit = { ...defaultTransform(512, 512), ...mode }, dimensions = { x: 512, y: 512 };
+      const base = renderPhoto(source, edit, mask);
+      const variants = await makeVariants(renderPhoto(source, edit, false),
+        points.map((p) => transformPoint(p, dimensions, edit)), () => false, renderMask(mask, dimensions, edit));
+      const frames = [base, ...variants].map((frame) => frame.getContext("2d")!.getImageData(0, 0, 512, 512).data);
+      const down = { x: -Math.sin(edit.rotation), y: Math.cos(edit.rotation) };
+      const mapped = controls.map((p) => transformPoint(p, dimensions, edit));
+      const centers = frames.map((pixels) => colors.map((color, index) => {
+        let weight = 0, x = 0, y = 0;
+        for (let i = 0; i < 512 * 512; i++) {
+          if (pixels[i * 4 + 3] < 128) continue;
+          // Isolate each marker so interpolated colors elsewhere cannot skew its centroid.
+          const dx = i % 512 + 0.5 - mapped[index].x, dy = Math.floor(i / 512) + 0.5 - mapped[index].y;
+          const along = dx * down.x + dy * down.y;
+          if (Math.abs(dx * down.y - dy * down.x) > 8 || along < -8 || along > 80) continue;
+          const w = Math.max(0, 1 - Math.max(...color.map((value, channel) => Math.abs(pixels[i * 4 + channel] - value))) / 65);
+          weight += w; x += (i % 512 + 0.5) * w; y += (Math.floor(i / 512) + 0.5) * w;
+        }
+        return { x: x / weight, y: y / weight, weight };
+      }));
+      results.push({
+        frames: frames.length,
+        sameAlpha: frames.slice(1).every((pixels) => pixels.every((value, i) => i % 4 !== 3 || value === frames[0][i])),
+        stages: centers.slice(1).map((stage) => stage.map((center, i) => {
+          const dx = center.x - centers[0][i].x, dy = center.y - centers[0][i].y;
+          return { down: dx * down.x + dy * down.y, lateral: dx * down.y - dy * down.x, weight: center.weight };
+        })),
+      });
+    }
+    return results;
+  });
+  for (const result of measurements) {
+    expect(result.frames).toBe(3); expect(result.sameAlpha).toBe(true);
+    for (let stage = 0; stage < 2; stage++) {
+      for (let index = 0; index < 10; index++) {
+        const point = result.stages[stage][index];
+        expect(point.weight).toBeGreaterThan(8);
+        expect(Math.abs(point.lateral)).toBeLessThan(0.8);
+        if (index % 3 === 2 || index === 9) {
+          expect(Math.abs(point.down)).toBeLessThan(0.8);
+        } else {
+          const expected = (index < 3 ? 140 : 60) * 0.14 * (stage ? 1.7 : 1) * 1.8;
+          expect(Math.abs(point.down - expected)).toBeLessThan(1.5);
+          if (stage) expect(point.down).toBeGreaterThan(result.stages[0][index].down + 3);
+        }
+      }
+    }
+  }
 });

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { PHOTO_SIZE, type Point } from "../photo/PhotoTransform";
 import type { Part } from "./Ragdoll";
-import { PHOTO_BASE_SIZE, defaultAppearanceSettings } from "./appearanceConfig";
+import { PHOTO_BASE_SIZE, FIXED_APPEARANCE } from "./appearanceConfig";
 
 /** One GPU texture; precomputed frames stay in CPU memory until selected. */
 export class FaceRenderer {
@@ -9,19 +9,13 @@ export class FaceRenderer {
   private image?: Phaser.GameObjects.Image;
   private frames: HTMLCanvasElement[] = [];
   private injuryPixels?: Uint32Array;
-  photoScale = defaultAppearanceSettings().photoScale;
   variantIndex = 0;
   customOutline = false;
 
   constructor(private readonly scene: Phaser.Scene) {}
   get active() { return this.frames.length > 0; }
   get frameCount() { return this.frames.length; }
-  get displaySize() { return PHOTO_BASE_SIZE * this.photoScale; }
-
-  setPhotoScale(scale: number) {
-    this.photoScale = scale;
-    this.image?.setDisplaySize(this.displaySize, this.displaySize);
-  }
+  get displaySize() { return PHOTO_BASE_SIZE * FIXED_APPEARANCE.photoScale; }
 
   photoToLocal(point: Point): Point {
     return { x: (point.x - 0.5) * this.displaySize, y: (point.y - 0.5) * this.displaySize };
@@ -73,7 +67,7 @@ export class FaceRenderer {
 
   snapshot() {
     return { active: this.active, frames: this.frameCount, variant: this.variantIndex, customOutline: this.customOutline,
-      photoScale: this.photoScale, width: this.image?.displayWidth ?? null, height: this.image?.displayHeight ?? null,
+      photoScale: FIXED_APPEARANCE.photoScale, width: this.image?.displayWidth ?? null, height: this.image?.displayHeight ?? null,
       x: this.image?.x ?? null, y: this.image?.y ?? null, rotation: this.image?.rotation ?? null };
   }
 

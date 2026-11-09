@@ -5,7 +5,8 @@ import {
   defaultMask, copyMask, contourPath, photoMaskPath, renderMask, fitContour,
   type Point, type PhotoMask, type PhotoTransform,
 } from "./PhotoTransform";
-import { makeVariants } from "./PhotoVariants";
+import { faceBendControls, makeVariants } from "./PhotoVariants";
+import { FIXED_APPEARANCE } from "../game/appearanceConfig";
 import { contourProblem, simplifyStroke } from "./PhotoContour";
 
 interface EditorActions {
@@ -14,7 +15,6 @@ interface EditorActions {
   apply(photo: AppliedPhoto): void;
   clear(): void;
   previewSize(): number;
-  photoScale(): number;
 }
 
 export class PhotoEditor {
@@ -463,7 +463,7 @@ export class PhotoEditor {
       const { source, edit, faces, faceIndex, mask } = this.draft;
       ctx.drawImage(renderPhoto(source, edit, false), 0, 0);
       const cropped = renderPhoto(source, edit, mask);
-      const photoScale = this.actions.photoScale(), frameScale = Math.min(1, photoScale);
+      const photoScale = FIXED_APPEARANCE.photoScale, frameScale = Math.min(1, photoScale);
       if (mask.kind === "circle") {
         smallCtx.fillStyle = "#e8bd8b"; smallCtx.beginPath(); smallCtx.arc(72, 72, 72 / Math.max(1, photoScale), 0, Math.PI * 2); smallCtx.fill();
       }
@@ -488,6 +488,11 @@ export class PhotoEditor {
         for (const index of [1, 4, 10, 33, 61, 133, 152, 168, 263, 291, 362]) {
           const p = transformPoint(faces[faceIndex][index], { x: source.width, y: source.height }, edit);
           ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2); ctx.fill();
+        }
+        const points = faces[faceIndex].map((point) => transformPoint(point, this.sourceSize(), edit));
+        ctx.fillStyle = "#ffe085";
+        for (const { center } of faceBendControls(points)) {
+          ctx.beginPath(); ctx.arc(center.x, center.y, 3, 0, Math.PI * 2); ctx.fill();
         }
       }
     }

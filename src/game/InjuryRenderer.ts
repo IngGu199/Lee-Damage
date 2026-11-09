@@ -3,11 +3,10 @@ import type { Ragdoll, Part } from "./Ragdoll";
 import type { Injury } from "./ImpactAppearance";
 import type { FaceRenderer } from "./FaceRenderer";
 import type { Point } from "../photo/PhotoTransform";
-import { defaultAppearanceSettings, type AppearanceSettings } from "./appearanceConfig";
+import { FIXED_APPEARANCE } from "./appearanceConfig";
 
 export class InjuryRenderer {
-  private readonly entries: { injury: Injury; image: Phaser.GameObjects.Image; baseSize: number }[] = [];
-  private sizeScale = defaultAppearanceSettings().injuryScale;
+  private readonly entries: { injury: Injury; image: Phaser.GameObjects.Image }[] = [];
   constructor(private readonly scene: Phaser.Scene, private readonly face: FaceRenderer) {}
 
   add(injury: Injury, part: Part) {
@@ -24,14 +23,8 @@ export class InjuryRenderer {
       injury.local = this.randomLimbPoint(part);
     }
     const image = this.scene.add.image(0, 0, `injury-${injury.kind}`)
-      .setDisplaySize(size * this.sizeScale[injury.kind], size * this.sizeScale[injury.kind]).setDepth(20);
-    this.entries.push({ injury, image, baseSize: size });
-  }
-
-  configureSizes(settings: AppearanceSettings["injuryScale"]) {
-    this.sizeScale = { ...settings };
-    for (const { injury, image, baseSize } of this.entries)
-      image.setDisplaySize(baseSize * this.sizeScale[injury.kind], baseSize * this.sizeScale[injury.kind]);
+      .setDisplaySize(size * FIXED_APPEARANCE.injuryScale[injury.kind], size * FIXED_APPEARANCE.injuryScale[injury.kind]).setDepth(20);
+    this.entries.push({ injury, image });
   }
 
   private randomLimbPoint(part: Part): Point {

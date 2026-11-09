@@ -19,11 +19,9 @@ import { InjuryRenderer } from "./InjuryRenderer";
 import { ImpactAppearance, type AppearanceImpact } from "./ImpactAppearance";
 import { ImpactCollector } from "./ImpactCollector";
 import type { AppliedPhoto } from "../photo/PhotoSession";
-import { defaultAppearanceSettings, updateAppearanceSettings, type AppearanceChanges } from "./appearanceConfig";
 
 export class PhysicsScene extends Phaser.Scene {
   settings: LabSettings = { ...DEFAULT_SETTINGS };
-  appearanceSettings = defaultAppearanceSettings();
   doll!: Ragdoll;
   pointer!: PointerController;
   posture!: PostureController;
@@ -79,7 +77,6 @@ export class PhysicsScene extends Phaser.Scene {
     this.injuries = new InjuryRenderer(this, this.face);
     this.doll = new Ragdoll(this.matter.world, this.settings.bounce);
     this.posture = new PostureController(this.doll, this.settings.experiment);
-    this.configureAppearance({});
     const canvas = this.game.canvas;
     canvas.tabIndex = 0;
     canvas.setAttribute(
@@ -146,13 +143,6 @@ export class PhysicsScene extends Phaser.Scene {
   }
 
   clearPhoto() { this.face.clear(); this.resetAppearance(); this.onNotice("기본 얼굴로 돌아왔습니다."); }
-
-  configureAppearance(changes: AppearanceChanges) {
-    this.appearanceSettings = updateAppearanceSettings(this.appearanceSettings, changes);
-    this.face?.setPhotoScale(this.appearanceSettings.photoScale);
-    this.injuries?.configureSizes(this.appearanceSettings.injuryScale);
-    if (this.doll) this.injuries?.update(this.doll, this.appearance.injuries);
-  }
 
   resetAppearance() {
     this.appearance.reset(); this.injuries.clear(); this.impacts.clear(); this.face.showVariant(0);
