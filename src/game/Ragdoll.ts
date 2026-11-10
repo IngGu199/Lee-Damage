@@ -264,8 +264,8 @@ export class Ragdoll {
       Body.setStatic(body, !dynamic);
       if (dynamic) body.restitution = this.bounce;
     }
-    this.followAngles.forEach((_, index) => {
-      this.followAngles[index] = this.joints[index].bodyA!.angle;
+    this.joints.forEach((joint, index) => {
+      this.followAngles[index] = joint.bodyA!.angle;
     });
   }
 
@@ -384,7 +384,7 @@ export class Ragdoll {
   }
 
   get maxJointGap(): number {
-    return Math.max(
+    return Math.max(0,
       ...this.joints.map((joint) => {
         const a = Vector.add(joint.bodyA!.position, joint.pointA);
         const b = Vector.add(joint.bodyB!.position, joint.pointB);
@@ -408,6 +408,34 @@ export class Ragdoll {
         body.position.y < ROOM.top - 80 ||
         body.position.y > ROOM.bottom + 80,
     );
+  }
+
+  /** Preserve connected geometry for an airborne life, then let Matter handle the fall. */
+  startAirborne(offsetY: number) {
+    for (const { body } of this.parts) Body.translate(body, { x: 0, y: offsetY });
+    this.setDynamic(true);
+    this.clearMotion();
+  }
+
+  /** Safe-step operation: constraints are actually removed, not softened. */
+  burst() {
+    this.setDynamic(true);
+    this.setSelfCollision(false);
+    const center = this.centerOfMass;
+    this.joints.forEach(joint => Composite.remove(this.composite, joint));
+    this.joints.length = 0;
+    this.clearCorrectionImpulses();
+    this.parts.forEach(({ body }, index) => {
+      const dx = body.position.x - center.x, dy = body.position.y - center.y;
+      const length = Math.hypot(dx, dy) || 1;
+      const speed = 7 + index % 3;
+      // Equal velocity changes keep the heavy head visible in the burst too.
+      Body.setVelocity(body, {
+        x: Math.max(-5, Math.min(5, body.velocity.x)) + dx / length * speed,
+        y: Math.max(-5, Math.min(5, body.velocity.y)) + dy / length * speed - 2,
+      });
+      Body.setAngularVelocity(body, (index % 2 ? 1 : -1) * (0.12 + index * 0.012));
+    });
   }
 
   destroy() {

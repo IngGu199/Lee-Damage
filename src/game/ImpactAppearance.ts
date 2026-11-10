@@ -30,6 +30,11 @@ export class ImpactAppearance {
     if (!Number.isFinite(impact.strength) || impact.strength < APPEARANCE_RULES.minSpeed ||
       (!preview && impact.time - (this.lastHit.get(impact.part) ?? -Infinity) < APPEARANCE_RULES.cooldownMs)) return null;
     if (!preview) this.lastHit.set(impact.part, impact.time);
+    return this.addInjury(impact, body);
+  }
+
+  /** Real damage has already crossed a threshold; no speed or cooldown filter here. */
+  addInjury(impact: AppearanceImpact, body: { position: Point; angle: number }): Injury {
     const dx = impact.position.x - body.position.x, dy = impact.position.y - body.position.y;
     const c = Math.cos(body.angle), s = Math.sin(body.angle);
     this.hits++;

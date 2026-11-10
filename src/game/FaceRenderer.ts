@@ -46,6 +46,8 @@ export class FaceRenderer {
     this.texture.refresh();
   }
 
+  setAlpha(alpha: number) { this.image?.setAlpha(alpha).setVisible(alpha > 0); }
+
   update(head: Part) {
     this.image?.setPosition(head.body.position.x, head.body.position.y).setRotation(head.body.angle);
   }

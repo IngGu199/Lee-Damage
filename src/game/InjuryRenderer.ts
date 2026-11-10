@@ -54,9 +54,10 @@ export class InjuryRenderer {
     return { x: 0, y: 0 };
   }
 
-  update(doll: Ragdoll, injuries: readonly Injury[]) {
+  update(doll: Ragdoll, injuries: readonly Injury[], alpha = 1) {
     while (this.entries.length && !injuries.includes(this.entries[0].injury)) this.entries.shift()!.image.destroy();
     for (const { injury, image } of this.entries) {
+      image.setAlpha(alpha).setVisible(alpha > 0);
       if (injury.photoPoint && this.face.active) injury.local = this.face.photoToLocal(injury.photoPoint);
       const body = doll.parts[injury.part].body;
       const c = Math.cos(body.angle), s = Math.sin(body.angle);

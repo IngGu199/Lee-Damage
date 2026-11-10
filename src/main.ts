@@ -5,6 +5,7 @@ import { PhysicsScene } from "./game/PhysicsScene";
 import { PhotoSession } from "./photo/PhotoSession";
 import { PhotoEditor } from "./photo/PhotoEditor";
 import { FIXED_APPEARANCE, INJURY_KINDS, PHOTO_BASE_SIZE } from "./game/appearanceConfig";
+import { DAMAGE_RULES } from "./game/damageConfig";
 import { APPEARANCE_RULES } from "./game/ImpactAppearance";
 import {
   ANGULAR_INERTIA_SCALE,
@@ -21,12 +22,12 @@ const injuryLabels = { bruise: "멍 크기", scratch: "상처 크기", bandage: 
 app.innerHTML = `
   <header class="site-header">
     <a class="brand" href="./" aria-label="Lee Damage 홈"><span class="brand-mark">L<span>↗</span></span>LEE DAMAGE<span class="brand-dot">®</span></a>
-    <div class="header-meta"><span class="status-dot"></span>개발 중인 작은 실험<span class="version">BUILD 0.6</span></div>
+    <div class="header-meta"><span class="status-dot"></span>개발 중인 작은 실험<span class="version">BUILD 0.7</span></div>
   </header>
   <main>
     <section class="intro" aria-labelledby="title">
-      <div><p class="eyebrow">THE RAGDOLL PROJECT <span>/ 02</span></p><h1 id="title">사진 실험실<span class="title-dot">.</span></h1><p class="intro-copy">얼굴을 붙이고, 잡고 흔들어 보세요. 나머지는 중력에 맡기고.</p></div>
-      <div class="stage-label"><span>PROTOTYPE</span><strong>02 <span>/ 08</span></strong><small>사진 적용 시제품</small></div>
+      <div><p class="eyebrow">THE RAGDOLL PROJECT <span>/ 03</span></p><h1 id="title">충돌 실험실<span class="title-dot">.</span></h1><p class="intro-copy">얼굴을 붙이고, 잡고 흔들어 보세요. 나머지는 중력에 맡기고.</p></div>
+      <div class="stage-label"><span>PROTOTYPE</span><strong>03 <span>/ 08</span></strong><small>체력 · 재등장 기반</small></div>
     </section>
     <div class="workspace">
       <section class="playground" aria-label="물리 시제품">
@@ -34,6 +35,7 @@ app.innerHTML = `
           <div class="tools"><span class="tool active"><span aria-hidden="true">✥</span> 잡기 · 던지기</span></div>
           <div class="play-actions"><button id="pause" class="icon-button" aria-label="일시정지" disabled>Ⅱ</button><span class="toolbar-divider"></span><button id="reset" class="reset-button" disabled><span aria-hidden="true">↻</span> 재배치 <kbd>R</kbd></button></div>
         </div>
+        <div class="health-strip" aria-label="인형 체력"><div><span>인형 체력</span><strong id="hp-value">1,000 / 1,000</strong></div><meter id="hp-meter" min="0" max="${DAMAGE_RULES.maxHp}" value="${DAMAGE_RULES.maxHp}" aria-label="남은 체력"></meter><span id="life-status">벽과 바닥에 세게 부딪히면 체력이 줄어요.</span></div>
         <div class="canvas-wrap"><div id="game"></div><div id="loading" class="game-overlay">물리 실험실을 준비하고 있어요…</div><div id="pause-overlay" class="game-overlay" hidden><span class="pause-symbol">Ⅱ</span><strong>잠깐 쉬는 중</strong><p>창을 벗어나면 자동으로 멈춥니다.</p><button id="resume">실험 계속하기 <span>→</span></button></div></div>
         <div class="game-footer"><span><span class="status-dot" id="live-dot"></span><span id="live-status">준비 중</span></span><span id="grip-status">인형의 어느 부위든 잡을 수 있어요</span><span class="engine-label">PHASER + MATTER</span></div>
       </section>
@@ -104,7 +106,16 @@ function renderStats(stats: LabStats) {
   element("photo-state").textContent = face?.active
     ? face.frameCount > 1 ? `사진 적용 중 · 충격별 변형 ${face.frameCount - 1}단계 준비됨` : "사진 적용 중 · 수동으로 맞춘 얼굴"
     : "내 사진을 붙이거나 얼굴 윤곽을 직접 그려 보세요.";
-  element("appearance-state").textContent = `자국 ${scene.appearance.injuries.length} / ${APPEARANCE_RULES.maxInjuries}개 · 머리 충격 ${scene.appearance.headHits}회`;
+  element("appearance-state").textContent = `자국 ${scene.appearance.injuries.length} / ${APPEARANCE_RULES.maxInjuries}개 · 손상 ${Math.round(stats.lostHp / stats.maxHp * 100)}%`;
+  element("hp-value").textContent = `${Math.ceil(stats.hp).toLocaleString("ko-KR")} / ${stats.maxHp.toLocaleString("ko-KR")}`;
+  element<HTMLMeterElement>("hp-meter").value = stats.hp;
+  element("life-status").textContent = {
+    alive: "벽과 바닥에 세게 부딪히면 체력이 줄어요.",
+    spawning: "새 인형이 내려오는 중 · 잡으면 바로 시작해요.",
+    dying: "새 인형을 준비해요.",
+    bursting: "인형이 흩어지고 있어요.",
+    respawnWait: "곧 새 인형이 내려와요.",
+  }[stats.lifeState];
   element("fps").textContent = String(stats.fps);
   element("speed").textContent = String(stats.speed);
   element("bodies").textContent = String(stats.bodies - 4);

@@ -37,6 +37,13 @@ export interface LabSettings {
   lag: number;
 }
 export interface LabStats {
+  lifeId: number;
+  lifeState: import("./RagdollLifecycle").LifeState;
+  hp: number;
+  maxHp: number;
+  lostHp: number;
+  simulationTime: number;
+  spawnProtected: boolean;
   experiment: PhysicsExperiment;
   alignmentRemaining: number | null;
   fps: number;

@@ -18,6 +18,10 @@ import { FaceRenderer } from "./FaceRenderer";
 import { InjuryRenderer } from "./InjuryRenderer";
 import { ImpactAppearance, type AppearanceImpact } from "./ImpactAppearance";
 import { ImpactCollector } from "./ImpactCollector";
+import { DamageSystem, type DamageHit } from "./DamageSystem";
+import { RagdollLifecycle } from "./RagdollLifecycle";
+import { DAMAGE_RULES } from "./damageConfig";
+import { separateBodies } from "./SelfCollision";
 import type { AppliedPhoto } from "../photo/PhotoSession";
 
 export class PhysicsScene extends Phaser.Scene {
@@ -33,6 +37,10 @@ export class PhysicsScene extends Phaser.Scene {
   private overlay!: Phaser.GameObjects.Graphics;
   face!: FaceRenderer;
   readonly appearance = new ImpactAppearance();
+  readonly damage = new DamageSystem();
+  readonly lifecycle = new RagdollLifecycle();
+  private burstOrigin = { x: 600, y: 350 };
+  private effects!: Phaser.GameObjects.Graphics;
   private injuries!: InjuryRenderer;
   private readonly impacts = new ImpactCollector();
   private simulationTime = 0;
@@ -73,6 +81,7 @@ export class PhysicsScene extends Phaser.Scene {
     drawRoom(this);
     this.graphics = this.add.graphics();
     this.overlay = this.add.graphics().setDepth(30);
+    this.effects = this.add.graphics().setDepth(25);
     this.face = new FaceRenderer(this);
     this.injuries = new InjuryRenderer(this, this.face);
     this.doll = new Ragdoll(this.matter.world, this.settings.bounce);
@@ -87,10 +96,15 @@ export class PhysicsScene extends Phaser.Scene {
       canvas,
       this.matter.world,
       () => this.doll,
-      () => this.paused,
-      () => this.posture.interact(),
+      () => this.paused || !this.lifecycle.interactive,
+      () => {
+        if (!this.lifecycle.interactive) return;
+        this.lifecycle.interact();
+        this.posture.interact();
+      },
     );
     this.pointer.experiment = this.settings.experiment;
+    Matter.Events.on(this.matter.world.engine, "beforeSolve", this.impacts.beforeSolve);
     Matter.Events.on(this.matter.world.engine, "collisionStart collisionActive", this.impacts.collisions);
     window.addEventListener("blur", this.blur, { signal: this.abort.signal });
     document.addEventListener("visibilitychange", this.visibility, {
@@ -98,6 +112,7 @@ export class PhysicsScene extends Phaser.Scene {
     });
     this.events.once("shutdown", () => {
       this.pointer.destroy();
+      Matter.Events.off(this.matter.world.engine, "beforeSolve", this.impacts.beforeSolve);
       Matter.Events.off(this.matter.world.engine, "collisionStart collisionActive", this.impacts.collisions);
       this.face.clear(); this.injuries.clear(); this.impacts.clear(); this.appearance.reset();
       this.abort.abort();
@@ -137,15 +152,16 @@ export class PhysicsScene extends Phaser.Scene {
     this.face.apply(photo.frames, photo.mask.kind === "contour");
     this.resetAppearance();
     this.face.update(this.doll.parts[0]);
+    this.face.setAlpha(this.lifecycle.alpha(this.simulationTime));
     this.onNotice(photo.frames.length > 1
-      ? "사진을 적용했어요. 머리에 충격이 3번 쌓이면 변형 사진으로 바뀝니다."
+      ? "사진을 적용했어요. 체력을 30%·65% 잃으면 변형 사진으로 바뀝니다."
       : "사진을 적용했어요. 얼굴 기준점이 없어 사진 변형은 생략합니다.");
   }
 
   clearPhoto() { this.face.clear(); this.resetAppearance(); this.onNotice("기본 얼굴로 돌아왔습니다."); }
 
   resetAppearance() {
-    this.appearance.reset(); this.injuries.clear(); this.impacts.clear(); this.face.showVariant(0);
+    this.appearance.reset(); this.injuries.clear(); this.face.showVariant(this.damage.variant);
   }
 
   private applyImpact(impact: AppearanceImpact, preview = false) {
@@ -159,24 +175,85 @@ export class PhysicsScene extends Phaser.Scene {
 
   /** Internal prototype check, no physical impulse and no score/weapon behavior. */
   previewImpact(partIndex = 0) {
-    if (this.photoEditing) return;
+    if (this.photoEditing || !this.lifecycle.interactive) return;
     const part = this.doll.parts[partIndex];
     if (!part) return;
     this.applyImpact({ part: partIndex, position: { ...part.body.position }, strength: 600, time: this.simulationTime }, true);
   }
 
-  reset() {
+  /** Common synchronous path for room and future weapon hits. */
+  receiveHit(hit: DamageHit) {
+    if (this.paused || this.photoEditing || !this.lifecycle.interactive || hit.lifeId !== this.lifecycle.lifeId ||
+      hit.time > this.simulationTime + 0.000001) return null;
+    if (hit.source === "room" && this.lifecycle.protected(this.simulationTime)) return null;
+    const result = this.damage.apply(hit);
+    if (!result) return null;
+    if (hit.source === "weapon") { this.lifecycle.interact(); this.posture.interact(); }
+    const part = this.doll.parts[hit.part];
+    for (let index = 0; index < result.injuries; index++) {
+      const injury = this.appearance.addInjury(hit, part.body);
+      this.injuries.add(injury, part);
+    }
+    this.face.showVariant(result.variant);
+    if (result.lethal && this.lifecycle.kill(hit.lifeId)) this.pointer.cancel();
+    return result;
+  }
+
+  reset() { this.replaceDoll(false); this.accumulator = 0; this.publishStats(); }
+
+  private replaceDoll(airborne: boolean, preserveHealth = false) {
     this.pointer.cancel();
     this.doll.destroy();
-    // Clear obsolete collision pairs before repeatedly recreating the doll.
+    // This foundation contains only the doll and static room. No pending weapon bodies.
     Matter.Engine.clear(this.matter.world.engine);
+    this.impacts.clear();
     this.doll = new Ragdoll(this.matter.world, this.settings.bounce);
     this.posture = new PostureController(this.doll, this.settings.experiment);
-    this.accumulator = 0;
-    // Reset appearance state, retaining the selected photo and its precomputed frames.
-    this.resetAppearance();
+    this.lifecycle.spawn(this.simulationTime, airborne);
+    this.damage.reset(this.lifecycle.lifeId, preserveHealth);
+    if (airborne) {
+      this.doll.startAirborne(DAMAGE_RULES.spawnOffsetY);
+      this.posture.interact();
+    }
+    if (!preserveHealth) this.resetAppearance();
+    this.face.showVariant(this.damage.variant);
+    this.face.setAlpha(1);
     this.face.update(this.doll.parts[0]);
-    this.publishStats();
+    this.effects.clear();
+  }
+
+  private finishLifecycle() {
+    if (this.lifecycle.state === "dying") {
+      this.burstOrigin = this.doll.centerOfMass;
+      this.doll.burst();
+      this.lifecycle.burst(this.simulationTime);
+      this.impacts.clear();
+    } else if (this.lifecycle.burstFinished(this.simulationTime)) {
+      this.doll.destroy();
+      Matter.Engine.clear(this.matter.world.engine);
+      this.impacts.clear();
+      this.appearance.reset(); this.injuries.clear();
+      this.face.setAlpha(0);
+      this.lifecycle.wait(this.simulationTime);
+    } else if (this.lifecycle.readyToSpawn(this.simulationTime)) {
+      this.replaceDoll(true);
+    }
+  }
+
+  private drawBurst() {
+    this.effects.clear();
+    if (this.lifecycle.state !== "bursting") return;
+    const alpha = this.lifecycle.alpha(this.simulationTime), progress = 1 - alpha;
+    const { x, y } = this.burstOrigin;
+    this.effects.lineStyle(4 * alpha, 0xdf9660, alpha).strokeCircle(x, y, 20 + progress * 130);
+    for (let index = 0; index < 12; index++) {
+      const angle = index * Math.PI / 6;
+      const radius = 25 + progress * (95 + index % 3 * 20);
+      const px = x + Math.cos(angle) * radius, py = y + Math.sin(angle) * radius;
+      this.effects.lineStyle(3, index % 2 ? 0xe8bd8b : 0x94ae58, alpha);
+      this.effects.lineBetween(px - 5 * alpha, py, px + 5 * alpha, py)
+        .lineBetween(px, py - 5 * alpha, px, py + 5 * alpha);
+    }
   }
 
   configure(settings: LabSettings) {
@@ -214,36 +291,50 @@ export class PhysicsScene extends Phaser.Scene {
         const step = FIXED_STEP / slices;
         for (let slice = 0; slice < slices; slice++) {
           this.simulationTime += step;
-          this.posture.beforeStep(
-            step,
-            Boolean(this.pointer.grip),
-            this.settings,
+          this.lifecycle.update(this.simulationTime);
+          if (!this.lifecycle.interactive) {
+            if (this.lifecycle.state === "bursting") {
+              this.matter.world.step(step);
+              separateBodies(this.doll.bodies, 2, { selfCollision: false });
+            }
+            this.finishLifecycle();
+            continue;
+          }
+          // During protected entry, natural falling takes priority over posture timers.
+          if (this.lifecycle.state !== "spawning") this.posture.beforeStep(
+            step, Boolean(this.pointer.grip), this.settings,
           );
           this.pointer.step(slices - slice);
           if (!this.posture.controlsPose) {
             this.doll.limitAngularSpeed();
             const previous = this.doll.capturePose();
-            this.impacts.beginStep(this.doll, this.posture.state !== "untangling", this.simulationTime);
+            this.impacts.beginStep(this.doll, true, this.simulationTime, this.lifecycle.lifeId, step);
             this.matter.world.step(step);
             this.pointer.afterStep();
             this.impacts.boundaries();
+            if (this.impacts.touchedFloor) this.lifecycle.landed(this.simulationTime);
+            for (const hit of this.impacts.flush()) this.receiveHit(hit);
+            // Death is resolved only after Matter has finished the step; no normal pose solver on fragments.
+            if (!this.lifecycle.interactive) { this.finishLifecycle(); continue; }
             this.doll.finishStep(previous, this.pointer.held);
-            this.posture.afterStep(step);
+            if (this.lifecycle.state !== "spawning") this.posture.afterStep(step);
             this.doll.limitAngularSpeed();
           }
         }
         this.accumulator -= FIXED_STEP;
       }
-      if (this.doll.unstable) {
+      if (this.lifecycle.interactive && this.doll.unstable) {
         this.recoveries++;
-        this.reset();
+        this.replaceDoll(false, true);
         this.onNotice("불안정한 물리 상태를 감지해 인형을 재배치했습니다.");
       }
-      for (const impact of this.impacts.flush()) this.applyImpact(impact);
     }
     drawDoll(this.graphics, this.doll, this.pointer, this.settings.debug, this.face.active, this.overlay, this.face.customOutline);
-    this.face.update(this.doll.parts[0]);
-    this.injuries.update(this.doll, this.appearance.injuries);
+    const alpha = this.lifecycle.alpha(this.simulationTime);
+    this.graphics.setAlpha(alpha); this.overlay.setAlpha(alpha);
+    this.face.update(this.doll.parts[0]); this.face.setAlpha(alpha);
+    this.injuries.update(this.doll, this.appearance.injuries, alpha);
+    this.drawBurst();
     this.statsElapsed += delta;
     if (this.statsElapsed >= 150) {
       this.publishStats();
@@ -256,6 +347,13 @@ export class PhysicsScene extends Phaser.Scene {
     const world = this.matter.world
       .localWorld as unknown as MatterJS.CompositeType;
     return {
+      lifeId: this.lifecycle.lifeId,
+      lifeState: this.lifecycle.state,
+      hp: this.damage.health.hp,
+      maxHp: this.damage.health.maxHp,
+      lostHp: this.damage.health.lostHp,
+      simulationTime: this.simulationTime,
+      spawnProtected: this.lifecycle.protected(this.simulationTime),
       experiment: this.settings.experiment,
       alignmentRemaining: this.posture.alignmentRemaining(this.settings.repairSeconds),
       fps: Math.round(this.game.loop.actualFps),

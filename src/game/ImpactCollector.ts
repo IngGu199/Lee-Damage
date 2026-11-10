@@ -1,59 +1,81 @@
 import { REFERENCE_STEP, ROOM } from "./config";
 import type { Ragdoll } from "./Ragdoll";
-import type { AppearanceImpact } from "./ImpactAppearance";
+import type { DamageHit } from "./DamageSystem";
 import type { Point } from "../photo/PhotoTransform";
 
-interface Contact { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; collision: { normal: Point; supports: Point[] } }
+export type RoomSurface = "left" | "right" | "ceiling" | "floor";
+interface Contact { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; collision: { supports: Point[] } }
+const normals: Record<RoomSurface, Point> = {
+  left: { x: 1, y: 0 }, right: { x: -1, y: 0 }, ceiling: { x: 0, y: 1 }, floor: { x: 0, y: -1 },
+};
 
-/** Observe contacts only. Never modify bodies or count posture corrections as hits. */
+/** Contact episodes survive render frames and adaptive substeps; corrections never supply velocity. */
 export class ImpactCollector {
   private doll?: Ragdoll;
   private enabled = false;
   private time = 0;
-  private readonly motion = new Map<MatterJS.BodyType, { x: number; y: number; angular: number }>();
-  private readonly pending = new Map<number, AppearanceImpact>();
+  private lifeId = 1;
+  private nextHit = 0;
+  private delta = 0;
+  private readonly motion = new Map<MatterJS.BodyType, { x: number; y: number; angular: number; center: Point }>();
+  private readonly pending = new Map<string, DamageHit & { surface: RoomSurface }>();
+  private readonly episodes = new Map<string, { separatedMs: number; separatedSteps: number }>();
+  private readonly near = new Set<string>();
+  touchedFloor = false;
 
-  beginStep(doll: Ragdoll, enabled: boolean, time: number) {
-    this.doll = doll; this.enabled = enabled; this.time = time; this.motion.clear();
-    if (!enabled) return;
-    for (const { body } of doll.parts) this.motion.set(body, {
-      x: body.velocity.x * 1000 / REFERENCE_STEP, y: body.velocity.y * 1000 / REFERENCE_STEP,
-      angular: body.angularVelocity * 1000 / REFERENCE_STEP,
-    });
+  beginStep(doll: Ragdoll, enabled: boolean, time: number, lifeId = 1, delta = REFERENCE_STEP) {
+    this.doll = doll; this.enabled = enabled; this.time = time; this.lifeId = lifeId; this.delta = delta;
+    this.pending.clear(); this.near.clear(); this.motion.clear(); this.touchedFloor = false;
   }
 
-  private contact(body: MatterJS.BodyType, point: Point, normal: Point) {
+  /** Matter's beforeSolve is after force/gravity integration and before contact response.
+   * Here velocities are raw per-substep displacement, not the normalized 60 Hz output.
+   */
+  beforeSolve = () => {
     if (!this.enabled || !this.doll) return;
+    for (const { body } of this.doll.parts) {
+      const scale = 1000 / (body.deltaTime || this.delta);
+      this.motion.set(body, { x: body.velocity.x * scale, y: body.velocity.y * scale,
+        angular: body.angularVelocity * scale, center: { ...body.position } });
+    }
+    this.boundaries();
+  };
+
+  private contact(body: MatterJS.BodyType, point: Point, surface: RoomSurface, touching = true) {
+    if (!this.enabled || !this.doll) return;
+    const part = this.doll.parts.findIndex((p) => p.body === body);
+    if (part < 0) return;
+    const key = `${part}:${surface}`;
+    this.near.add(key);
+    if (!touching) return;
+    if (surface === "floor") this.touchedFloor = true;
     const velocity = this.motion.get(body);
     if (!velocity) return;
-    const vx = velocity.x - velocity.angular * (point.y - body.position.y);
-    const vy = velocity.y + velocity.angular * (point.x - body.position.x);
-    const strength = -(vx * normal.x + vy * normal.y);
-    const part = this.doll.parts.findIndex((p) => p.body === body);
-    if (part < 0 || strength <= (this.pending.get(part)?.strength ?? 0)) return;
+    const vx = velocity.x - velocity.angular * (point.y - velocity.center.y);
+    const vy = velocity.y + velocity.angular * (point.x - velocity.center.x);
+    const normal = normals[surface];
+    const strength = Math.max(0, -(vx * normal.x + vy * normal.y));
+    if (!Number.isFinite(strength) || strength <= (this.pending.get(key)?.strength ?? -1)) return;
     const dx = point.x - body.position.x, dy = point.y - body.position.y;
     const c = Math.cos(body.angle), s = Math.sin(body.angle);
-    this.pending.set(part, { part, position: { ...point }, strength, time: this.time,
+    this.pending.set(key, { lifeId: this.lifeId, hitId: 0, source: "room", surface,
+      part, position: { ...point }, strength, time: this.time,
       local: { x: dx * c + dy * s, y: -dx * s + dy * c } });
   }
 
   collisions = (event: { pairs: Contact[] }) => {
     if (!this.enabled) return;
-    for (const pair of event.pairs) {
-      const { bodyA, bodyB, collision } = pair;
-      // Stage two uses room impacts. Body-body contact is deliberately silent.
+    for (const { bodyA, bodyB, collision } of event.pairs) {
       if (bodyA.label !== "room-wall" && bodyB.label !== "room-wall") continue;
-      const wallA = bodyA.label === "room-wall", body = wallA ? bodyB : bodyA;
-      const support = collision.supports.filter(Boolean);
-      const point = support.length ? {
-        x: support.reduce((v, p) => v + p.x, 0) / support.length,
-        y: support.reduce((v, p) => v + p.y, 0) / support.length,
-      } : body.position;
-      this.contact(body, point, { x: collision.normal.x * (wallA ? -1 : 1), y: collision.normal.y * (wallA ? -1 : 1) });
+      const wallA = bodyA.label === "room-wall", body = wallA ? bodyB : bodyA, wall = wallA ? bodyA : bodyB;
+      const surface: RoomSurface = wall.position.x < ROOM.left ? "left" : wall.position.x > ROOM.right
+        ? "right" : wall.position.y < ROOM.top ? "ceiling" : "floor";
+      const supports = collision.supports.filter(Boolean);
+      for (const point of supports.length ? supports : [body.position]) this.contact(body, point, surface);
     }
   };
 
-  /** Also observe contacts handled by the existing manual room projection. */
+  /** Called before manual projection or alignment, so their movement cannot create impacts. */
   boundaries() {
     if (!this.enabled || !this.doll) return;
     for (const { body } of this.doll.parts) {
@@ -62,13 +84,40 @@ export class ImpactCollector {
       const right = vertices.reduce((a, b) => a.x > b.x ? a : b);
       const top = vertices.reduce((a, b) => a.y < b.y ? a : b);
       const bottom = vertices.reduce((a, b) => a.y > b.y ? a : b);
-      if (left.x <= ROOM.left + 0.6) this.contact(body, left, { x: 1, y: 0 });
-      if (right.x >= ROOM.right - 0.6) this.contact(body, right, { x: -1, y: 0 });
-      if (top.y <= ROOM.top + 0.6) this.contact(body, top, { x: 0, y: 1 });
-      if (bottom.y >= ROOM.bottom - 0.6) this.contact(body, bottom, { x: 0, y: -1 });
+      const faces: [Point, RoomSurface, number][] = [
+        [left, "left", left.x - ROOM.left], [right, "right", ROOM.right - right.x],
+        [top, "ceiling", top.y - ROOM.top], [bottom, "floor", ROOM.bottom - bottom.y],
+      ];
+      for (const [point, surface, distance] of faces) {
+        if (distance > 2) continue;
+        const axis = surface === "left" || surface === "right" ? "x" : "y";
+        // Tied extreme vertices can have opposite rotational velocities. Keep the closing tip.
+        for (const vertex of vertices)
+          if (Math.abs(vertex[axis] - point[axis]) < 0.05)
+            this.contact(body, vertex, surface, distance <= 0.6);
+      }
     }
   }
 
-  flush() { const impacts = [...this.pending.values()]; this.pending.clear(); return impacts; }
-  clear() { this.pending.clear(); this.motion.clear(); this.doll = undefined; this.enabled = false; }
+  flush() {
+    const impacts: DamageHit[] = [];
+    for (const [key, hit] of this.pending) {
+      if (!this.episodes.has(key)) {
+        this.episodes.set(key, { separatedMs: 0, separatedSteps: 0 });
+        impacts.push({ ...hit, hitId: ++this.nextHit });
+      }
+    }
+    for (const [key, episode] of this.episodes) {
+      if (this.near.has(key)) { episode.separatedMs = episode.separatedSteps = 0; continue; }
+      episode.separatedMs += this.delta; episode.separatedSteps++;
+      // Two genuinely separated steps AND 20ms reject contact jitter at every substep size.
+      if (episode.separatedSteps >= 2 && episode.separatedMs >= 20) this.episodes.delete(key);
+    }
+    this.pending.clear(); return impacts;
+  }
+
+  clear() {
+    this.pending.clear(); this.motion.clear(); this.episodes.clear(); this.near.clear();
+    this.doll = undefined; this.enabled = false; this.touchedFloor = false; this.nextHit = 0;
+  }
 }

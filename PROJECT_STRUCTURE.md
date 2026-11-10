@@ -1,9 +1,9 @@
 # 프로젝트 파일 구조
 
 - 작성: 2026-11-04
-- 최종 갱신: 2026-11-08
-- 적용 범위: 2단계 사진 시제품, 1단계의 2번 몸통 기준 관절 정렬 유지
-- 현재 진행·검증 범위: [STAGE_2_PROGRESS.md](STAGE_2_PROGRESS.md), 물리 기준은 [STAGE_1_PROGRESS.md](STAGE_1_PROGRESS.md)
+- 최종 갱신: 2026-11-10
+- 적용 범위: 3단계 체력·충돌·분리 소멸·재등장 기반, 1단계 물리·2단계 사진 유지
+- 현재 진행·검증 범위: [STAGE_3_FOUNDATION_REPORT.md](STAGE_3_FOUNDATION_REPORT.md), 사진 기록은 [STAGE_2_PROGRESS.md](STAGE_2_PROGRESS.md), 물리 기준은 [STAGE_1_PROGRESS.md](STAGE_1_PROGRESS.md)
 - 구성: HTML/CSS + TypeScript + Vite + Phaser 3.90 내장 Matter
 - 글꼴: `@fontsource-variable/noto-sans-kr`의 Noto Sans KR Variable을 의존성으로 포함해 로컬 제공
 
@@ -45,18 +45,25 @@ LeeDamageWeb/
 │       ├── PointerController.ts # 신체 선택·동적 클릭 지점 회전·잡기·던지기·해제
 │       ├── FaceRenderer.ts    # 사진 배율·텍스처 교체·머리 추종·불투명 픽셀 샘플링
 │       ├── ImpactCollector.ts # 물리 접촉·수동 방 경계의 충격 관찰·중복 통합
-│       ├── ImpactAppearance.ts # 충격 조건·사진 단계·상처 상태와 개수 상한
+│       ├── damageConfig.ts    # 체력·충돌 곡선·상처 간격·생성 보호 초기값
+│       ├── HealthState.ts     # HP와 실제 손실·초과 치명타 처리
+│       ├── DamageSystem.ts    # 공통 피격·생명/명중 ID·60ms 동시 충격 묶음
+│       ├── InjuryProgression.ts # 실제 손실 임계값·사진 변형 단계
+│       ├── RagdollLifecycle.ts # 분리·소멸·재등장·생성 보호 상태
+│       ├── ImpactAppearance.ts # 상처 목록·100개 상한·독립 외형 미리보기
 │       ├── InjuryRenderer.ts  # 상처 크기·전체 표면 무작위 부착·사진 배율/회전 추종
 │       └── draw.ts            # 방 격자, 도형 인형, 잡기 연결·디버그 그리기
 ├── tests/
 │   ├── physics.spec.ts        # 브라우저 조작·관절·경계·반복 재배치 검증
 │   ├── collision-cycle.spec.ts # 실험 1의 자기 충돌 전환·재잡기·기립 완료 검증
+│   ├── damage-rules.spec.ts   # 곡선·손상·상처·접촉 회차·시간 단위 7개
+│   ├── foundation.spec.ts     # 실제 HP·사망·재등장·100회 교체 7개
 │   └── photo.spec.ts          # 현재 사진 편집·변형·상처·수명주기 검증 24개
 ├── README.md                  # 설치·실행·조작·검증 방법
 ├── STAGE_1_PROGRESS.md        # 1단계 누적 진행·2번 채택·현재 동작·검증 범위
 ├── STAGE_2_PLAN.md            # 2단계 사진·특징점 변형·상처 에셋의 상세 계획
 ├── STAGE_2_PROGRESS.md        # 2단계 실제 구현·초기값·검증 및 남은 평가
-├── STAGE_3_FOUNDATION_REPORT.md # 체력·충돌 데미지·교체 낙하의 설계 제안(미구현)
+├── STAGE_3_FOUNDATION_REPORT.md # 체력·충돌 데미지·분리 소멸·교체 낙하 구현·검증
 ├── PROJECT_STRUCTURE.md       # 이 문서
 ├── PROTOTYPE_REPORT.md        # 실험 1 당시의 구현·검증 기록
 ├── DEV_PLAN.md                # 개발 단계·완료 기준·진행 상태
@@ -86,7 +93,9 @@ LeeDamageWeb/
 8. 재배치는 잡기 제약과 기존 인형 복합체를 제거하고 인형 1개를 새로 만듭니다. 벽·이벤트 리스너는 다시 만들지 않습니다.
 9. 사진 편집창은 게임 입력·물리를 멈추고 사진을 보정합니다. 특징점 검출·변형 사진 생성 후 `FaceRenderer`가 기본/변형 사진을 1개의 GPU 텍스처로 교체해 표시합니다. 사진과 편집값은 인형과 별도로 관리하므로 재배치 후에도 유지됩니다.
    직접 그린 윤곽은 원본 이미지 기준 점으로 저장하고 사진과 같은 좌표 변환을 적용합니다. 기본·변형 사진에 같은 알파 마스크를 사용하고, 윤곽 사진에서는 머리 바탕만 숨깁니다. 편집창의 취소가 적용 중인 윤곽을 바꾸지 않도록 점 배열을 복사합니다.
-10. 실제 물리 접촉과 수동 방 경계 보정에서 얻은 충격은 부위별로 통합하고 `ImpactAppearance`가 반복 간격·강도를 판단합니다. 상처는 충돌한 부위의 테두리를 포함한 전체 표면에서 무작위 중심을 골라 최종 물리 위치·회전을 따라갑니다. 최대 100개이며 사진 2배·일그러짐 1.8배·자국 종류별 1.5배의 고정값은 물리에 영향을 주지 않습니다. 관절 정렬·기립의 자세 보정은 피격으로 누적하지 않습니다.
+10. `ImpactCollector`는 Matter의 `beforeSolve`에서 중력 적분 뒤·접촉 반응 전 속도를 읽고 부위·방 면별 접촉 회차를 관리합니다. `DamageSystem`은 생명·명중 ID를 확인하고 60ms 안의 동시 방 충격은 최댓값의 차이만 차감합니다. `HealthState`와 `InjuryProgression`이 실제 HP 손실 40당 자국과 30%·65% 사진 단계를 결정합니다. 경계·자세 보정 전 수집하므로 좌표 보정을 손상으로 계산하지 않으며 정렬 중 실제 방 충돌은 유지합니다.
+11. HP 0에서는 `RagdollLifecycle`이 입력을 차단하고 안전한 스텝 경로에서 `Ragdoll.burst()`가 실제 관절 9개를 제거합니다. 신체·사진·자국은 300ms 동안 함께 확산·소멸하고, 신체 제거 뒤 300ms 대기 후 새 인형을 방 안의 공중에서 동적으로 생성합니다. 같은 사진·프레임·GPU 텍스처를 재사용합니다. 소멸·재등장·생성 보호는 시뮬레이션 시간으로 멈춤과 함께 정지합니다.
+12. R은 새 생명·최대 HP의 기립으로 초기화하고 사망 예약을 취소합니다. 사진 변경·상처 지우기·물리 이상 복구는 HP를 회복시키지 않습니다. 정상 생명은 방 4개+신체 10개·관절 9개, 분리 중은 신체 10개·관절 0개, 재등장 대기는 방 4개입니다.
 
 ## 3. 수정할 기능별 파일
 
@@ -110,7 +119,10 @@ LeeDamageWeb/
 | 사진 선택·편집·특징점·변형 생성 | `src/photo/` | 사진과 특징점의 변환을 일치시키고 취소된 작업 결과는 폐기 |
 | 사진·자국 표시 배율과 일그러짐 강도 | `src/game/appearanceConfig.ts`, `src/main.ts` | `FIXED_APPEARANCE`: 사진 2배·일그러짐 1.8배·자국 종류별 1.5배. 조절 바 제거, 물리 설정과 분리 |
 | 사진 머리 추종·텍스처 교체 | `src/game/FaceRenderer.ts` | GPU 텍스처 1개 재사용. 재배치와 사진 수명을 분리 |
-| 충격 기준·사진 단계·상처 누적 | `src/game/ImpactCollector.ts`, `src/game/ImpactAppearance.ts` | 실제 충격과 자세 보정·미세 접촉·중복 하위 스텝 구분 |
+| 접촉 회차·속도 단위 | `src/game/ImpactCollector.ts` | beforeSolve의 원시 속도는 실제 하위 스텝 간격으로 환산. 자세 보정 전 수집 |
+| HP·데미지·상처 임계값 | `src/game/DamageSystem.ts`, `HealthState.ts`, `InjuryProgression.ts`, `damageConfig.ts` | 방 접촉 최댓값 묶음과 실제 HP 손실을 외형에서 분리 |
+| 사망·관절 분리·공중 재등장 | `src/game/RagdollLifecycle.ts`, `Ragdoll.ts`, `PhysicsScene.ts` | 분리 중 정상 자세 제어 금지. 모든 시간은 시뮬레이션 기준 |
+| 기반 회귀 검증 | `tests/damage-rules.spec.ts`, `foundation.spec.ts` | `npm run test:foundation` 14개. `test:current`는 사진 포함 38개 |
 | 상처 에셋 부착 | `src/game/InjuryRenderer.ts`, `src/game/FaceRenderer.ts` | 자국 크기와 무관하게 테두리까지 균일하게 중심 선택. 사진은 불투명 픽셀 좌표를 보존해 배율 추종 |
 | 사진 회귀 검증 | `tests/photo.spec.ts` | `npm run test:photo`. 실제 모델 확인 결과는 2단계 진행 기록 참고 |
 | 회귀 검증 | `tests/physics.spec.ts` | 실제 포인터 조작과 가속된 물리 반복 검증 포함 |
