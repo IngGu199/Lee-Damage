@@ -298,3 +298,69 @@ test("five simultaneous deaths among ten actors do not cause runaway steps or ch
   expect(result.valid).toBe(true); expect(result.livingIds).toEqual(result.expectedIds);
   expect(result.stats).toMatchObject({ aliveCount: 10, debrisCount: 0, bodies: 104, joints: 90, recoveries: 0 });
 });
+
+test("death detaches every joint while preserving each part's velocity, spin and pose, including resting parts", async ({ page }) => {
+  await open(page);
+  const result = await page.evaluate(() => {
+    const s = window.__physicsLab, actor = s.selectedActor;
+    actor.interact(); s.matter.world.setGravity(0, 0);
+    const intended = actor.doll.parts.map((_, index) => ({
+      velocity: index >= 8 ? { x: 0, y: 0 } : { x: (index % 2 ? -1 : 1) * (50 - index * 4), y: index - 3 },
+      angular: index >= 8 ? 0 : (index % 2 ? -1 : 1) * (0.5 - index * 0.04),
+    }));
+    actor.doll.parts.forEach(({ body }, index) => {
+      s.matter.body.setVelocity(body, intended[index].velocity);
+      s.matter.body.setAngularVelocity(body, intended[index].angular);
+    });
+    const snapshot = () => actor.doll.parts.map(({ body }) => ({
+      velocity: { ...body.velocity }, angular: body.angularVelocity, position: { ...body.position }, angle: body.angle,
+    }));
+    let before = snapshot(), after = snapshot(), limited = snapshot();
+    const burst = actor.doll.burst.bind(actor.doll);
+    actor.doll.burst = () => {
+      before = snapshot(); burst(); after = snapshot();
+      // The regular debris limiter must also preserve inherited motion above its ordinary caps.
+      actor.doll.limitDebrisMotion(); limited = snapshot();
+    };
+    s.receiveHit({ lifeId: actor.id, hitId: 1, source: "weapon", part: 0,
+      position: { ...actor.doll.parts[0].body.position }, time: s.snapshot().simulationTime, strength: 0, damage: 2000 });
+    s.update(0, 1000 / 120);
+    const head = actor.doll.parts[0].body;
+    return { intended, before, after, limited, joints: actor.doll.joints.length,
+      dynamic: actor.doll.bodies.every(body => !body.isStatic), state: actor.lifecycle.state,
+      headSpeed: Math.hypot(head.velocity.x, head.velocity.y) * 60, headSpin: head.angularVelocity,
+      live: s.livingActors.length };
+  });
+  expect(result.after).toEqual(result.before); expect(result.limited).toEqual(result.before);
+  expect(result.before.map(part => ({ velocity: part.velocity, angular: part.angular }))).toEqual(result.intended);
+  expect(result.joints).toBe(0); expect(result.dynamic).toBe(true); expect(result.state).toBe("bursting"); expect(result.live).toBe(1);
+  expect(result.headSpeed).toBeGreaterThan(1200); expect(result.headSpeed).toBeLessThan(Math.hypot(50, -3) * 60);
+  expect(result.headSpin).toBeGreaterThan(0.12); expect(result.headSpin).toBeLessThan(0.5);
+});
+
+test("inherited debris speed limits shrink with lost motion and cannot be restored by later impacts", async ({ page }) => {
+  await open(page);
+  const result = await page.evaluate(() => {
+    const s = window.__physicsLab, doll = s.doll;
+    s.selectedActor.interact(); doll.clearMotion();
+    const head = doll.parts[0].body;
+    s.matter.body.setVelocity(head, { x: -50, y: 0 }); s.matter.body.setAngularVelocity(head, -0.5);
+    doll.burst(); doll.limitDebrisMotion();
+    const initial = { x: head.velocity.x, spin: head.angularVelocity };
+    s.matter.body.setVelocity(head, { x: -30, y: 0 }); s.matter.body.setAngularVelocity(head, -0.3);
+    doll.limitDebrisMotion();
+    s.matter.body.setVelocity(head, { x: -60, y: 0 }); s.matter.body.setAngularVelocity(head, -0.6);
+    doll.limitDebrisMotion(); const reduced = { x: head.velocity.x, spin: head.angularVelocity };
+    s.matter.body.setVelocity(head, { x: -10, y: 0 }); s.matter.body.setAngularVelocity(head, -0.05);
+    doll.limitDebrisMotion();
+    s.matter.body.setVelocity(head, { x: -60, y: 0 }); s.matter.body.setAngularVelocity(head, -0.6);
+    doll.limitDebrisMotion(); const normal = { x: head.velocity.x, spin: head.angularVelocity };
+    // A stationary body's separation must not create an outward kick or artificial spin.
+    const stationary = doll.parts[9].body;
+    return { initial, reduced, normal, stationary: { velocity: { ...stationary.velocity }, spin: stationary.angularVelocity } };
+  });
+  expect(result.initial).toEqual({ x: -50, spin: -0.5 });
+  expect(result.reduced).toEqual({ x: -30, spin: -0.3 });
+  expect(result.normal.x).toBeCloseTo(-20); expect(result.normal.spin).toBe(-0.12);
+  expect(result.stationary).toEqual({ velocity: { x: 0, y: 0 }, spin: 0 });
+});

@@ -61,7 +61,7 @@ LeeDamageWeb/
 │   ├── collision-cycle.spec.ts # 실험 1의 자기 충돌 전환·재잡기·기립 완료 검증
 │   ├── damage-rules.spec.ts   # 곡선·손상·상처·접촉 회차·시간 단위·무적/소멸·잔해 감쇠 11개
 │   ├── foundation.spec.ts     # 실제 HP·즉시 재등장·잔해 만료·100회 교체·기립·무적 9개
-│   ├── multi-ragdoll.spec.ts  # T키/10개 제한·개별 HP·잔해 조작·상호 충돌·자원 정리·폭주 방지 12개
+│   ├── multi-ragdoll.spec.ts  # T키/10개 제한·개별 HP·잔해 조작·상호 충돌·자원 정리·폭주 방지·분리 운동 보존 14개
 │   └── photo.spec.ts          # 현재 사진 편집·변형·상처·수명주기 검증 24개
 ├── README.md                  # 설치·실행·조작·검증 방법
 ├── STAGE_1_PROGRESS.md        # 1단계 누적 진행·2번 채택·현재 동작·검증 범위
@@ -125,12 +125,12 @@ LeeDamageWeb/
 | 사진 선택·편집·특징점·변형 생성 | `src/photo/` | 사진과 특징점의 변환을 일치시키고 취소된 작업 결과는 폐기 |
 | 사진·자국 표시 배율과 일그러짐 강도 | `src/game/appearanceConfig.ts`, `src/main.ts` | `FIXED_APPEARANCE`: 사진 2배·일그러짐 1.8배·자국 종류별 1.5배. 조절 바 제거, 물리 설정과 분리 |
 | 사진 머리 추종·텍스처 교체 | `src/game/FaceRenderer.ts` | 프레임 메모리 공유·인형별 텍스처/변형 단계 분리. 재배치와 사진 수명을 분리 |
-| 잔해·다중 신체 안정화 | `src/game/DebrisPhysics.ts`, `PhysicsScene.ts` | 잔해 반발 0.08·최대 1,200px/s, 다른 생체 간 반발 0.15·접촉 반응 최대 2,400px/s. 잡는 조작은 유지 |
+| 잔해·다중 신체 안정화 | `src/game/DebrisPhysics.ts`, `PhysicsScene.ts` | 잔해 반발 0.08·기본 상한 1,200px/s(더 큰 기존 운동은 보존 후 감쇠), 다른 생체 간 반발 0.15·접촉 반응 최대 2,400px/s. 잡는 조작은 유지 |
 | 접촉 회차·속도 단위 | `src/game/ImpactCollector.ts` | beforeSolve의 원시 속도는 실제 하위 스텝 간격으로 환산. 자세 보정 전 수집 |
 | HP·데미지·상처 임계값 | `src/game/DamageSystem.ts`, `HealthState.ts`, `InjuryProgression.ts`, `damageConfig.ts` | 최소 속도 800px/s·피격 후 300ms 무적과 실제 HP 손실을 외형에서 분리 |
 | 기립 낙하·착지 | `src/game/SpawnLanding.ts`, `PhysicsScene.ts` | 전체 기립 자세를 수직 이동, 잡기·유효 공격 시 동적 물리로 전환 |
 | 사망·관절 분리·즉시 재등장 | `src/game/RagdollActor.ts`, `RagdollLifecycle.ts`, `Ragdoll.ts`, `PhysicsScene.ts` | 분리 시 새 생명 추가, 잔해는 독립 조작/충돌 유지 후 5초에 해당 객체만 정리 |
-| 기반 회귀 검증 | `tests/damage-rules.spec.ts`, `foundation.spec.ts` | `npm run test:foundation` 20개. `test:multi` 12개. `test:current`는 다중 인형·사진 포함 56개 |
+| 기반 회귀 검증 | `tests/damage-rules.spec.ts`, `foundation.spec.ts` | `npm run test:foundation` 20개. `test:multi` 14개. `test:current`는 다중 인형·사진 포함 58개 |
 | 상처 에셋 부착 | `src/game/InjuryRenderer.ts`, `src/game/FaceRenderer.ts` | 자국 크기와 무관하게 테두리까지 균일하게 중심 선택. 사진은 불투명 픽셀 좌표를 보존해 배율 추종 |
 | 사진 회귀 검증 | `tests/photo.spec.ts` | `npm run test:photo`. 실제 모델 확인 결과는 2단계 진행 기록 참고 |
 | 회귀 검증 | `tests/physics.spec.ts` | 실제 포인터 조작과 가속된 물리 반복 검증 포함 |

@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { configureDebris, limitDebrisMotion } from "./DebrisPhysics";
+import { configureDebris, limitDebrisMotion, type DebrisMotionLimit } from "./DebrisPhysics";
 import { Matter } from "./matter";
 import {
   ANGULAR_INERTIA_SCALE,
@@ -39,6 +39,7 @@ export class Ragdoll {
   private readonly nonCollidingGroup = Body.nextGroup(true);
   private selfCollision = true;
   private isDebris = false;
+  private readonly inheritedDebrisMotion = new Map<MatterJS.BodyType, DebrisMotionLimit>();
 
   constructor(
     private readonly world: Phaser.Physics.Matter.World,
@@ -376,7 +377,7 @@ export class Ragdoll {
   }
 
   limitDebrisMotion(held?: MatterJS.BodyType) {
-    if (this.isDebris) limitDebrisMotion(this.bodies, held);
+    if (this.isDebris) limitDebrisMotion(this.bodies, held, this.inheritedDebrisMotion);
   }
 
   limitAngularSpeed() {
@@ -423,31 +424,26 @@ export class Ragdoll {
     this.clearMotion();
   }
 
-  /** Safe-step operation: constraints are actually removed, not softened. */
+  /** Remove constraints without injecting an explosion impulse or replacing existing motion. */
   burst() {
+    if (this.isDebris) return;
     this.isDebris = true;
     this.setDynamic(true);
     configureDebris(this.bodies);
     this.setSelfCollision(false);
-    const center = this.centerOfMass;
     this.joints.forEach(joint => Composite.remove(this.composite, joint));
     this.joints.length = 0;
     this.clearCorrectionImpulses();
-    this.parts.forEach(({ body }, index) => {
-      const dx = body.position.x - center.x, dy = body.position.y - center.y;
-      const length = Math.hypot(dx, dy) || 1;
-      const speed = 4 + index % 3;
-      // Equal velocity changes keep the heavy head visible in the burst too.
-      Body.setVelocity(body, {
-        x: Math.max(-5, Math.min(5, body.velocity.x)) + dx / length * speed,
-        y: Math.max(-5, Math.min(5, body.velocity.y)) + dy / length * speed - 2,
+    for (const { body } of this.parts) {
+      // Leave velocity, angular velocity and Verlet history untouched at separation.
+      this.inheritedDebrisMotion.set(body, {
+        speed: Math.hypot(body.velocity.x, body.velocity.y), angularSpeed: Math.abs(body.angularVelocity),
       });
-      Body.setAngularVelocity(body, (index % 2 ? 1 : -1) * (0.06 + index * 0.004));
-    });
-    this.limitDebrisMotion();
+    }
   }
 
   destroy() {
+    this.inheritedDebrisMotion.clear();
     this.world.remove(this.composite, true);
   }
 }

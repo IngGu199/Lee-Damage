@@ -20,16 +20,27 @@ export function configureDebris(bodies: readonly MatterJS.BodyType[]) {
   }
 }
 
-export function limitDebrisMotion(bodies: readonly MatterJS.BodyType[], held?: MatterJS.BodyType) {
-  const maxSpeed = DEBRIS_PHYSICS.maxSpeed * REFERENCE_STEP / 1000;
+/** Both components use Matter's normalized 60Hz velocity units. */
+export interface DebrisMotionLimit { speed: number; angularSpeed: number }
+
+export function limitDebrisMotion(bodies: readonly MatterJS.BodyType[], held?: MatterJS.BodyType,
+  inherited?: Map<MatterJS.BodyType, DebrisMotionLimit>) {
+  const baseSpeed = DEBRIS_PHYSICS.maxSpeed * REFERENCE_STEP / 1000;
   for (const body of bodies) {
     if (body === held || body.isStatic) continue;
     const speed = Math.hypot(body.velocity.x, body.velocity.y);
+    const previous = inherited?.get(body);
+    // Do not cut existing momentum at separation. As it dissipates, the allowance
+    // only shrinks: later contacts cannot restore the original high-speed ceiling.
+    const maxSpeed = Math.max(baseSpeed, Math.min(previous?.speed ?? baseSpeed, speed));
+    const maxAngularSpeed = Math.max(DEBRIS_PHYSICS.maxAngularSpeed,
+      Math.min(previous?.angularSpeed ?? DEBRIS_PHYSICS.maxAngularSpeed, Math.abs(body.angularVelocity)));
+    if (previous) { previous.speed = maxSpeed; previous.angularSpeed = maxAngularSpeed; }
     if (speed > maxSpeed) Matter.Body.setVelocity(body, {
       x: body.velocity.x * maxSpeed / speed, y: body.velocity.y * maxSpeed / speed,
     });
-    if (Math.abs(body.angularVelocity) > DEBRIS_PHYSICS.maxAngularSpeed)
-      Matter.Body.setAngularVelocity(body, Math.sign(body.angularVelocity) * DEBRIS_PHYSICS.maxAngularSpeed);
+    if (Math.abs(body.angularVelocity) > maxAngularSpeed)
+      Matter.Body.setAngularVelocity(body, Math.sign(body.angularVelocity) * maxAngularSpeed);
   }
 }
 
