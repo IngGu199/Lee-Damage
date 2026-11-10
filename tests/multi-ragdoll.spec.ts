@@ -110,14 +110,15 @@ test("a flying piece of debris hits the new ragdoll and can damage only its livi
     const head = target.doll.parts[0].body, yOffset = 329 - head.position.y;
     for (const { body } of target.doll.parts) s.matter.body.translate(body, { x: 0, y: yOffset });
     s.matter.world.setGravity(0, 0);
-    s.matter.body.setPosition(old.doll.parts[0].body, { x: 600, y: 329 });
+    s.matter.body.setPosition(old.doll.parts[0].body, { x: head.position.x + 100, y: 329 });
     s.matter.body.setVelocity(old.doll.parts[0].body, { x: -50, y: 0 });
     s.matter.body.setAngularVelocity(old.doll.parts[0].body, 0);
     for (let i = 0; i < 45; i++) s.update(0, 1000 / 120);
     return { hp: target.damage.health.hp, x: target.doll.parts[0].body.position.x,
       oldHp: old.damage.health.hp, oldState: old.lifecycle.state, stats: s.snapshot() };
   });
-  expect(result.hp).toBeLessThan(1000); expect(result.x).toBeLessThan(180);
+  expect(result.hp).toBeLessThan(1000); expect(result.hp).toBeGreaterThanOrEqual(988);
+  expect(result.x).toBeLessThan(110);
   expect(result.oldHp).toBe(0); expect(result.oldState).toBe("bursting"); expect(result.stats.aliveCount).toBe(1);
 });
 
@@ -205,4 +206,95 @@ test("a gentle external push still wakes the standing target without causing col
   });
   expect(result.dynamic).toBe(true); expect(result.x).toBeGreaterThan(600);
   expect(result.hp).toBe(1000); expect(result.moverHp).toBe(1000);
+});
+
+test("debris contacts stay soft across solver updates and configuration while fragments remain dynamic", async ({ page }) => {
+  await open(page);
+  const result = await page.evaluate(() => {
+    const s = window.__physicsLab, old = s.selectedActor;
+    s.receiveHit({ lifeId: old.id, hitId: 1, source: "weapon", part: 0,
+      position: { ...old.doll.parts[0].body.position }, time: s.snapshot().simulationTime, strength: 0, damage: 2000 });
+    s.update(0, 1000 / 120);
+    const target = s.selectedActor; target.interact();
+    const offset = 329 - target.doll.parts[0].body.position.y;
+    for (const { body } of target.doll.parts) s.matter.body.translate(body, { x: 0, y: offset });
+    s.matter.world.setGravity(0, 0);
+    const fragment = old.doll.parts[0].body;
+    s.matter.body.setPosition(fragment, { x: target.doll.parts[0].body.position.x + 85, y: 329 });
+    s.matter.body.setVelocity(fragment, { x: -50, y: 0 }); s.matter.body.setAngularVelocity(fragment, 1);
+    s.configure(s.settings); s.matter.world.setGravity(0, 0);
+    let contacts = 0, cap = 0, maxSpeed = 0, maxSpin = 0;
+    const bodies = new Set(target.doll.bodies);
+    for (let i = 0; i < 30; i++) {
+      s.update(0, 1000 / 120);
+      maxSpeed = Math.max(maxSpeed, old.doll.linearSpeed);
+      maxSpin = Math.max(maxSpin, ...old.doll.bodies.map(body => Math.abs(body.angularVelocity)));
+      for (const pair of s.matter.world.engine.pairs.list) {
+        if (!pair.isActive || !(pair.bodyA === fragment && bodies.has(pair.bodyB) ||
+          pair.bodyB === fragment && bodies.has(pair.bodyA))) continue;
+        contacts++; cap = Math.max(cap, pair.restitution);
+        // Pair.update rewrites this every step; the pair-local limit must survive that write.
+        pair.restitution = 0.95; cap = Math.max(cap, pair.restitution);
+      }
+    }
+    return { contacts, cap, maxSpeed, maxSpin, dynamic: old.doll.bodies.every(body => !body.isStatic),
+      corpseBounce: fragment.restitution, livingBounce: target.doll.parts[0].body.restitution };
+  });
+  expect(result.contacts).toBeGreaterThan(0); expect(result.cap).toBeLessThanOrEqual(0.08);
+  expect(result.maxSpeed).toBeLessThanOrEqual(1200.000001); expect(result.maxSpin).toBeLessThanOrEqual(0.120001);
+  expect(result.dynamic).toBe(true); expect(result.corpseBounce).toBe(0.08); expect(result.livingBounce).toBe(0.95);
+});
+
+test("waking a standing actor refreshes cached pair masses before the collision impulse is solved", async ({ page }) => {
+  await open(page);
+  const result = await page.evaluate(async () => {
+    const { Matter } = await import("/src/game/matter.ts" as string);
+    const s = window.__physicsLab, target = s.selectedActor, mover = s.spawnRagdoll()!;
+    mover.interact(); for (const { body } of mover.doll.parts) s.matter.body.translate(body, { x: 0, y: 180 });
+    s.matter.world.setGravity(0, 0); mover.doll.launch({ x: 35, y: 0 });
+    const owned = new Set(target.doll.bodies), samples: { cached: number; actual: number; bounce: number }[] = [];
+    const inspect = (event: { pairs: { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; inverseMass: number; restitution: number }[] }) => {
+      for (const pair of event.pairs) if (owned.has(pair.bodyA) !== owned.has(pair.bodyB) &&
+        !pair.bodyA.isStatic && !pair.bodyB.isStatic)
+        samples.push({ cached: pair.inverseMass, actual: pair.bodyA.inverseMass + pair.bodyB.inverseMass, bounce: pair.restitution });
+    };
+    Matter.Events.on(s.matter.world.engine, "collisionStart", inspect);
+    for (let i = 0; i < 60; i++) s.update(0, 1000 / 120);
+    Matter.Events.off(s.matter.world.engine, "collisionStart", inspect);
+    return samples;
+  });
+  expect(result.length).toBeGreaterThan(0);
+  for (const sample of result) { expect(sample.cached).toBeCloseTo(sample.actual, 10); expect(sample.bounce).toBeLessThanOrEqual(0.15); }
+});
+
+test("five simultaneous deaths among ten actors do not cause runaway steps or chain deaths", async ({ page }) => {
+  test.setTimeout(60000); await open(page);
+  const result = await page.evaluate(() => {
+    const s = window.__physicsLab; s.reset();
+    for (let i = 0; i < 9; i++) s.spawnRagdoll();
+    for (const actor of s.actors.slice(0, 5)) s.receiveHit({ lifeId: actor.id, hitId: 1, source: "weapon", part: 0,
+      position: { ...actor.doll.parts[0].body.position }, time: s.snapshot().simulationTime, strength: 0, damage: 2000 });
+    const expectedIds = s.actors.slice(5).map(actor => actor.id);
+    const lastId = s.actors.at(-1)!.id;
+    expectedIds.push(...Array.from({ length: 5 }, (_, index) => lastId + index + 1));
+    let steps = 0, peakDebris = 0, peakDebrisSpeed = 0;
+    const step = s.matter.world.step.bind(s.matter.world);
+    s.matter.world.step = delta => { steps++; return step(delta); };
+    try {
+      for (let i = 0; i < 600; i++) {
+        s.update(0, 1000 / 120);
+        peakDebris = Math.max(peakDebris, s.debris.length);
+        peakDebrisSpeed = Math.max(peakDebrisSpeed, ...s.debris.map(actor => actor.doll.linearSpeed));
+      }
+    } finally { s.matter.world.step = step; }
+    const valid = s.actors.every(actor => actor.doll.bodies.every(body =>
+      Number.isFinite(body.position.x + body.position.y + body.angle + body.velocity.x + body.velocity.y)));
+    const livingIds = s.livingActors.map(actor => actor.id), minHp = Math.min(...s.livingActors.map(actor => actor.damage.health.hp));
+    for (let i = 0; i < 3; i++) s.update(0, 1000 / 120);
+    return { steps, peakDebris, peakDebrisSpeed, valid, livingIds, expectedIds, minHp, stats: s.snapshot() };
+  });
+  expect(result.steps).toBeLessThan(5000); expect(result.peakDebris).toBe(5);
+  expect(result.peakDebrisSpeed).toBeLessThanOrEqual(1200.000001); expect(result.minHp).toBeGreaterThan(0);
+  expect(result.valid).toBe(true); expect(result.livingIds).toEqual(result.expectedIds);
+  expect(result.stats).toMatchObject({ aliveCount: 10, debrisCount: 0, bodies: 104, joints: 90, recoveries: 0 });
 });

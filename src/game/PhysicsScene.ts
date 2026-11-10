@@ -12,10 +12,11 @@ import type { DamageHit } from "./DamageSystem";
 import type { ContactMotion } from "./ImpactCollector";
 import { DAMAGE_RULES } from "./damageConfig";
 import { separateBodies } from "./SelfCollision";
+import { BODY_CONTACT_PHYSICS, DEBRIS_PHYSICS, limitBodyReaction, softenBodyContact } from "./DebrisPhysics";
 import type { AppliedPhoto } from "../photo/PhotoSession";
 
 interface BodyContact {
-  bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType;
+  bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; restitution: number;
   collision: { supports: MatterJS.Vector[]; normal?: MatterJS.Vector };
 }
 
@@ -36,6 +37,7 @@ export class PhysicsScene extends Phaser.Scene {
   private photoEditing = false;
   private resumeAfterPhoto = false;
   private readonly owners = new Map<MatterJS.BodyType, RagdollActor>();
+  private readonly bodyContacts = new Set<RagdollActor>();
   private readonly motion = new Map<MatterJS.BodyType, ContactMotion>();
   private readonly abort = new AbortController();
   onStats: (stats: LabStats) => void = () => {};
@@ -146,6 +148,7 @@ export class PhysicsScene extends Phaser.Scene {
     if (this.pointer?.owner === actor.doll) this.pointer.cancel();
     const bodies = new Set(actor.doll.bodies);
     for (const body of bodies) { this.owners.delete(body); this.motion.delete(body); }
+    this.bodyContacts.delete(actor);
     actor.dispose();
     this.actors.splice(this.actors.indexOf(actor), 1);
     // Remove only this actor's cached pairs. Other actors keep their contacts and impulses.
@@ -221,24 +224,59 @@ export class PhysicsScene extends Phaser.Scene {
     for (const actor of this.actors) for (const { body } of actor.doll.parts) {
       const factor = body.isStatic ? 0 : 1000 / body.deltaTime;
       this.motion.set(body, { x: body.velocity.x * factor, y: body.velocity.y * factor,
-        angular: body.angularVelocity * factor, center: { ...body.position } });
+        angular: body.angularVelocity * factor, center: { ...body.position },
+        debris: actor.lifecycle.state === "bursting" });
     }
-    for (const actor of this.actors) actor.impacts.beforeSolve();
+    for (const pair of this.matter.world.engine.pairs.list) this.softenContact(pair);
+    for (const actor of this.livingActors) actor.impacts.beforeSolve();
   };
 
+  private softenContact(pair: BodyContact) {
+    const a = this.owners.get(pair.bodyA), b = this.owners.get(pair.bodyB);
+    if (a?.lifecycle.state === "bursting" || b?.lifecycle.state === "bursting")
+      softenBodyContact(pair, DEBRIS_PHYSICS.restitution);
+    else if (a && b && a !== b) softenBodyContact(pair, BODY_CONTACT_PHYSICS.restitution);
+  }
+
   private collisions = (event: { pairs: BodyContact[] }) => {
-    for (const { bodyA, bodyB } of event.pairs) {
+    const contacts = new Map<RagdollActor, BodyContact[]>();
+    const woken = new Set<MatterJS.BodyType>();
+    for (const pair of event.pairs) {
+      this.softenContact(pair); // New pairs are reported before the velocity solver.
+      const { bodyA, bodyB } = pair;
       const a = this.owners.get(bodyA), b = this.owners.get(bodyB);
+      // Dispatch only to the living owners, rather than rescanning every pair for every actor.
+      for (const actor of a === b ? [a] : [a, b]) {
+        if (!actor?.lifecycle.interactive) continue;
+        const owned = contacts.get(actor);
+        if (owned) owned.push(pair); else contacts.set(actor, [pair]);
+      }
       if (!a || !b || a === b) continue;
+      this.bodyContacts.add(a); this.bodyContacts.add(b);
       const velocityA = this.motion.get(bodyA), velocityB = this.motion.get(bodyB);
       if (!velocityA || !velocityB) continue;
       const dragged = this.pointer.owner === a.doll || this.pointer.owner === b.doll;
       if (!dragged && Math.hypot(velocityA.x - velocityB.x, velocityA.y - velocityB.y) < 1) continue;
       // Waking a static posture before collision response lets Matter transfer the actual impulse.
-      if (a.lifecycle.interactive && (a.posture.controlsPose || a.landing)) a.interact();
-      if (b.lifecycle.interactive && (b.posture.controlsPose || b.landing)) b.interact();
+      for (const actor of [a, b]) if (actor.lifecycle.interactive && (actor.posture.controlsPose || actor.landing)) {
+        actor.interact();
+        for (const body of actor.doll.bodies) woken.add(body);
+      }
     }
-    for (const actor of this.actors) actor.impacts.collisions(event);
+    // Pair.update ran while standing/landing bodies were still static. Refresh the cached
+    // inverse mass BEFORE the solver: using the old value can amplify a heavy fragment's
+    // impulse many times when it wakes a light limb. Clear incompatible warm-start impulses.
+    if (woken.size) for (const pair of this.matter.world.engine.pairs.list) {
+      if (!woken.has(pair.bodyA) && !woken.has(pair.bodyB)) continue;
+      const a = pair.bodyA, b = pair.bodyB;
+      pair.inverseMass = a.inverseMass + b.inverseMass;
+      pair.restitution = Math.max(a.restitution, b.restitution);
+      pair.friction = Math.min(a.friction, b.friction);
+      pair.frictionStatic = Math.max(a.frictionStatic, b.frictionStatic);
+      pair.slop = Math.max(a.slop, b.slop);
+      for (const contact of pair.contacts) contact.normalImpulse = contact.tangentImpulse = 0;
+    }
+    for (const [actor, pairs] of contacts) actor.impacts.collisions({ pairs });
   };
 
   private interruptBlockedLanding(actor: RagdollActor) {
@@ -272,7 +310,10 @@ export class PhysicsScene extends Phaser.Scene {
     const actors = [...this.actors];
     for (const actor of actors) {
       actor.lifecycle.update(this.simulationTime);
-      if (!actor.lifecycle.interactive) continue;
+      if (!actor.lifecycle.interactive) {
+        actor.doll.limitDebrisMotion(this.pointer.owner === actor.doll ? this.pointer.held : undefined);
+        continue;
+      }
       if (actor.landing) {
         const gravity = this.matter.world.localWorld.gravity;
         if (actor.landing.step(step, gravity.y * gravity.scale)) { actor.landing = undefined; actor.lifecycle.landed(this.simulationTime); }
@@ -282,23 +323,33 @@ export class PhysicsScene extends Phaser.Scene {
       actor.doll.limitAngularSpeed();
     }
     this.pointer.step(remainingSlices);
-    const previous = new Map(actors.map(actor => [actor, actor.doll.capturePose()]));
+    const previous = new Map(actors.filter(actor => actor.lifecycle.interactive)
+      .map(actor => [actor, actor.doll.capturePose()]));
     for (const actor of actors) actor.impacts.beginStep(actor.doll, actor.lifecycle.interactive,
       this.simulationTime, actor.id, step, this.motion);
     // One engine update for the whole room, regardless of how many actors are present.
+    this.bodyContacts.clear();
     this.matter.world.step(step);
     this.pointer.afterStep();
     for (const actor of actors) {
       actor.impacts.boundaries();
       if (actor.impacts.touchedFloor) actor.lifecycle.landed(this.simulationTime);
       for (const hit of actor.impacts.flush()) this.receiveHit(hit);
-      if (actor.lifecycle.state === "bursting") separateBodies(actor.doll.bodies, 2, { selfCollision: false });
+      if (actor.lifecycle.state === "bursting") {
+        separateBodies(actor.doll.bodies, 2, { selfCollision: false });
+        actor.doll.limitDebrisMotion(this.pointer.owner === actor.doll ? this.pointer.held : undefined);
+      }
       else if (actor.lifecycle.interactive && !actor.landing && !actor.posture.controlsPose) {
         actor.doll.finishStep(previous.get(actor)!, this.pointer.owner === actor.doll ? this.pointer.held : undefined);
         if (actor.lifecycle.state !== "spawning") actor.posture.afterStep(step);
         actor.doll.limitAngularSpeed();
+        // Dense external contacts can make joint and contact solvers fight. Bound only
+        // the resulting free-body response; pointer movement and isolated throws stay free.
+        if (this.bodyContacts.has(actor) && this.pointer.owner !== actor.doll)
+          limitBodyReaction(actor.doll.bodies);
       }
     }
+    this.bodyContacts.clear();
     this.finishDeaths();
   }
 

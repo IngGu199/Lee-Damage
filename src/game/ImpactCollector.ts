@@ -1,11 +1,11 @@
 import { REFERENCE_STEP, ROOM } from "./config";
 import type { Ragdoll } from "./Ragdoll";
-import type { DamageHit } from "./DamageSystem";
+import { hitDamage, type DamageHit } from "./DamageSystem";
 import type { Point } from "../photo/PhotoTransform";
 
 export type RoomSurface = "left" | "right" | "ceiling" | "floor";
 interface Contact { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; collision: { supports: Point[]; normal?: Point } }
-export interface ContactMotion { x: number; y: number; angular: number; center: Point }
+export interface ContactMotion { x: number; y: number; angular: number; center: Point; debris?: boolean }
 const normals: Record<RoomSurface, Point> = {
   left: { x: 1, y: 0 }, right: { x: -1, y: 0 }, ceiling: { x: 0, y: 1 }, floor: { x: 0, y: -1 },
 };
@@ -64,7 +64,7 @@ export class ImpactCollector {
     const dx = point.x - body.position.x, dy = point.y - body.position.y;
     const c = Math.cos(body.angle), s = Math.sin(body.angle);
     this.pending.set(key, { lifeId: this.lifeId, hitId: 0, source: peer ? "body" : "room", surface,
-      part, position: { ...point }, strength, time: this.time,
+      part, position: { ...point }, strength, time: this.time, debris: peer?.debris,
       local: { x: dx * c + dy * s, y: -dx * s + dy * c } });
   }
 
@@ -120,7 +120,7 @@ export class ImpactCollector {
     for (const [key, hit] of this.pending) {
       if (!this.episodes.has(key)) {
         this.episodes.set(key, { separatedMs: 0, separatedSteps: 0 });
-        impacts.push({ ...hit, hitId: ++this.nextHit });
+        impacts.push(hit);
       }
     }
     for (const [key, episode] of this.episodes) {
@@ -129,9 +129,11 @@ export class ImpactCollector {
       // Two genuinely separated steps AND 20ms reject contact jitter at every substep size.
       if (episode.separatedSteps >= 2 && episode.separatedMs >= 20) this.episodes.delete(key);
     }
-    // A single step may contain several simultaneous contacts. Apply the strongest
-    // first, then the shared invulnerability window blocks the remaining reports.
-    this.pending.clear(); return impacts.sort((a, b) => b.strength - a.strength);
+    // Prioritize actual damage: a fast, softened fragment must not hide a harder wall hit.
+    // Assign IDs after sorting to keep each source monotonic in application order.
+    this.pending.clear();
+    return impacts.sort((a, b) => hitDamage(b) - hitDamage(a) || b.strength - a.strength)
+      .map(hit => ({ ...hit, hitId: ++this.nextHit }));
   }
 
   clear() {

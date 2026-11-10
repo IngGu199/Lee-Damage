@@ -14,6 +14,7 @@ export interface DamageHit {
   strength: number; // closing contact-point speed in px/s, including relative body motion
   damage?: number; // weapon damage is independent of physical impulse
   weaponId?: string;
+  debris?: boolean; // detached peer: soften damage without changing physical impulse
 }
 
 export function collisionDamage(speed: number, partScale = 1, surfaceScale = 1) {
@@ -23,6 +24,12 @@ export function collisionDamage(speed: number, partScale = 1, surfaceScale = 1) 
     ((speed - DAMAGE_RULES.minSpeed) * (speed + DAMAGE_RULES.minSpeed)) /
     (DAMAGE_RULES.referenceSpeed ** 2 - DAMAGE_RULES.minSpeed ** 2) * partScale * surfaceScale;
   return Math.min(DAMAGE_RULES.maxCollisionDamage, Math.max(0, raw));
+}
+
+export function hitDamage(hit: DamageHit) {
+  const amount = hit.source === "weapon" ? hit.damage ?? 0 : collisionDamage(hit.strength);
+  return hit.source === "body" && hit.debris
+    ? Math.min(DAMAGE_RULES.maxDebrisDamage, amount * DAMAGE_RULES.debrisDamageScale) : amount;
 }
 
 /** One shared hit path. Every actual HP loss starts a simulation-time invulnerability window. */
@@ -46,7 +53,7 @@ export class DamageSystem {
     this.lastHit.set(hit.source, hit.hitId);
     this.lastTime = hit.time;
     if (this.invulnerable(hit.time)) return null;
-    const amount = hit.source === "weapon" ? hit.damage ?? 0 : collisionDamage(hit.strength);
+    const amount = hitDamage(hit);
     if (!Number.isFinite(amount) || amount <= 0) return null;
     const lostHp = this.health.lose(amount);
     if (!lostHp) return null;

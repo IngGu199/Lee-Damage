@@ -155,3 +155,33 @@ test("detached parts stay opaque for 4.7 seconds and disappear only at five seco
   expect(life.burstFinished(5100)).toBe(true);
   expect(life.alpha(5100)).toBe(0);
 });
+
+test("debris damage keeps the 800px/s threshold, scales to 15%, caps at 12 and shares immunity", () => {
+  const damage = new DamageSystem();
+  const debrisHit = (hitId: number, time: number, strength: number) => hit({ source: "body", debris: true, hitId, time, strength });
+  expect(damage.apply(debrisHit(1, 0, 800))).toBeNull();
+  expect(damage.invulnerable(0)).toBe(false);
+  expect(damage.apply(debrisHit(2, 0, 1400))?.lostHp).toBe(3);
+  expect(damage.apply(hit({ source: "weapon", damage: 100, time: 299 }))).toBeNull();
+  expect(damage.apply(debrisHit(3, 300, 100000))?.lostHp).toBe(12);
+  expect(damage.apply(hit({ source: "body", hitId: 4, time: 600, strength: 4000 }))?.lostHp).toBe(180);
+  expect(damage.apply(hit({ source: "room", debris: true, hitId: 5, time: 900, strength: 1400 }))?.lostHp).toBe(20);
+  expect(damage.apply(hit({ source: "weapon", debris: true, hitId: 6, time: 1200, damage: 100 }))?.lostHp).toBe(100);
+});
+
+test("a fast softened fragment does not mask a stronger simultaneous room impact", () => {
+  const collector = new ImpactCollector(), { body, doll } = fixture();
+  body.velocity.x = -1400 * body.deltaTime / 1000;
+  const fragment = { id: 99 } as MatterJS.BodyType;
+  const peers = new Map([[fragment, { x: 5000, y: 0, angular: 0, center: { x: 20, y: 300 }, debris: true }]]);
+  collector.beginStep(doll, true, 0, 1, body.deltaTime, peers); collector.beforeSolve();
+  collector.collisions({ pairs: [{ bodyA: body, bodyB: fragment,
+    collision: { supports: [{ x: 30, y: 300 }], normal: { x: 1, y: 0 } } }] });
+  const impacts = collector.flush();
+  expect(impacts).toHaveLength(2); expect(impacts.map(impact => impact.source)).toEqual(["room", "body"]);
+  expect(impacts[1].debris).toBe(true); expect(impacts[1].strength).toBeCloseTo(6400);
+  expect(impacts[1].hitId).toBeGreaterThan(impacts[0].hitId);
+  const damage = new DamageSystem();
+  for (const impact of impacts) damage.apply(impact);
+  expect(damage.health.lostHp).toBeCloseTo(20);
+});

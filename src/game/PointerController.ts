@@ -204,7 +204,7 @@ export class PointerController {
       if (throwBody) {
         const velocity = Vector.mult(this.motion.at(time), this.throwScale);
         if (doll.joints.length) doll.launch(velocity, true);
-        else Body.setVelocity(this.heldBody, velocity);
+        else { Body.setVelocity(this.heldBody, velocity); doll.limitDebrisMotion(); }
       }
       this.heldBody = null;
       this.onInteract(doll);

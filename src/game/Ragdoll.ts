@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { configureDebris, limitDebrisMotion } from "./DebrisPhysics";
 import { Matter } from "./matter";
 import {
   ANGULAR_INERTIA_SCALE,
@@ -37,6 +38,7 @@ export class Ragdoll {
   private readonly anchors: { a: MatterJS.Vector; b: MatterJS.Vector }[] = [];
   private readonly nonCollidingGroup = Body.nextGroup(true);
   private selfCollision = true;
+  private isDebris = false;
 
   constructor(
     private readonly world: Phaser.Physics.Matter.World,
@@ -369,8 +371,12 @@ export class Ragdoll {
   setBounce(value: number) {
     this.bounce = value;
     this.parts.forEach((part) => {
-      part.body.restitution = value;
+      if (!this.isDebris) part.body.restitution = value;
     });
+  }
+
+  limitDebrisMotion(held?: MatterJS.BodyType) {
+    if (this.isDebris) limitDebrisMotion(this.bodies, held);
   }
 
   limitAngularSpeed() {
@@ -419,7 +425,9 @@ export class Ragdoll {
 
   /** Safe-step operation: constraints are actually removed, not softened. */
   burst() {
+    this.isDebris = true;
     this.setDynamic(true);
+    configureDebris(this.bodies);
     this.setSelfCollision(false);
     const center = this.centerOfMass;
     this.joints.forEach(joint => Composite.remove(this.composite, joint));
@@ -428,14 +436,15 @@ export class Ragdoll {
     this.parts.forEach(({ body }, index) => {
       const dx = body.position.x - center.x, dy = body.position.y - center.y;
       const length = Math.hypot(dx, dy) || 1;
-      const speed = 7 + index % 3;
+      const speed = 4 + index % 3;
       // Equal velocity changes keep the heavy head visible in the burst too.
       Body.setVelocity(body, {
         x: Math.max(-5, Math.min(5, body.velocity.x)) + dx / length * speed,
         y: Math.max(-5, Math.min(5, body.velocity.y)) + dy / length * speed - 2,
       });
-      Body.setAngularVelocity(body, (index % 2 ? 1 : -1) * (0.12 + index * 0.012));
+      Body.setAngularVelocity(body, (index % 2 ? 1 : -1) * (0.06 + index * 0.004));
     });
+    this.limitDebrisMotion();
   }
 
   destroy() {
