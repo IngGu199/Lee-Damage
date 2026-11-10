@@ -34,7 +34,8 @@ LeeDamageWeb/
 │       ├── config.ts          # 고정 게임 좌표, 물리 간격·세분화, 공통 상태 타입
 │       ├── appearanceConfig.ts # 물리와 분리한 확정 외형값: 사진 2·일그러짐 1.8·자국 1.5
 │       ├── matter.ts          # Phaser 내장 Matter 접근 및 누락된 타입 보완
-│       ├── PhysicsScene.ts    # 방·물리 수명주기, 고정 간격 계산, 재배치·일시정지
+│       ├── PhysicsScene.ts    # 다중 인형·잔해 목록, 단일 월드 스텝, 생성 제한·재배치·일시정지
+│       ├── RagdollActor.ts    # 개별 생명의 물리·HP·자세·사진·상처·잔해·표시 수명
 │       ├── PostureController.ts # 무입력·정지 판단, 관절 복구·대기·기립 상태 전환
 │       ├── TorsoAlignment.ts   # 채택한 2번: 현재 몸통 기준 전신 정렬·속도 복원
 │       ├── JointRepair.ts      # 비교용 1번의 이전 국소 관절 복구
@@ -47,17 +48,19 @@ LeeDamageWeb/
 │       ├── ImpactCollector.ts # 물리 접촉·수동 방 경계의 충격 관찰·중복 통합
 │       ├── damageConfig.ts    # 체력·충돌 곡선·상처 간격·생성 보호 초기값
 │       ├── HealthState.ts     # HP와 실제 손실·초과 치명타 처리
-│       ├── DamageSystem.ts    # 공통 피격·생명/명중 ID·60ms 동시 충격 묶음
+│       ├── DamageSystem.ts    # 공통 피격·생명/명중 ID·300ms 피격 무적
 │       ├── InjuryProgression.ts # 실제 손실 임계값·사진 변형 단계
-│       ├── RagdollLifecycle.ts # 분리·소멸·재등장·생성 보호 상태
+│       ├── RagdollLifecycle.ts # 분리·5초 잔류·소멸·재등장·생성 보호 상태
+│       ├── SpawnLanding.ts    # 기립 자세 유지 낙하·착지, 입력 시 일반 물리 전환
 │       ├── ImpactAppearance.ts # 상처 목록·100개 상한·독립 외형 미리보기
 │       ├── InjuryRenderer.ts  # 상처 크기·전체 표면 무작위 부착·사진 배율/회전 추종
 │       └── draw.ts            # 방 격자, 도형 인형, 잡기 연결·디버그 그리기
 ├── tests/
 │   ├── physics.spec.ts        # 브라우저 조작·관절·경계·반복 재배치 검증
 │   ├── collision-cycle.spec.ts # 실험 1의 자기 충돌 전환·재잡기·기립 완료 검증
-│   ├── damage-rules.spec.ts   # 곡선·손상·상처·접촉 회차·시간 단위 7개
-│   ├── foundation.spec.ts     # 실제 HP·사망·재등장·100회 교체 7개
+│   ├── damage-rules.spec.ts   # 곡선·손상·상처·접촉 회차·시간 단위·무적/소멸 9개
+│   ├── foundation.spec.ts     # 실제 HP·즉시 재등장·잔해 만료·100회 교체·기립·무적 9개
+│   ├── multi-ragdoll.spec.ts  # T키/10개 제한·개별 HP·잔해 조작·상호 충돌·자원 정리 9개
 │   └── photo.spec.ts          # 현재 사진 편집·변형·상처·수명주기 검증 24개
 ├── README.md                  # 설치·실행·조작·검증 방법
 ├── STAGE_1_PROGRESS.md        # 1단계 누적 진행·2번 채택·현재 동작·검증 범위
@@ -85,17 +88,18 @@ LeeDamageWeb/
 
 1. Vite가 `index.html`을 제공하고 `src/main.ts`를 불러옵니다.
 2. `main.ts`가 웹 UI와 `PhysicsScene`을 만들고 캔버스용 한글 글꼴을 준비한 뒤 Phaser를 시작합니다.
-3. `PhysicsScene.create()`가 내장 Matter 월드에 벽 4개와 `Ragdoll`을 추가합니다.
+3. `PhysicsScene.create()`가 내장 Matter 월드에 벽 4개와 첫 `RagdollActor`를 추가합니다. T키로 생존 인형 최대 10개를 생성하며, 각각 신체 10개·관절 9개·독립 체력/자세/외형을 소유합니다.
 4. `PointerController`가 화면의 포인터 좌표를 1200×700 게임 좌표로 변환합니다. CSS 크기가 바뀌어도 물리 공간은 같습니다.
 5. 잡기는 자기 충돌을 켠 뒤 동적 점 제약 1개로 클릭 지점을 연결합니다. 선택 부위도 동적으로 중력·관절·접촉 토크를 계산하고, 회전한 로컬 클릭 좌표를 갱신해 같은 지점을 포인터에 유지합니다. `PointerVelocity`는 실제 이벤트 시각으로 마지막 이동 벡터를 계산합니다. 놓을 때 채택한 2번은 자기 충돌을 유지하고(비교용 1번은 해제), `Ragdoll.launch()`가 벡터의 50%를 몸 전체에 적용하며 기존 각속도를 유지합니다. 밀치기 경로는 제거했습니다.
 6. `PhysicsScene.update()`는 120Hz 기준으로 상태 제어 → 포인터 연결점 갱신 → 물리 계산 → 클릭 지점 잔여 위치 오차 보정 → 겹침·경계·속도 보정 → 관절 정렬/복구를 수행합니다. 채택한 2번의 `TorsoAlignment`는 물리 계산 뒤 현재 몸통을 기준으로 보정하고 해당 보정 전의 속도 벡터를 복원합니다. 고속 비행·잡기 이동은 기준 스텝을 추가 분할합니다. 국소 관절 복구 중에는 엔진을 계속 실행합니다. `waiting`에서도 물리 계산을 계속하며, 시작·완료된 기립 상태와 기립 모션에서만 자세를 직접 제어합니다. 기립은 `PoseRecovery`가 담당합니다.
 7. 약 150ms마다 관절 정렬 남은 시간·자기 충돌 ON/OFF·FPS·속도·부위 수·관절 수·잡은 부위·기립 상태·대기 시간·복구 횟수를 웹 UI로 전달합니다. 신체의 좌표는 DOM에서 관리하지 않습니다.
-8. 재배치는 잡기 제약과 기존 인형 복합체를 제거하고 인형 1개를 새로 만듭니다. 벽·이벤트 리스너는 다시 만들지 않습니다.
-9. 사진 편집창은 게임 입력·물리를 멈추고 사진을 보정합니다. 특징점 검출·변형 사진 생성 후 `FaceRenderer`가 기본/변형 사진을 1개의 GPU 텍스처로 교체해 표시합니다. 사진과 편집값은 인형과 별도로 관리하므로 재배치 후에도 유지됩니다.
+8. 재배치는 잡기 제약과 모든 인형·잔해 복합체를 제거하고 인형 1개를 새로 만듭니다. 벽·이벤트 리스너는 다시 만들지 않습니다.
+9. 사진 편집창은 게임 입력·물리를 멈추고 사진을 보정합니다. 특징점 검출·변형 사진 생성 후 `FaceRenderer`가 기본/변형 사진을 각 인형별 GPU 텍스처로 교체해 표시합니다. 프레임 메모리는 공유하지만 변형 단계와 텍스처 키는 독립적입니다. 사진과 편집값은 인형과 별도로 관리하므로 재배치 후에도 유지됩니다.
    직접 그린 윤곽은 원본 이미지 기준 점으로 저장하고 사진과 같은 좌표 변환을 적용합니다. 기본·변형 사진에 같은 알파 마스크를 사용하고, 윤곽 사진에서는 머리 바탕만 숨깁니다. 편집창의 취소가 적용 중인 윤곽을 바꾸지 않도록 점 배열을 복사합니다.
-10. `ImpactCollector`는 Matter의 `beforeSolve`에서 중력 적분 뒤·접촉 반응 전 속도를 읽고 부위·방 면별 접촉 회차를 관리합니다. `DamageSystem`은 생명·명중 ID를 확인하고 60ms 안의 동시 방 충격은 최댓값의 차이만 차감합니다. `HealthState`와 `InjuryProgression`이 실제 HP 손실 40당 자국과 30%·65% 사진 단계를 결정합니다. 경계·자세 보정 전 수집하므로 좌표 보정을 손상으로 계산하지 않으며 정렬 중 실제 방 충돌은 유지합니다.
-11. HP 0에서는 `RagdollLifecycle`이 입력을 차단하고 안전한 스텝 경로에서 `Ragdoll.burst()`가 실제 관절 9개를 제거합니다. 신체·사진·자국은 300ms 동안 함께 확산·소멸하고, 신체 제거 뒤 300ms 대기 후 새 인형을 방 안의 공중에서 동적으로 생성합니다. 같은 사진·프레임·GPU 텍스처를 재사용합니다. 소멸·재등장·생성 보호는 시뮬레이션 시간으로 멈춤과 함께 정지합니다.
-12. R은 새 생명·최대 HP의 기립으로 초기화하고 사망 예약을 취소합니다. 사진 변경·상처 지우기·물리 이상 복구는 HP를 회복시키지 않습니다. 정상 생명은 방 4개+신체 10개·관절 9개, 분리 중은 신체 10개·관절 0개, 재등장 대기는 방 4개입니다.
+10. `ImpactCollector`는 Matter의 `beforeSolve`에서 중력 적분 뒤·접촉 반응 전 속도를 읽고 부위·방 면별 접촉 회차를 관리합니다. `DamageSystem`은 생명·명중 ID를 확인하고 동일 스텝의 강한 접촉부터 반영하고 손상 후 300ms 동안 추가 차감을 막습니다. `HealthState`와 `InjuryProgression`이 실제 HP 손실 40당 자국과 30%·65% 사진 단계를 결정합니다. 경계·자세 보정 전 수집하므로 좌표 보정을 손상으로 계산하지 않으며 정렬 중 실제 방 충돌은 유지합니다.
+11. HP 0에서는 `RagdollActor.burst()`가 안전한 스텝 경로에서 실제 관절 9개를 제거하고, `PhysicsScene`이 새 인형을 즉시 추가합니다. 원래 신체·사진·자국은 별도 잔해로 5초간 남고 마지막 300ms에 함께 소멸합니다. 잔해는 마우스로 개별 조각을 던질 수 있고 다른 인형·잔해와 물리 충돌합니다. 생존은 최대 10개이며 잔해는 별도입니다.
+12. 하위 스텝마다 전체 Matter 월드는 한 번만 갱신합니다. 외부 신체 충돌은 양쪽의 반응 전 접촉점 상대 속도를 계산하고 각 생명의 무적·HP에 독립적으로 적용합니다. 서 있거나 생성 낙하 중인 인형이 외부 물체에 맞으면 동적으로 전환합니다.
+13. 포인터는 실제 잡기 소유자를 보관하므로 T 생성이나 UI 선택으로 대상이 바뀌지 않습니다. 잔해 만료·물리 복구는 해당 소유자의 신체·접촉 쌍·텍스처·상처·표시만 정리합니다. R처럼 전체 초기화할 때만 엔진 캐시를 비웁니다. 사진은 유지하며 일반 물리 복구는 해당 인형의 HP·상처를 유지합니다.
 
 ## 3. 수정할 기능별 파일
 
@@ -114,15 +118,17 @@ LeeDamageWeb/
 | 놓는 순간 속도 계산 | `src/game/PointerVelocity.ts` | `event.timeStamp`와 마지막 이동 구간 사용, 병합된 이벤트 반영 |
 | 신체 겹침·벽 경계·안전 자세 복원 | `src/game/SelfCollision.ts` | 자기 충돌 ON일 때 모든 쌍 검사. OFF일 때 경계 보정만 적용 |
 | 신체 비율·질량·관절 감각 | `src/game/Ragdoll.ts` | 머리 12, 몸통 4.5. 초기 위치와 관절 로컬 연결점을 함께 수정 |
+| 다중 인형·잔해 선택·개별 HP | `src/game/RagdollActor.ts`, `PhysicsScene.ts`, `main.ts` | 생존 10개 상한, 잡는 소유자와 UI 선택 분리, 신체 간 상대 속도 손상 |
 | 클릭 지점 회전·포인터 추종·놓을 때 속도 | `src/game/PointerController.ts` | 창 밖 해제·취소에서도 제약 제거. 각도 고정 없음 |
 | 도형·얼굴·디버그 표시 | `src/game/draw.ts` | 그림 좌표는 해당 신체의 위치·각도를 기준으로 계산 |
 | 사진 선택·편집·특징점·변형 생성 | `src/photo/` | 사진과 특징점의 변환을 일치시키고 취소된 작업 결과는 폐기 |
 | 사진·자국 표시 배율과 일그러짐 강도 | `src/game/appearanceConfig.ts`, `src/main.ts` | `FIXED_APPEARANCE`: 사진 2배·일그러짐 1.8배·자국 종류별 1.5배. 조절 바 제거, 물리 설정과 분리 |
-| 사진 머리 추종·텍스처 교체 | `src/game/FaceRenderer.ts` | GPU 텍스처 1개 재사용. 재배치와 사진 수명을 분리 |
+| 사진 머리 추종·텍스처 교체 | `src/game/FaceRenderer.ts` | 프레임 메모리 공유·인형별 텍스처/변형 단계 분리. 재배치와 사진 수명을 분리 |
 | 접촉 회차·속도 단위 | `src/game/ImpactCollector.ts` | beforeSolve의 원시 속도는 실제 하위 스텝 간격으로 환산. 자세 보정 전 수집 |
-| HP·데미지·상처 임계값 | `src/game/DamageSystem.ts`, `HealthState.ts`, `InjuryProgression.ts`, `damageConfig.ts` | 방 접촉 최댓값 묶음과 실제 HP 손실을 외형에서 분리 |
-| 사망·관절 분리·공중 재등장 | `src/game/RagdollLifecycle.ts`, `Ragdoll.ts`, `PhysicsScene.ts` | 분리 중 정상 자세 제어 금지. 모든 시간은 시뮬레이션 기준 |
-| 기반 회귀 검증 | `tests/damage-rules.spec.ts`, `foundation.spec.ts` | `npm run test:foundation` 14개. `test:current`는 사진 포함 38개 |
+| HP·데미지·상처 임계값 | `src/game/DamageSystem.ts`, `HealthState.ts`, `InjuryProgression.ts`, `damageConfig.ts` | 최소 속도 800px/s·피격 후 300ms 무적과 실제 HP 손실을 외형에서 분리 |
+| 기립 낙하·착지 | `src/game/SpawnLanding.ts`, `PhysicsScene.ts` | 전체 기립 자세를 수직 이동, 잡기·유효 공격 시 동적 물리로 전환 |
+| 사망·관절 분리·즉시 재등장 | `src/game/RagdollActor.ts`, `RagdollLifecycle.ts`, `Ragdoll.ts`, `PhysicsScene.ts` | 분리 시 새 생명 추가, 잔해는 독립 조작/충돌 유지 후 5초에 해당 객체만 정리 |
+| 기반 회귀 검증 | `tests/damage-rules.spec.ts`, `foundation.spec.ts` | `npm run test:foundation` 18개. `test:multi` 9개. `test:current`는 다중 인형·사진 포함 51개 |
 | 상처 에셋 부착 | `src/game/InjuryRenderer.ts`, `src/game/FaceRenderer.ts` | 자국 크기와 무관하게 테두리까지 균일하게 중심 선택. 사진은 불투명 픽셀 좌표를 보존해 배율 추종 |
 | 사진 회귀 검증 | `tests/photo.spec.ts` | `npm run test:photo`. 실제 모델 확인 결과는 2단계 진행 기록 참고 |
 | 회귀 검증 | `tests/physics.spec.ts` | 실제 포인터 조작과 가속된 물리 반복 검증 포함 |

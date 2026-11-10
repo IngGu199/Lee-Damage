@@ -37,6 +37,11 @@ export interface LabSettings {
   lag: number;
 }
 export interface LabStats {
+  aliveCount: number;
+  debrisCount: number;
+  maxRagdolls: number;
+  selectedId: number;
+  actors: { id: number; hp: number; maxHp: number; state: import("./RagdollLifecycle").LifeState }[];
   lifeId: number;
   lifeState: import("./RagdollLifecycle").LifeState;
   hp: number;

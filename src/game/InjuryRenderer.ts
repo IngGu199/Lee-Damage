@@ -9,10 +9,12 @@ export class InjuryRenderer {
   private readonly entries: { injury: Injury; image: Phaser.GameObjects.Image }[] = [];
   constructor(private readonly scene: Phaser.Scene, private readonly face: FaceRenderer) {}
 
-  add(injury: Injury, part: Part) {
+  add(injury: Injury, part: Part, randomize = true) {
     // Collision speed decides whether to show an injury; its contact point does not place it.
     const size = part.radius ? 17 : Math.min(22, part.width * 0.58);
-    if (part.radius && this.face.active) {
+    if (!randomize) {
+      // Existing marks keep their local coordinates during a physics-only recovery.
+    } else if (part.radius && this.face.active) {
       const point = this.face.randomInjuryPoint();
       if (!point) return;
       injury.photoPoint = point; injury.local = this.face.photoToLocal(point);

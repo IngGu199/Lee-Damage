@@ -240,7 +240,7 @@ test("room impacts create injuries and pose corrections do not", async ({ page }
   await open(page);
   await page.evaluate(() => {
     const s = window.__physicsLab;
-    s.setPaused(true); s.posture.interact(); s.doll.launch({ x: -35, y: 0 }); s.setPaused(false);
+    s.setPaused(true); s.posture.interact(); s.doll.launch({ x: -70, y: 0 }); s.setPaused(false);
     for (let i = 0; i < 90; i++) s.update(0, 1000 / 120);
     s.setPaused(true);
   });

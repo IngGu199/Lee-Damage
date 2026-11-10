@@ -1,6 +1,6 @@
 {
   "name": "lee-damage-physics-prototype",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,8 @@
     "test": "playwright test",
     "test:photo": "playwright test tests/photo.spec.ts",
     "test:foundation": "playwright test tests/damage-rules.spec.ts tests/foundation.spec.ts",
-    "test:current": "playwright test tests/damage-rules.spec.ts tests/foundation.spec.ts tests/photo.spec.ts"
+    "test:current": "playwright test tests/damage-rules.spec.ts tests/foundation.spec.ts tests/multi-ragdoll.spec.ts tests/photo.spec.ts",
+    "test:multi": "playwright test tests/multi-ragdoll.spec.ts"
   },
   "dependencies": {
     "@fontsource-variable/noto-sans-kr": "5.3.1",

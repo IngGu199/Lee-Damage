@@ -14,6 +14,7 @@ export class PointerController {
   experiment: PhysicsExperiment = DEFAULT_SETTINGS.experiment;
   throwScale = DEFAULT_SETTINGS.throwScale;
   private pointerId: number | null = null;
+  private heldDoll?: Ragdoll;
   private heldBody: MatterJS.BodyType | null = null;
   private heldOffset = { x: 0, y: 0 };
   private readonly motion = new PointerVelocity();
@@ -24,7 +25,8 @@ export class PointerController {
     private readonly world: Phaser.Physics.Matter.World,
     private readonly doll: () => Ragdoll,
     private readonly paused: () => boolean,
-    private readonly onInteract: () => void,
+    private readonly onInteract: (doll: Ragdoll) => void,
+    private readonly pickDoll?: (point: MatterJS.Vector) => Ragdoll | undefined,
   ) {
     const options = { signal: this.abort.signal };
     canvas.addEventListener("pointerdown", this.down, options);
@@ -47,11 +49,13 @@ export class PointerController {
   private down = (event: PointerEvent) => {
     if (event.button !== 0 || this.paused() || this.pointerId !== null) return;
     const point = this.point(event);
-    const part = this.doll().at(point);
-    if (!part) return;
+    const doll = this.pickDoll ? this.pickDoll(point) : this.doll();
+    const part = doll?.at(point);
+    if (!part || !doll) return;
     event.preventDefault();
     this.canvas.focus({ preventScroll: true });
-    this.onInteract();
+    this.heldDoll = doll;
+    this.onInteract(doll);
     this.pointerId = event.pointerId;
     this.canvas.setPointerCapture(event.pointerId);
     this.target = point;
@@ -72,9 +76,8 @@ export class PointerController {
     this.heldOffset = Vector.rotate(
       Vector.sub(point, part.body.position), -part.body.angle,
     );
-    const doll = this.doll();
-    const restoreCollision = !doll.selfCollisionEnabled;
-    doll.setSelfCollision(true);
+    const restoreCollision = doll.joints.length > 0 && !doll.selfCollisionEnabled;
+    if (doll.joints.length) doll.setSelfCollision(true);
     if (restoreCollision) doll.finishStep(doll.capturePose(), part.body);
     this.motion.reset(point, event.timeStamp);
     this.canvas.dataset.dragging = "true";
@@ -109,13 +112,15 @@ export class PointerController {
       this.motion.record(point, event.timeStamp);
     this.target = point;
     // A release can arrive before the next physics frame; keep its final anchor position.
-    const doll = this.doll();
+    const doll = this.heldDoll!;
     const previous = doll.capturePose();
     this.step();
     this.afterStep();
     doll.finishStep(previous, this.held);
     this.endGrab(true, event.timeStamp);
   };
+
+  get owner() { return this.heldDoll; }
 
   get held() {
     return this.heldBody ?? undefined;
@@ -193,15 +198,18 @@ export class PointerController {
 
   private endGrab(throwBody: boolean, time: number) {
     if (this.grip) this.world.removeConstraint(this.grip);
-    if (this.heldBody) {
-      this.doll().setSelfCollision(this.experiment === 2);
-      if (throwBody)
-        this.doll().launch(
-          Vector.mult(this.motion.at(time), this.throwScale), true,
-        );
+    if (this.heldBody && this.heldDoll) {
+      const doll = this.heldDoll;
+      if (doll.joints.length) doll.setSelfCollision(this.experiment === 2);
+      if (throwBody) {
+        const velocity = Vector.mult(this.motion.at(time), this.throwScale);
+        if (doll.joints.length) doll.launch(velocity, true);
+        else Body.setVelocity(this.heldBody, velocity);
+      }
       this.heldBody = null;
-      this.onInteract();
+      this.onInteract(doll);
     }
+    this.heldDoll = undefined;
     this.motion.clear();
     this.grip = null;
     this.grabbed = null;

@@ -22,20 +22,20 @@ const injuryLabels = { bruise: "멍 크기", scratch: "상처 크기", bandage: 
 app.innerHTML = `
   <header class="site-header">
     <a class="brand" href="./" aria-label="Lee Damage 홈"><span class="brand-mark">L<span>↗</span></span>LEE DAMAGE<span class="brand-dot">®</span></a>
-    <div class="header-meta"><span class="status-dot"></span>개발 중인 작은 실험<span class="version">BUILD 0.7</span></div>
+    <div class="header-meta"><span class="status-dot"></span>개발 중인 작은 실험<span class="version">BUILD 0.8</span></div>
   </header>
   <main>
     <section class="intro" aria-labelledby="title">
       <div><p class="eyebrow">THE RAGDOLL PROJECT <span>/ 03</span></p><h1 id="title">충돌 실험실<span class="title-dot">.</span></h1><p class="intro-copy">얼굴을 붙이고, 잡고 흔들어 보세요. 나머지는 중력에 맡기고.</p></div>
-      <div class="stage-label"><span>PROTOTYPE</span><strong>03 <span>/ 08</span></strong><small>체력 · 재등장 기반</small></div>
+      <div class="stage-label"><span>PROTOTYPE</span><strong>03 <span>/ 08</span></strong><small>여러 인형 · 물리 상호작용</small></div>
     </section>
     <div class="workspace">
       <section class="playground" aria-label="물리 시제품">
         <div class="toolbar">
-          <div class="tools"><span class="tool active"><span aria-hidden="true">✥</span> 잡기 · 던지기</span></div>
+          <div class="tools"><span class="tool active"><span aria-hidden="true">✥</span> 잡기 · 던지기</span><button id="spawn" class="reset-button" disabled>인형 추가 <kbd>T</kbd></button><span id="actor-count">1 / 10</span></div>
           <div class="play-actions"><button id="pause" class="icon-button" aria-label="일시정지" disabled>Ⅱ</button><span class="toolbar-divider"></span><button id="reset" class="reset-button" disabled><span aria-hidden="true">↻</span> 재배치 <kbd>R</kbd></button></div>
         </div>
-        <div class="health-strip" aria-label="인형 체력"><div><span>인형 체력</span><strong id="hp-value">1,000 / 1,000</strong></div><meter id="hp-meter" min="0" max="${DAMAGE_RULES.maxHp}" value="${DAMAGE_RULES.maxHp}" aria-label="남은 체력"></meter><span id="life-status">벽과 바닥에 세게 부딪히면 체력이 줄어요.</span></div>
+        <div class="health-strip" aria-label="인형 체력"><div><span id="selected-actor">인형 체력</span><strong id="hp-value">1,000 / 1,000</strong></div><meter id="hp-meter" min="0" max="${DAMAGE_RULES.maxHp}" value="${DAMAGE_RULES.maxHp}" aria-label="남은 체력"></meter><span id="life-status">벽과 바닥에 세게 부딪히면 체력이 줄어요.</span><div id="actor-list" class="actor-list" aria-label="인형별 체력"></div></div>
         <div class="canvas-wrap"><div id="game"></div><div id="loading" class="game-overlay">물리 실험실을 준비하고 있어요…</div><div id="pause-overlay" class="game-overlay" hidden><span class="pause-symbol">Ⅱ</span><strong>잠깐 쉬는 중</strong><p>창을 벗어나면 자동으로 멈춥니다.</p><button id="resume">실험 계속하기 <span>→</span></button></div></div>
         <div class="game-footer"><span><span class="status-dot" id="live-dot"></span><span id="live-status">준비 중</span></span><span id="grip-status">인형의 어느 부위든 잡을 수 있어요</span><span class="engine-label">PHASER + MATTER</span></div>
       </section>
@@ -80,7 +80,7 @@ app.innerHTML = `
         <div class="telemetry"><div class="telemetry-title"><span class="status-dot"></span> LIVE TELEMETRY</div><div class="metrics"><div><strong id="fps">—</strong><span>FPS</span></div><div><strong id="speed">0</strong><span>최대 속도 · px/s</span></div></div><div class="metric-detail"><span>신체 <b id="bodies">10</b> / 관절 <b id="joints">9</b></span><span>120 Hz</span></div><p id="self-collision-status">자기 충돌 ON</p><p id="alignment-status">조작 후 관절 정렬 대기</p><p id="posture-status">기립 상태</p><p id="recovery-status">안정성 복구 0회</p></div>
       </aside>
     </div>
-    <section class="instructions" aria-label="조작 방법"><div><span class="instruction-number">01</span><p><strong>잡고, 흔들고</strong><span>잡고 있는 동안 신체끼리 충돌해요.</span></p></div><div><span class="instruction-number">02</span><p><strong>손을 놓으면, 휙</strong><span id="release-instruction">놓은 뒤에도 신체·벽·바닥과 계속 부딪혀요.</span></p></div><div><span class="instruction-number">03</span><p><strong>쉬면 다시 일어나요</strong><span id="alignment-instruction">조작 종료 2초 뒤 정렬하고, 안정되거나 50px/s 이하면 2초 뒤 기립해요.</span></p></div></section>
+    <section class="instructions" aria-label="조작 방법"><div><span class="instruction-number">01</span><p><strong>잡고, 흔들고</strong><span>잡고 있는 동안 신체끼리 충돌해요.</span></p></div><div><span class="instruction-number">02</span><p><strong>손을 놓으면, 휙</strong><span id="release-instruction">T로 최대 10개 · 인형과 잔해도 서로 부딪혀요.</span></p></div><div><span class="instruction-number">03</span><p><strong>쉬면 다시 일어나요</strong><span id="alignment-instruction">조작 종료 2초 뒤 정렬하고, 안정되거나 50px/s 이하면 2초 뒤 기립해요.</span></p></div></section>
     <p id="notice" role="status" aria-live="polite"></p>
     <footer class="page-footer"><span>작은 인형에, 나만의 얼굴을.</span><span>PHYSICS FIRST. FUN FOLLOWS.</span></footer>
   </main>`;
@@ -109,12 +109,25 @@ function renderStats(stats: LabStats) {
   element("appearance-state").textContent = `자국 ${scene.appearance.injuries.length} / ${APPEARANCE_RULES.maxInjuries}개 · 손상 ${Math.round(stats.lostHp / stats.maxHp * 100)}%`;
   element("hp-value").textContent = `${Math.ceil(stats.hp).toLocaleString("ko-KR")} / ${stats.maxHp.toLocaleString("ko-KR")}`;
   element<HTMLMeterElement>("hp-meter").value = stats.hp;
+  element("selected-actor").textContent = stats.lifeState === "bursting" ? `잔해 #${stats.selectedId}` : `인형 #${stats.selectedId} 체력`;
+  element("actor-count").textContent = `${stats.aliveCount} / ${stats.maxRagdolls} · 잔해 ${stats.debrisCount}`;
+  element<HTMLButtonElement>("spawn").disabled = stats.paused || stats.aliveCount >= stats.maxRagdolls;
+  const list = element("actor-list");
+  const live = stats.actors.filter(actor => actor.state !== "bursting");
+  for (const button of list.querySelectorAll<HTMLButtonElement>("button"))
+    if (!live.some(actor => String(actor.id) === button.dataset.actor)) button.remove();
+  for (const actor of live) {
+    let button = list.querySelector<HTMLButtonElement>(`[data-actor="${actor.id}"]`);
+    if (!button) { button = document.createElement("button"); button.dataset.actor = String(actor.id); list.append(button); }
+    button.textContent = `#${actor.id} · ${Math.ceil(actor.hp)}`;
+    button.setAttribute("aria-label", `인형 ${actor.id}, 체력 ${Math.ceil(actor.hp)} / ${actor.maxHp}`);
+    button.setAttribute("aria-pressed", String(actor.id === stats.selectedId));
+  }
   element("life-status").textContent = {
     alive: "벽과 바닥에 세게 부딪히면 체력이 줄어요.",
     spawning: "새 인형이 내려오는 중 · 잡으면 바로 시작해요.",
     dying: "새 인형을 준비해요.",
     bursting: "인형이 흩어지고 있어요.",
-    respawnWait: "곧 새 인형이 내려와요.",
   }[stats.lifeState];
   element("fps").textContent = String(stats.fps);
   element("speed").textContent = String(stats.speed);
@@ -179,6 +192,12 @@ window.addEventListener("pagehide", (event) => {
   if (!(event as PageTransitionEvent).persisted) photoEditor.destroy();
 });
 
+element("spawn").addEventListener("click", () => scene.spawnRagdoll());
+element("actor-list").addEventListener("click", event => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-actor]");
+  if (button) scene.selectActor(Number(button.dataset.actor));
+});
+
 element("pause").addEventListener("click", () =>
   scene.setPaused(!scene.paused),
 );
@@ -194,6 +213,9 @@ element<HTMLInputElement>("debug").addEventListener("change", (event) => {
 window.addEventListener("keydown", (event) => {
   if (!ready || photoEditor.open || event.repeat || event.ctrlKey || event.metaKey || event.altKey)
     return;
+  if (event.code === "KeyT" && !(event.target as HTMLElement).closest("input, select, textarea, [contenteditable]")) {
+    event.preventDefault(); scene.spawnRagdoll(); return;
+  }
   if (
     (event.target as HTMLElement).closest(
       "input, button, a, select, textarea, [contenteditable]",

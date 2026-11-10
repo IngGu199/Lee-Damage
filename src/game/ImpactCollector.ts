@@ -4,7 +4,8 @@ import type { DamageHit } from "./DamageSystem";
 import type { Point } from "../photo/PhotoTransform";
 
 export type RoomSurface = "left" | "right" | "ceiling" | "floor";
-interface Contact { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; collision: { supports: Point[] } }
+interface Contact { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; collision: { supports: Point[]; normal?: Point } }
+export interface ContactMotion { x: number; y: number; angular: number; center: Point }
 const normals: Record<RoomSurface, Point> = {
   left: { x: 1, y: 0 }, right: { x: -1, y: 0 }, ceiling: { x: 0, y: 1 }, floor: { x: 0, y: -1 },
 };
@@ -17,14 +18,16 @@ export class ImpactCollector {
   private lifeId = 1;
   private nextHit = 0;
   private delta = 0;
-  private readonly motion = new Map<MatterJS.BodyType, { x: number; y: number; angular: number; center: Point }>();
-  private readonly pending = new Map<string, DamageHit & { surface: RoomSurface }>();
+  private readonly motion = new Map<MatterJS.BodyType, ContactMotion>();
+  private peers?: ReadonlyMap<MatterJS.BodyType, ContactMotion>;
+  private readonly pending = new Map<string, DamageHit & { surface: string }>();
   private readonly episodes = new Map<string, { separatedMs: number; separatedSteps: number }>();
   private readonly near = new Set<string>();
   touchedFloor = false;
 
-  beginStep(doll: Ragdoll, enabled: boolean, time: number, lifeId = 1, delta = REFERENCE_STEP) {
+  beginStep(doll: Ragdoll, enabled: boolean, time: number, lifeId = 1, delta = REFERENCE_STEP, peers?: ReadonlyMap<MatterJS.BodyType, ContactMotion>) {
     this.doll = doll; this.enabled = enabled; this.time = time; this.lifeId = lifeId; this.delta = delta;
+    this.peers = peers;
     this.pending.clear(); this.near.clear(); this.motion.clear(); this.touchedFloor = false;
   }
 
@@ -41,7 +44,7 @@ export class ImpactCollector {
     this.boundaries();
   };
 
-  private contact(body: MatterJS.BodyType, point: Point, surface: RoomSurface, touching = true) {
+  private contact(body: MatterJS.BodyType, point: Point, surface: RoomSurface | `body:${number}`, touching = true, peer?: ContactMotion, peerNormal?: Point) {
     if (!this.enabled || !this.doll) return;
     const part = this.doll.parts.findIndex((p) => p.body === body);
     if (part < 0) return;
@@ -51,14 +54,16 @@ export class ImpactCollector {
     if (surface === "floor") this.touchedFloor = true;
     const velocity = this.motion.get(body);
     if (!velocity) return;
-    const vx = velocity.x - velocity.angular * (point.y - velocity.center.y);
-    const vy = velocity.y + velocity.angular * (point.x - velocity.center.x);
-    const normal = normals[surface];
+    const vx = velocity.x - velocity.angular * (point.y - velocity.center.y) -
+      (peer ? peer.x - peer.angular * (point.y - peer.center.y) : 0);
+    const vy = velocity.y + velocity.angular * (point.x - velocity.center.x) -
+      (peer ? peer.y + peer.angular * (point.x - peer.center.x) : 0);
+    const normal = peerNormal ?? normals[surface as RoomSurface];
     const strength = Math.max(0, -(vx * normal.x + vy * normal.y));
     if (!Number.isFinite(strength) || strength <= (this.pending.get(key)?.strength ?? -1)) return;
     const dx = point.x - body.position.x, dy = point.y - body.position.y;
     const c = Math.cos(body.angle), s = Math.sin(body.angle);
-    this.pending.set(key, { lifeId: this.lifeId, hitId: 0, source: "room", surface,
+    this.pending.set(key, { lifeId: this.lifeId, hitId: 0, source: peer ? "body" : "room", surface,
       part, position: { ...point }, strength, time: this.time,
       local: { x: dx * c + dy * s, y: -dx * s + dy * c } });
   }
@@ -66,7 +71,18 @@ export class ImpactCollector {
   collisions = (event: { pairs: Contact[] }) => {
     if (!this.enabled) return;
     for (const { bodyA, bodyB, collision } of event.pairs) {
-      if (bodyA.label !== "room-wall" && bodyB.label !== "room-wall") continue;
+      if (bodyA.label !== "room-wall" && bodyB.label !== "room-wall") {
+        const ownA = this.motion.has(bodyA), ownB = this.motion.has(bodyB);
+        if (ownA === ownB || !collision.normal) continue;
+        const body = ownA ? bodyA : bodyB, other = ownA ? bodyB : bodyA;
+        const peer = this.peers?.get(other);
+        if (!peer) continue;
+        const normal = { x: collision.normal.x * (ownA ? 1 : -1), y: collision.normal.y * (ownA ? 1 : -1) };
+        const supports = collision.supports.filter(Boolean);
+        for (const point of supports.length ? supports : [body.position])
+          this.contact(body, point, `body:${other.id}`, true, peer, normal);
+        continue;
+      }
       const wallA = bodyA.label === "room-wall", body = wallA ? bodyB : bodyA, wall = wallA ? bodyA : bodyB;
       const surface: RoomSurface = wall.position.x < ROOM.left ? "left" : wall.position.x > ROOM.right
         ? "right" : wall.position.y < ROOM.top ? "ceiling" : "floor";
@@ -113,11 +129,13 @@ export class ImpactCollector {
       // Two genuinely separated steps AND 20ms reject contact jitter at every substep size.
       if (episode.separatedSteps >= 2 && episode.separatedMs >= 20) this.episodes.delete(key);
     }
-    this.pending.clear(); return impacts;
+    // A single step may contain several simultaneous contacts. Apply the strongest
+    // first, then the shared invulnerability window blocks the remaining reports.
+    this.pending.clear(); return impacts.sort((a, b) => b.strength - a.strength);
   }
 
   clear() {
     this.pending.clear(); this.motion.clear(); this.episodes.clear(); this.near.clear();
-    this.doll = undefined; this.enabled = false; this.touchedFloor = false; this.nextHit = 0;
+    this.doll = undefined; this.peers = undefined; this.enabled = false; this.touchedFloor = false; this.nextHit = 0;
   }
 }

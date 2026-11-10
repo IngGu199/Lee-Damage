@@ -12,7 +12,8 @@ export class FaceRenderer {
   variantIndex = 0;
   customOutline = false;
 
-  constructor(private readonly scene: Phaser.Scene) {}
+  constructor(private readonly scene: Phaser.Scene, private readonly textureKey = "user-face") {}
+  get preparedFrames() { return this.frames; }
   get active() { return this.frames.length > 0; }
   get frameCount() { return this.frames.length; }
   get displaySize() { return PHOTO_BASE_SIZE * FIXED_APPEARANCE.photoScale; }
@@ -24,8 +25,8 @@ export class FaceRenderer {
   apply(frames: HTMLCanvasElement[], customOutline = false) {
     if (!frames.length) return this.clear();
     if (!this.texture) {
-      this.texture = this.scene.textures.createCanvas("user-face", PHOTO_SIZE, PHOTO_SIZE)!;
-      this.image = this.scene.add.image(0, 0, "user-face").setOrigin(0.5)
+      this.texture = this.scene.textures.createCanvas(this.textureKey, PHOTO_SIZE, PHOTO_SIZE)!;
+      this.image = this.scene.add.image(0, 0, this.textureKey).setOrigin(0.5)
         .setDisplaySize(this.displaySize, this.displaySize).setDepth(10);
     }
     this.frames = frames;

@@ -7,33 +7,38 @@ import { ImpactCollector } from "../src/game/ImpactCollector";
 import type { Ragdoll } from "../src/game/Ragdoll";
 
 const hit = (overrides: Partial<DamageHit> = {}): DamageHit => ({
-  lifeId: 1, hitId: 1, source: "room", part: 0, position: { x: 30, y: 300 }, time: 0, strength: 600, ...overrides,
+  lifeId: 1, hitId: 1, source: "room", part: 0, position: { x: 30, y: 300 }, time: 0, strength: 1400, ...overrides,
 });
 
 test("closing speed curve excludes weak, invalid and tangential motion and caps strong impacts", () => {
-  for (const speed of [0, -600, 220, NaN, Infinity]) expect(collisionDamage(speed)).toBe(0);
-  expect(collisionDamage(600)).toBe(20);
-  expect(collisionDamage(1000)).toBeCloseTo(61.0783, 3);
-  expect(collisionDamage(2000)).toBe(180);
+  for (const speed of [0, -600, 220, 600, 799.999, 800, NaN, Infinity]) expect(collisionDamage(speed)).toBe(0);
+  expect(collisionDamage(800.001)).toBeGreaterThan(0);
+  expect(collisionDamage(1400)).toBe(20);
+  expect(collisionDamage(1000)).toBeCloseTo(5.4545, 3);
+  expect(collisionDamage(4000)).toBe(180);
   expect(collisionDamage(Number.MAX_VALUE)).toBe(180);
   expect(collisionDamage(600, NaN)).toBe(0);
   expect(collisionDamage(600, -1)).toBe(0);
   expect(collisionDamage(600, 0)).toBe(0);
 });
 
-test("simultaneous limbs and corners use an immediate maximum with a fixed 60ms batch", () => {
+test("every damage source is blocked for 300ms after HP loss, including stronger simultaneous hits", () => {
   const damage = new DamageSystem();
   expect(damage.apply(hit())?.lostHp).toBe(20);
-  expect(damage.apply(hit({ hitId: 2, part: 7, time: 10, strength: 400 }))).toBeNull();
-  expect(damage.apply(hit({ hitId: 3, part: 1, time: 59, strength: 1000 }))?.lostHp).toBeCloseTo(collisionDamage(1000) - 20);
-  expect(damage.health.lostHp).toBeCloseTo(collisionDamage(1000));
-  // The later stronger hit did not extend the original batch.
-  expect(damage.apply(hit({ hitId: 4, time: 60 }))?.lostHp).toBeCloseTo(20);
+  expect(damage.apply(hit({ hitId: 2, part: 7, time: 10, strength: 4000 }))).toBeNull();
+  expect(damage.apply(hit({ hitId: 3, source: "weapon", damage: 90, time: 299.999 }))).toBeNull();
+  expect(damage.health.lostHp).toBe(20);
+  expect(damage.apply(hit({ hitId: 4, time: 300, strength: 4000 }))?.lostHp).toBe(180);
+  expect(damage.apply(hit({ hitId: 5, time: 599.999, source: "weapon", damage: 35 }))).toBeNull();
+  expect(damage.apply(hit({ hitId: 6, time: 600, source: "weapon", damage: 35 }))?.lostHp).toBe(35);
+  // A hit suppressed during immunity stays consumed; it cannot be replayed later.
+  expect(damage.apply(hit({ hitId: 5, time: 1000, source: "weapon", damage: 35 }))).toBeNull();
+  expect(damage.health.hp).toBe(765);
 });
 
 test("damage counts only actual HP loss, crosses all injury boundaries and rejects stale hits", () => {
   const damage = new DamageSystem();
-  const weapon = (id: number, amount: number, time = id) => hit({ source: "weapon", hitId: id, damage: amount, time });
+  const weapon = (id: number, amount: number, time = (id - 1) * 300) => hit({ source: "weapon", hitId: id, damage: amount, time });
   expect(damage.apply(weapon(1, 35))?.injuries).toBe(0);
   expect(damage.apply(weapon(2, 90))?.injuries).toBe(3);
   expect(damage.apply(weapon(2, 90))).toBeNull();
@@ -60,7 +65,7 @@ test("progression preserves remainder and health-preserving recovery preserves t
   const damage = new DamageSystem();
   damage.apply(hit({ source: "weapon", damage: 39 }));
   damage.reset(2, true);
-  expect(damage.apply(hit({ lifeId: 2, source: "weapon", damage: 1 }))?.injuries).toBe(1);
+  expect(damage.apply(hit({ lifeId: 2, source: "weapon", damage: 1, time: 300 }))?.injuries).toBe(1);
 });
 
 test("spawn protection ends after first landing grace, maximum duration or player input", () => {
@@ -114,7 +119,7 @@ test("raw integrated velocity conversion and damage are invariant to render rate
   const results = [30, 60, 120].flatMap(fps => [1, 4, 16].map(slices => {
     const collector = new ImpactCollector(), damage = new DamageSystem(), { body, doll } = fixture();
     const step = 1000 / 120 / slices;
-    body.deltaTime = step; body.velocity.x = -600 * step / 1000;
+    body.deltaTime = step; body.velocity.x = -1400 * step / 1000;
     for (let frame = 0; frame < fps; frame++) for (let i = 0; i < 120 / fps * slices; i++) {
       const time = frame * 1000 / fps + i * step;
       collector.beginStep(doll, true, time, 1, step); collector.beforeSolve();
@@ -123,4 +128,30 @@ test("raw integrated velocity conversion and damage are invariant to render rate
     return damage.health.lostHp;
   }));
   for (const loss of results) expect(loss).toBeCloseTo(20);
+});
+
+
+test("weak collisions do not start or extend immunity and recovery preserves its remaining time", () => {
+  const damage = new DamageSystem();
+  expect(damage.apply(hit({ strength: 799 }))).toBeNull();
+  expect(damage.invulnerable(0)).toBe(false);
+  expect(damage.apply(hit({ hitId: 2, time: 10 }))?.lostHp).toBe(20);
+  expect(damage.apply(hit({ hitId: 3, time: 200, strength: 700 }))).toBeNull();
+  damage.reset(2, true);
+  expect(damage.invulnerable(309)).toBe(true);
+  expect(damage.apply(hit({ lifeId: 2, hitId: 1, time: 309 }))).toBeNull();
+  expect(damage.apply(hit({ lifeId: 2, hitId: 2, time: 310 }))?.lostHp).toBe(20);
+  damage.reset(3);
+  expect(damage.invulnerable(310)).toBe(false);
+});
+
+test("detached parts stay opaque for 4.7 seconds and disappear only at five seconds", () => {
+  const life = new RagdollLifecycle();
+  life.kill(life.lifeId); life.burst(100);
+  expect(life.alpha(1000)).toBe(1);
+  expect(life.alpha(4800)).toBe(1);
+  expect(life.alpha(4950)).toBeCloseTo(0.5);
+  expect(life.burstFinished(5099.99)).toBe(false);
+  expect(life.burstFinished(5100)).toBe(true);
+  expect(life.alpha(5100)).toBe(0);
 });

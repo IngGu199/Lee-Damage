@@ -108,7 +108,7 @@ export function drawDoll(
       debugGraphics.lineStyle(2, 0xe98360).lineBetween(a.x, a.y, b.x, b.y);
       debugGraphics.fillStyle(0xe98360).fillCircle(a.x, a.y, 4).fillCircle(b.x, b.y, 4);
     }
-  if (input.grip) {
+  if (input.grip && input.owner === doll) {
     const grip = input.grip;
     const point = Vector.add(grip.bodyB!.position, grip.pointB);
     debugGraphics.lineStyle(2, 0x7d9650, 0.7).lineBetween(

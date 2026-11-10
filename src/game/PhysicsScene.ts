@@ -1,59 +1,59 @@
 import Phaser from "phaser";
-import { Matter } from "./matter";
+import { Matter, Collision } from "./matter";
 import {
-  DEFAULT_SETTINGS,
-  FIXED_SETTINGS,
-  FIXED_STEP,
-  MAX_TRAVEL_PER_SUBSTEP,
-  MAX_SUBSTEPS,
-  ROOM,
-  type LabSettings,
-  type LabStats,
+  DEFAULT_SETTINGS, FIXED_SETTINGS, FIXED_STEP, MAX_TRAVEL_PER_SUBSTEP, MAX_SUBSTEPS,
+  REFERENCE_STEP, type LabSettings, type LabStats,
 } from "./config";
-import { Ragdoll } from "./Ragdoll";
 import { PointerController } from "./PointerController";
-import { drawDoll, drawRoom } from "./draw";
-import { PostureController } from "./PostureController";
-import { FaceRenderer } from "./FaceRenderer";
-import { InjuryRenderer } from "./InjuryRenderer";
-import { ImpactAppearance, type AppearanceImpact } from "./ImpactAppearance";
-import { ImpactCollector } from "./ImpactCollector";
-import { DamageSystem, type DamageHit } from "./DamageSystem";
-import { RagdollLifecycle } from "./RagdollLifecycle";
+import { drawRoom } from "./draw";
+import { RagdollActor } from "./RagdollActor";
+import type { Ragdoll } from "./Ragdoll";
+import type { DamageHit } from "./DamageSystem";
+import type { ContactMotion } from "./ImpactCollector";
 import { DAMAGE_RULES } from "./damageConfig";
 import { separateBodies } from "./SelfCollision";
 import type { AppliedPhoto } from "../photo/PhotoSession";
 
+interface BodyContact {
+  bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType;
+  collision: { supports: MatterJS.Vector[]; normal?: MatterJS.Vector };
+}
+
+/** All actors share one Matter step; each life owns its health, posture, photo and contacts. */
 export class PhysicsScene extends Phaser.Scene {
   settings: LabSettings = { ...DEFAULT_SETTINGS };
-  doll!: Ragdoll;
+  readonly actors: RagdollActor[] = [];
   pointer!: PointerController;
-  posture!: PostureController;
   paused = false;
   recoveries = 0;
+  private selectedId = 0;
+  private nextId = 0;
   private accumulator = 0;
   private statsElapsed = 0;
-  private graphics!: Phaser.GameObjects.Graphics;
-  private overlay!: Phaser.GameObjects.Graphics;
-  face!: FaceRenderer;
-  readonly appearance = new ImpactAppearance();
-  readonly damage = new DamageSystem();
-  readonly lifecycle = new RagdollLifecycle();
-  private burstOrigin = { x: 600, y: 350 };
-  private effects!: Phaser.GameObjects.Graphics;
-  private injuries!: InjuryRenderer;
-  private readonly impacts = new ImpactCollector();
   private simulationTime = 0;
+  private photoFrames: HTMLCanvasElement[] = [];
+  private photoOutline = false;
   private photoEditing = false;
   private resumeAfterPhoto = false;
+  private readonly owners = new Map<MatterJS.BodyType, RagdollActor>();
+  private readonly motion = new Map<MatterJS.BodyType, ContactMotion>();
   private readonly abort = new AbortController();
   onStats: (stats: LabStats) => void = () => {};
   onReady: () => void = () => {};
   onNotice: (message: string) => void = () => {};
 
-  constructor() {
-    super("PhysicsLab");
-  }
+  constructor() { super("PhysicsLab"); }
+
+  // Compatibility accessors also represent the actor selected in the health UI.
+  get selectedActor() { return this.actors.find(actor => actor.id === this.selectedId) ?? this.actors[0]; }
+  get doll() { return this.selectedActor?.doll; }
+  get posture() { return this.selectedActor?.posture; }
+  get face() { return this.selectedActor?.face; }
+  get appearance() { return this.selectedActor?.appearance; }
+  get damage() { return this.selectedActor?.damage; }
+  get lifecycle() { return this.selectedActor?.lifecycle; }
+  get livingActors() { return this.actors.filter(actor => actor.lifecycle.interactive); }
+  get debris() { return this.actors.filter(actor => actor.lifecycle.state === "bursting"); }
 
   preload() {
     for (const kind of ["bruise", "scratch", "bandage"])
@@ -61,320 +61,290 @@ export class PhysicsScene extends Phaser.Scene {
   }
 
   create() {
-    const { Bodies } = Matter;
     this.matter.world.autoUpdate = false;
-    // Thick static walls plus adaptive substeps reduce high-speed tunneling.
     for (const [x, y, width, height] of [
-      [-70, 350, 200, 1100],
-      [1270, 350, 200, 1100],
-      [600, -58, 1600, 200],
-      [600, 750, 1600, 200],
-    ])
-      this.matter.world.add(
-        Bodies.rectangle(x, y, width, height, {
-          isStatic: true,
-          restitution: 0,
-          friction: 0.4,
-          label: "room-wall",
-        }),
-      );
+      [-70, 350, 200, 1100], [1270, 350, 200, 1100], [600, -58, 1600, 200], [600, 750, 1600, 200],
+    ]) this.matter.world.add(Matter.Bodies.rectangle(x, y, width, height, {
+      isStatic: true, restitution: 0, friction: 0.4, label: "room-wall",
+    }));
     drawRoom(this);
-    this.graphics = this.add.graphics();
-    this.overlay = this.add.graphics().setDepth(30);
-    this.effects = this.add.graphics().setDepth(25);
-    this.face = new FaceRenderer(this);
-    this.injuries = new InjuryRenderer(this, this.face);
-    this.doll = new Ragdoll(this.matter.world, this.settings.bounce);
-    this.posture = new PostureController(this.doll, this.settings.experiment);
+    this.createActor(false, 600, true);
     const canvas = this.game.canvas;
     canvas.tabIndex = 0;
-    canvas.setAttribute(
-      "aria-label",
-      "물리 실험실. 인형을 마우스로 잡고 흔들거나 던지세요. R 재배치, 스페이스 일시정지.",
-    );
-    this.pointer = new PointerController(
-      canvas,
-      this.matter.world,
-      () => this.doll,
-      () => this.paused || !this.lifecycle.interactive,
-      () => {
-        if (!this.lifecycle.interactive) return;
-        this.lifecycle.interact();
-        this.posture.interact();
+    canvas.setAttribute("aria-label", "물리 실험실. 인형과 잔해를 잡고 던지세요. T 인형 추가, R 전체 재배치, 스페이스 일시정지.");
+    this.pointer = new PointerController(canvas, this.matter.world, () => this.doll,
+      () => this.paused || this.photoEditing,
+      doll => {
+        const actor = this.actors.find(actor => actor.doll === doll);
+        if (!actor) return;
+        this.selectedId = actor.id;
+        actor.interact();
       },
-    );
+      point => [...this.actors].reverse().find(actor => actor.doll.at(point))?.doll);
     this.pointer.experiment = this.settings.experiment;
-    Matter.Events.on(this.matter.world.engine, "beforeSolve", this.impacts.beforeSolve);
-    Matter.Events.on(this.matter.world.engine, "collisionStart collisionActive", this.impacts.collisions);
+    Matter.Events.on(this.matter.world.engine, "beforeSolve", this.beforeSolve);
+    Matter.Events.on(this.matter.world.engine, "collisionStart collisionActive", this.collisions);
     window.addEventListener("blur", this.blur, { signal: this.abort.signal });
-    document.addEventListener("visibilitychange", this.visibility, {
-      signal: this.abort.signal,
-    });
+    document.addEventListener("visibilitychange", this.visibility, { signal: this.abort.signal });
     this.events.once("shutdown", () => {
       this.pointer.destroy();
-      Matter.Events.off(this.matter.world.engine, "beforeSolve", this.impacts.beforeSolve);
-      Matter.Events.off(this.matter.world.engine, "collisionStart collisionActive", this.impacts.collisions);
-      this.face.clear(); this.injuries.clear(); this.impacts.clear(); this.appearance.reset();
-      this.abort.abort();
+      Matter.Events.off(this.matter.world.engine, "beforeSolve", this.beforeSolve);
+      Matter.Events.off(this.matter.world.engine, "collisionStart collisionActive", this.collisions);
+      for (const actor of [...this.actors]) this.removeActor(actor);
+      this.photoFrames = []; this.abort.abort();
     });
-    this.onReady();
-    this.publishStats();
+    this.onReady(); this.publishStats();
   }
 
-  private blur = () => {
-    this.resumeAfterPhoto = false;
-    this.setPaused(true);
-  };
-  private visibility = () => {
-    if (document.hidden) this.blur();
-  };
+  private blur = () => { this.resumeAfterPhoto = false; this.setPaused(true); };
+  private visibility = () => { if (document.hidden) this.blur(); };
 
   setPaused(value: boolean) {
     if (this.photoEditing && !value) return;
-    this.pointer.cancel();
-    this.paused = value;
-    this.accumulator = 0;
-    this.publishStats();
+    this.pointer.cancel(); this.paused = value; this.accumulator = 0; this.publishStats();
+  }
+  beginPhotoEdit() { this.resumeAfterPhoto = !this.paused; this.photoEditing = true; this.setPaused(true); }
+  endPhotoEdit() { this.photoEditing = false; this.setPaused(!this.resumeAfterPhoto); }
+
+  selectActor(id: number) {
+    if (this.actors.some(actor => actor.id === id)) { this.selectedId = id; this.publishStats(); }
   }
 
-  beginPhotoEdit() {
-    this.resumeAfterPhoto = !this.paused;
-    this.photoEditing = true;
-    this.setPaused(true);
+  /** T adds a living actor; debris does not occupy a living actor slot. */
+  spawnRagdoll() {
+    if (this.paused || this.photoEditing) return null;
+    if (this.actors.filter(actor => actor.lifecycle.state !== "bursting").length >= DAMAGE_RULES.maxRagdolls) {
+      this.onNotice("인형은 최대 10개까지 만들 수 있어요."); return null;
+    }
+    const actor = this.createActor(true, this.spawnX(), !this.pointer.grip);
+    this.publishStats(); return actor;
   }
 
-  endPhotoEdit() {
-    this.photoEditing = false;
-    this.setPaused(!this.resumeAfterPhoto);
+  private spawnX() {
+    const candidates = [600, 180, 1020, 390, 810, 110, 1090, 285, 915, 495, 705];
+    return candidates.reduce((best, x) => {
+      const clearance = (position: number) => Math.min(...this.actors.map(actor =>
+        Math.abs(actor.doll.parts[1].body.position.x - position)), 1200);
+      return clearance(x) > clearance(best) ? x : best;
+    }, candidates[0]);
+  }
+
+  private createActor(airborne: boolean, x: number, select: boolean,
+    retained?: { damage: RagdollActor["damage"]; appearance: RagdollActor["appearance"] },
+    photo = { frames: this.photoFrames.length ? this.photoFrames : this.face?.preparedFrames ?? [],
+      outline: this.photoFrames.length ? this.photoOutline : this.face?.customOutline ?? false }) {
+    const id = ++this.nextId;
+    const actor = new RagdollActor(this, this.matter.world, this.settings, id, this.simulationTime, x, airborne,
+      this.actors.length ? `user-face-${id}` : "user-face", photo.frames, photo.outline, retained);
+    this.actors.push(actor);
+    for (const { body } of actor.doll.parts) this.owners.set(body, actor);
+    if (select || !this.selectedId) this.selectedId = id;
+    return actor;
+  }
+
+  private removeActor(actor: RagdollActor) {
+    if (this.pointer?.owner === actor.doll) this.pointer.cancel();
+    const bodies = new Set(actor.doll.bodies);
+    for (const body of bodies) { this.owners.delete(body); this.motion.delete(body); }
+    actor.dispose();
+    this.actors.splice(this.actors.indexOf(actor), 1);
+    // Remove only this actor's cached pairs. Other actors keep their contacts and impulses.
+    const pairs = this.matter.world.engine.pairs;
+    const keep = (pair: { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType }) => !bodies.has(pair.bodyA) && !bodies.has(pair.bodyB);
+    for (const key of ["list", "collisionStart", "collisionActive", "collisionEnd"])
+      pairs[key] = pairs[key].filter(keep);
+    for (const [key, pair] of Object.entries(pairs.table)) if (!keep(pair as { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType })) delete pairs.table[key];
+    if (this.selectedId === actor.id) this.selectedId = this.livingActors[0]?.id ?? this.actors[0]?.id ?? 0;
   }
 
   applyPhoto(photo: AppliedPhoto) {
-    this.face.apply(photo.frames, photo.mask.kind === "contour");
-    this.resetAppearance();
-    this.face.update(this.doll.parts[0]);
-    this.face.setAlpha(this.lifecycle.alpha(this.simulationTime));
-    this.onNotice(photo.frames.length > 1
-      ? "사진을 적용했어요. 체력을 30%·65% 잃으면 변형 사진으로 바뀝니다."
-      : "사진을 적용했어요. 얼굴 기준점이 없어 사진 변형은 생략합니다.");
-  }
-
-  clearPhoto() { this.face.clear(); this.resetAppearance(); this.onNotice("기본 얼굴로 돌아왔습니다."); }
-
-  resetAppearance() {
-    this.appearance.reset(); this.injuries.clear(); this.face.showVariant(this.damage.variant);
-  }
-
-  private applyImpact(impact: AppearanceImpact, preview = false) {
-    const part = this.doll.parts[impact.part];
-    if (!part) return;
-    const injury = this.appearance.accept(impact, part.body, preview);
-    if (!injury) return;
-    this.injuries.add(injury, part);
-    this.face.showVariant(this.appearance.variant);
-  }
-
-  /** Internal prototype check, no physical impulse and no score/weapon behavior. */
-  previewImpact(partIndex = 0) {
-    if (this.photoEditing || !this.lifecycle.interactive) return;
-    const part = this.doll.parts[partIndex];
-    if (!part) return;
-    this.applyImpact({ part: partIndex, position: { ...part.body.position }, strength: 600, time: this.simulationTime }, true);
-  }
-
-  /** Common synchronous path for room and future weapon hits. */
-  receiveHit(hit: DamageHit) {
-    if (this.paused || this.photoEditing || !this.lifecycle.interactive || hit.lifeId !== this.lifecycle.lifeId ||
-      hit.time > this.simulationTime + 0.000001) return null;
-    if (hit.source === "room" && this.lifecycle.protected(this.simulationTime)) return null;
-    const result = this.damage.apply(hit);
-    if (!result) return null;
-    if (hit.source === "weapon") { this.lifecycle.interact(); this.posture.interact(); }
-    const part = this.doll.parts[hit.part];
-    for (let index = 0; index < result.injuries; index++) {
-      const injury = this.appearance.addInjury(hit, part.body);
-      this.injuries.add(injury, part);
+    this.photoFrames = photo.frames; this.photoOutline = photo.mask.kind === "contour";
+    for (const actor of this.actors) {
+      actor.face.apply(this.photoFrames, this.photoOutline); actor.resetAppearance();
+      actor.face.update(actor.doll.parts[0]); actor.face.setAlpha(actor.lifecycle.alpha(this.simulationTime));
     }
-    this.face.showVariant(result.variant);
-    if (result.lethal && this.lifecycle.kill(hit.lifeId)) this.pointer.cancel();
+    this.onNotice(photo.frames.length > 1 ? "모든 인형에 사진을 적용했어요. 체력을 30%·65% 잃으면 변형 사진으로 바뀝니다."
+      : "모든 인형에 사진을 적용했어요. 얼굴 기준점이 없어 사진 변형은 생략합니다.");
+  }
+  clearPhoto() {
+    this.photoFrames = []; this.photoOutline = false;
+    for (const actor of this.actors) { actor.face.clear(); actor.resetAppearance(); }
+    this.onNotice("모든 인형이 기본 얼굴로 돌아왔습니다.");
+  }
+  resetAppearance() { this.selectedActor.resetAppearance(); }
+  previewImpact(partIndex = 0) {
+    const actor = this.selectedActor;
+    if (this.photoEditing || !actor.lifecycle.interactive) return;
+    const part = actor.doll.parts[partIndex]; if (!part) return;
+    const injury = actor.appearance.accept({ part: partIndex, position: { ...part.body.position }, strength: 600,
+      time: this.simulationTime }, part.body, true);
+    if (!injury) return;
+    actor.injuries.add(injury, part); actor.face.showVariant(actor.appearance.variant);
+  }
+
+  receiveHit(hit: DamageHit) {
+    const actor = this.actors.find(actor => actor.id === hit.lifeId);
+    if (this.paused || this.photoEditing || !actor?.lifecycle.interactive || hit.time > this.simulationTime + 0.000001) return null;
+    if (hit.source !== "weapon" && actor.lifecycle.protected(this.simulationTime)) return null;
+    const result = actor.damage.apply(hit); if (!result) return null;
+    if (hit.source === "weapon") actor.interact();
+    const part = actor.doll.parts[hit.part];
+    for (let i = 0; i < result.injuries; i++) actor.injuries.add(actor.appearance.addInjury(hit, part.body), part);
+    actor.face.showVariant(result.variant);
+    if (result.lethal && actor.lifecycle.kill(hit.lifeId) && this.pointer.owner === actor.doll) this.pointer.cancel();
     return result;
   }
 
-  reset() { this.replaceDoll(false); this.accumulator = 0; this.publishStats(); }
-
-  private replaceDoll(airborne: boolean, preserveHealth = false) {
+  reset() {
+    const photo = { frames: this.photoFrames.length ? this.photoFrames : this.face?.preparedFrames ?? [],
+      outline: this.photoFrames.length ? this.photoOutline : this.face?.customOutline ?? false };
     this.pointer.cancel();
-    this.doll.destroy();
-    // This foundation contains only the doll and static room. No pending weapon bodies.
+    for (const actor of [...this.actors]) this.removeActor(actor);
     Matter.Engine.clear(this.matter.world.engine);
-    this.impacts.clear();
-    this.doll = new Ragdoll(this.matter.world, this.settings.bounce);
-    this.posture = new PostureController(this.doll, this.settings.experiment);
-    this.lifecycle.spawn(this.simulationTime, airborne);
-    this.damage.reset(this.lifecycle.lifeId, preserveHealth);
-    if (airborne) {
-      this.doll.startAirborne(DAMAGE_RULES.spawnOffsetY);
-      this.posture.interact();
-    }
-    if (!preserveHealth) this.resetAppearance();
-    this.face.showVariant(this.damage.variant);
-    this.face.setAlpha(1);
-    this.face.update(this.doll.parts[0]);
-    this.effects.clear();
-  }
-
-  private finishLifecycle() {
-    if (this.lifecycle.state === "dying") {
-      this.burstOrigin = this.doll.centerOfMass;
-      this.doll.burst();
-      this.lifecycle.burst(this.simulationTime);
-      this.impacts.clear();
-    } else if (this.lifecycle.burstFinished(this.simulationTime)) {
-      this.doll.destroy();
-      Matter.Engine.clear(this.matter.world.engine);
-      this.impacts.clear();
-      this.appearance.reset(); this.injuries.clear();
-      this.face.setAlpha(0);
-      this.lifecycle.wait(this.simulationTime);
-    } else if (this.lifecycle.readyToSpawn(this.simulationTime)) {
-      this.replaceDoll(true);
-    }
-  }
-
-  private drawBurst() {
-    this.effects.clear();
-    if (this.lifecycle.state !== "bursting") return;
-    const alpha = this.lifecycle.alpha(this.simulationTime), progress = 1 - alpha;
-    const { x, y } = this.burstOrigin;
-    this.effects.lineStyle(4 * alpha, 0xdf9660, alpha).strokeCircle(x, y, 20 + progress * 130);
-    for (let index = 0; index < 12; index++) {
-      const angle = index * Math.PI / 6;
-      const radius = 25 + progress * (95 + index % 3 * 20);
-      const px = x + Math.cos(angle) * radius, py = y + Math.sin(angle) * radius;
-      this.effects.lineStyle(3, index % 2 ? 0xe8bd8b : 0x94ae58, alpha);
-      this.effects.lineBetween(px - 5 * alpha, py, px + 5 * alpha, py)
-        .lineBetween(px, py - 5 * alpha, px, py + 5 * alpha);
-    }
+    this.createActor(false, 600, true, undefined, photo);
+    this.accumulator = 0; this.publishStats();
   }
 
   configure(settings: LabSettings) {
     if (this.settings.experiment !== settings.experiment) this.pointer.cancel();
-    // Fixed stage-one values also apply to configuration calls outside the UI.
     this.settings = { ...settings, ...FIXED_SETTINGS };
-    this.pointer.experiment = settings.experiment;
-    this.posture.setExperiment(settings.experiment);
+    this.pointer.experiment = settings.experiment; this.pointer.throwScale = this.settings.throwScale;
     this.matter.world.setGravity(0, this.settings.gravity);
-    this.doll.setBounce(this.settings.bounce);
-    this.doll.configureLag(this.settings.lag);
-    this.pointer.throwScale = this.settings.throwScale;
+    for (const actor of this.actors) {
+      actor.posture.setExperiment(settings.experiment);
+      actor.doll.setBounce(this.settings.bounce); actor.doll.configureLag(this.settings.lag);
+    }
+  }
+
+  private beforeSolve = () => {
+    this.motion.clear();
+    for (const actor of this.actors) for (const { body } of actor.doll.parts) {
+      const factor = body.isStatic ? 0 : 1000 / body.deltaTime;
+      this.motion.set(body, { x: body.velocity.x * factor, y: body.velocity.y * factor,
+        angular: body.angularVelocity * factor, center: { ...body.position } });
+    }
+    for (const actor of this.actors) actor.impacts.beforeSolve();
+  };
+
+  private collisions = (event: { pairs: BodyContact[] }) => {
+    for (const { bodyA, bodyB } of event.pairs) {
+      const a = this.owners.get(bodyA), b = this.owners.get(bodyB);
+      if (!a || !b || a === b) continue;
+      const velocityA = this.motion.get(bodyA), velocityB = this.motion.get(bodyB);
+      if (!velocityA || !velocityB) continue;
+      const dragged = this.pointer.owner === a.doll || this.pointer.owner === b.doll;
+      if (!dragged && Math.hypot(velocityA.x - velocityB.x, velocityA.y - velocityB.y) < 1) continue;
+      // Waking a static posture before collision response lets Matter transfer the actual impulse.
+      if (a.lifecycle.interactive && (a.posture.controlsPose || a.landing)) a.interact();
+      if (b.lifecycle.interactive && (b.posture.controlsPose || b.landing)) b.interact();
+    }
+    for (const actor of this.actors) actor.impacts.collisions(event);
+  };
+
+  private interruptBlockedLanding(actor: RagdollActor) {
+    if (!actor.landing) return;
+    for (const other of this.actors) {
+      if (other === actor) continue;
+      for (const a of actor.doll.bodies) for (const b of other.doll.bodies) {
+        if (a.bounds.max.x < b.bounds.min.x || b.bounds.max.x < a.bounds.min.x ||
+          a.bounds.max.y < b.bounds.min.y || b.bounds.max.y < a.bounds.min.y) continue;
+        if (Collision.collides(a, b, null)) { actor.interact(); other.interact(); return; }
+      }
+    }
+  }
+
+  private finishDeaths() {
+    for (const actor of [...this.actors]) {
+      if (actor.lifecycle.state === "dying") {
+        if (this.pointer.owner === actor.doll) this.pointer.cancel();
+        const select = this.selectedId === actor.id;
+        actor.burst(this.simulationTime);
+        // The old body remains as independent debris. Its living slot is replaced immediately.
+        this.createActor(true, this.spawnX(), select, undefined,
+          { frames: actor.face.preparedFrames, outline: actor.face.customOutline });
+      } else if (actor.lifecycle.burstFinished(this.simulationTime)) this.removeActor(actor);
+    }
+  }
+
+  private physicsStep(step: number, remainingSlices: number) {
+    this.simulationTime += step;
+    this.finishDeaths();
+    const actors = [...this.actors];
+    for (const actor of actors) {
+      actor.lifecycle.update(this.simulationTime);
+      if (!actor.lifecycle.interactive) continue;
+      if (actor.landing) {
+        const gravity = this.matter.world.localWorld.gravity;
+        if (actor.landing.step(step, gravity.y * gravity.scale)) { actor.landing = undefined; actor.lifecycle.landed(this.simulationTime); }
+      } else if (actor.lifecycle.state !== "spawning")
+        actor.posture.beforeStep(step, this.pointer.owner === actor.doll, this.settings);
+      this.interruptBlockedLanding(actor);
+      actor.doll.limitAngularSpeed();
+    }
+    this.pointer.step(remainingSlices);
+    const previous = new Map(actors.map(actor => [actor, actor.doll.capturePose()]));
+    for (const actor of actors) actor.impacts.beginStep(actor.doll, actor.lifecycle.interactive,
+      this.simulationTime, actor.id, step, this.motion);
+    // One engine update for the whole room, regardless of how many actors are present.
+    this.matter.world.step(step);
+    this.pointer.afterStep();
+    for (const actor of actors) {
+      actor.impacts.boundaries();
+      if (actor.impacts.touchedFloor) actor.lifecycle.landed(this.simulationTime);
+      for (const hit of actor.impacts.flush()) this.receiveHit(hit);
+      if (actor.lifecycle.state === "bursting") separateBodies(actor.doll.bodies, 2, { selfCollision: false });
+      else if (actor.lifecycle.interactive && !actor.landing && !actor.posture.controlsPose) {
+        actor.doll.finishStep(previous.get(actor)!, this.pointer.owner === actor.doll ? this.pointer.held : undefined);
+        if (actor.lifecycle.state !== "spawning") actor.posture.afterStep(step);
+        actor.doll.limitAngularSpeed();
+      }
+    }
+    this.finishDeaths();
   }
 
   update(_time: number, delta: number) {
-    if (!this.doll) return;
+    if (!this.actors.length) return;
     if (!this.paused) {
-      // Drop excess elapsed time after a stall rather than run an unbounded catch-up.
       this.accumulator += Math.min(delta, 50);
       while (this.accumulator >= FIXED_STEP) {
-        // Include rotational edge travel when subdividing faster angular motion.
-        const speed = this.doll.motionSpeed;
-        const slices = Math.min(
-          MAX_SUBSTEPS,
-          Math.max(
-            1,
-            Math.ceil(
-              Math.max(
-                (speed * FIXED_STEP) / 1000,
-                this.pointer.travelDistance,
-              ) / MAX_TRAVEL_PER_SUBSTEP,
-            ),
-          ),
-        );
-        const step = FIXED_STEP / slices;
-        for (let slice = 0; slice < slices; slice++) {
-          this.simulationTime += step;
-          this.lifecycle.update(this.simulationTime);
-          if (!this.lifecycle.interactive) {
-            if (this.lifecycle.state === "bursting") {
-              this.matter.world.step(step);
-              separateBodies(this.doll.bodies, 2, { selfCollision: false });
-            }
-            this.finishLifecycle();
-            continue;
-          }
-          // During protected entry, natural falling takes priority over posture timers.
-          if (this.lifecycle.state !== "spawning") this.posture.beforeStep(
-            step, Boolean(this.pointer.grip), this.settings,
-          );
-          this.pointer.step(slices - slice);
-          if (!this.posture.controlsPose) {
-            this.doll.limitAngularSpeed();
-            const previous = this.doll.capturePose();
-            this.impacts.beginStep(this.doll, true, this.simulationTime, this.lifecycle.lifeId, step);
-            this.matter.world.step(step);
-            this.pointer.afterStep();
-            this.impacts.boundaries();
-            if (this.impacts.touchedFloor) this.lifecycle.landed(this.simulationTime);
-            for (const hit of this.impacts.flush()) this.receiveHit(hit);
-            // Death is resolved only after Matter has finished the step; no normal pose solver on fragments.
-            if (!this.lifecycle.interactive) { this.finishLifecycle(); continue; }
-            this.doll.finishStep(previous, this.pointer.held);
-            if (this.lifecycle.state !== "spawning") this.posture.afterStep(step);
-            this.doll.limitAngularSpeed();
-          }
-        }
+        const speed = Math.max(...this.actors.map(actor => actor.doll.motionSpeed));
+        const slices = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(Math.max(speed * FIXED_STEP / 1000,
+          this.pointer.travelDistance) / MAX_TRAVEL_PER_SUBSTEP)));
+        for (let slice = 0; slice < slices; slice++) this.physicsStep(FIXED_STEP / slices, slices - slice);
         this.accumulator -= FIXED_STEP;
       }
-      if (this.lifecycle.interactive && this.doll.unstable) {
+      for (const actor of [...this.livingActors]) if (actor.doll.unstable) {
         this.recoveries++;
-        this.replaceDoll(false, true);
-        this.onNotice("불안정한 물리 상태를 감지해 인형을 재배치했습니다.");
+        const x = 600, select = this.selectedId === actor.id;
+        const photo = { frames: actor.face.preparedFrames, outline: actor.face.customOutline };
+        const retained = { damage: actor.damage, appearance: actor.appearance };
+        this.removeActor(actor); this.createActor(false, x, select, retained, photo);
+        this.onNotice("불안정한 인형을 체력을 유지한 채 재배치했습니다.");
       }
     }
-    drawDoll(this.graphics, this.doll, this.pointer, this.settings.debug, this.face.active, this.overlay, this.face.customOutline);
-    const alpha = this.lifecycle.alpha(this.simulationTime);
-    this.graphics.setAlpha(alpha); this.overlay.setAlpha(alpha);
-    this.face.update(this.doll.parts[0]); this.face.setAlpha(alpha);
-    this.injuries.update(this.doll, this.appearance.injuries, alpha);
-    this.drawBurst();
+    for (const actor of this.actors) actor.render(this.simulationTime, this.pointer, this.settings.debug, actor.id === this.selectedId);
     this.statsElapsed += delta;
-    if (this.statsElapsed >= 150) {
-      this.publishStats();
-      this.statsElapsed = 0;
-    }
+    if (this.statsElapsed >= 150) { this.publishStats(); this.statsElapsed = 0; }
   }
 
   snapshot(): LabStats {
-    const { Composite } = Matter;
-    const world = this.matter.world
-      .localWorld as unknown as MatterJS.CompositeType;
+    const actor = this.selectedActor;
+    const world = this.matter.world.localWorld as unknown as MatterJS.CompositeType;
     return {
-      lifeId: this.lifecycle.lifeId,
-      lifeState: this.lifecycle.state,
-      hp: this.damage.health.hp,
-      maxHp: this.damage.health.maxHp,
-      lostHp: this.damage.health.lostHp,
-      simulationTime: this.simulationTime,
-      spawnProtected: this.lifecycle.protected(this.simulationTime),
-      experiment: this.settings.experiment,
-      alignmentRemaining: this.posture.alignmentRemaining(this.settings.repairSeconds),
-      fps: Math.round(this.game.loop.actualFps),
-      speed: Math.round(this.doll.linearSpeed),
-      bodies: Composite.allBodies(world).length,
-      joints: Composite.allConstraints(world).length,
-      grabbed: this.pointer.grabbed,
-      paused: this.paused,
-      recoveries: this.recoveries,
-      maxJointGap: this.doll.maxJointGap,
-      maxOverlap: this.doll.maxOverlap,
-      posture: this.posture.state,
-      selfCollision: this.doll.selfCollisionEnabled,
-      idleRemaining: Math.max(
-        0,
-        this.settings.idleSeconds - this.posture.quietMs / 1000,
-      ),
+      aliveCount: this.livingActors.length, debrisCount: this.debris.length, maxRagdolls: DAMAGE_RULES.maxRagdolls,
+      selectedId: actor.id, actors: this.actors.map(actor => ({ id: actor.id, hp: actor.damage.health.hp,
+        maxHp: actor.damage.health.maxHp, state: actor.lifecycle.state })),
+      lifeId: actor.id, lifeState: actor.lifecycle.state, hp: actor.damage.health.hp, maxHp: actor.damage.health.maxHp,
+      lostHp: actor.damage.health.lostHp, simulationTime: this.simulationTime,
+      spawnProtected: actor.lifecycle.protected(this.simulationTime), experiment: this.settings.experiment,
+      alignmentRemaining: actor.posture.alignmentRemaining(this.settings.repairSeconds), fps: Math.round(this.game.loop.actualFps),
+      speed: Math.round(Math.max(...this.actors.map(actor => actor.doll.linearSpeed))),
+      bodies: Matter.Composite.allBodies(world).length, joints: Matter.Composite.allConstraints(world).length,
+      grabbed: this.pointer.grabbed, paused: this.paused, recoveries: this.recoveries,
+      maxJointGap: Math.max(...this.actors.map(actor => actor.doll.maxJointGap)), maxOverlap: actor.doll.maxOverlap,
+      posture: actor.posture.state, selfCollision: actor.doll.selfCollisionEnabled,
+      idleRemaining: Math.max(0, this.settings.idleSeconds - actor.posture.quietMs / 1000),
     };
   }
-
-  private publishStats() {
-    this.onStats(this.snapshot());
-  }
+  private publishStats() { this.onStats(this.snapshot()); }
 }

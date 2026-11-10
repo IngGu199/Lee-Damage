@@ -19,10 +19,16 @@ export function restorePose(bodies: MatterJS.BodyType[], pose: BodyPose[]) {
   });
 }
 
+function boundsOverlap(a: MatterJS.BodyType, b: MatterJS.BodyType) {
+  return a.bounds.min.x <= b.bounds.max.x && b.bounds.min.x <= a.bounds.max.x &&
+    a.bounds.min.y <= b.bounds.max.y && b.bounds.min.y <= a.bounds.max.y;
+}
+
 export function maxOverlap(bodies: MatterJS.BodyType[]): number {
   let depth = 0;
   for (let a = 0; a < bodies.length; a++)
     for (let b = a + 1; b < bodies.length; b++) {
+      if (!boundsOverlap(bodies[a], bodies[b])) continue;
       const hit = Collision.collides(bodies[a], bodies[b], null);
       if (hit) depth = Math.max(depth, hit.depth);
     }
@@ -54,6 +60,7 @@ export function separateBodies(
     let touched = false;
     for (let a = 0; a < collidingCount; a++)
       for (let b = a + 1; b < collidingCount; b++) {
+        if (!boundsOverlap(bodies[a], bodies[b])) continue;
         const hit = Collision.collides(bodies[a], bodies[b], null);
         if (!hit || hit.depth <= 0) continue;
         touched = true;
