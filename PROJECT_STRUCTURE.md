@@ -33,7 +33,7 @@ LeeDamageWeb/
 │   │   ├── PhotoTransform.ts  # 사진·특징점·윤곽의 정/역변환, 마스크 출력
 │   │   └── PhotoVariants.ts   # 입·각 눈의 중심 고정/양끝 처짐 변형 2장 생성
 │   ├── audio/
-│   │   ├── SoundConfig.ts      # 사용자 JSON 검증·기본 Kenney 설정·속도 범위 선택
+│   │   ├── SoundConfig.ts      # 사용자 JSON 검증·기본 Kenney 설정·체력 데미지 등급 연결
 │   │   ├── SoundMixer.ts       # 접촉 합치기·동시 재생·우선순위·재생 간격
 │   │   └── ImpactAudio.ts      # 기존 AudioContext·음원 로딩/디코딩·버퍼·음량·해제
 │   └── game/
@@ -65,7 +65,7 @@ LeeDamageWeb/
 ├── tests/
 │   ├── physics.spec.ts        # 브라우저 조작·관절·경계·반복 재배치 검증
 │   ├── collision-cycle.spec.ts # 실험 1의 자기 충돌 전환·재잡기·기립 완료 검증
-│   ├── damage-rules.spec.ts   # 곡선·손상·상처·접촉 회차·시간 단위·무적/소멸·잔해 감쇠 11개
+│   ├── damage-rules.spec.ts   # 곡선·손상·상처·접촉 회차·시간 단위·무적/소멸·잔해 감쇠·공통 타격 등급 13개
 │   ├── foundation.spec.ts     # 실제 HP·즉시 재등장·잔해 만료·100회 교체·기립·무적 9개
 │   ├── multi-ragdoll.spec.ts  # T키/10개 제한·개별 HP·잔해 조작·상호 충돌·자원 정리·폭주 방지·분리 운동 보존 14개
 │   ├── sound-rules.spec.ts    # 설정·접촉 합치기·재생 간격·우선순위·상한 7개
@@ -138,7 +138,7 @@ LeeDamageWeb/
 | HP·데미지·상처 임계값 | `src/game/DamageSystem.ts`, `HealthState.ts`, `InjuryProgression.ts`, `damageConfig.ts` | 최소 속도 800px/s·피격 후 300ms 무적과 실제 HP 손실을 외형에서 분리 |
 | 기립 낙하·착지 | `src/game/SpawnLanding.ts`, `PhysicsScene.ts` | 전체 기립 자세를 수직 이동, 잡기·유효 공격 시 동적 물리로 전환 |
 | 사망·관절 분리·즉시 재등장 | `src/game/RagdollActor.ts`, `RagdollLifecycle.ts`, `Ragdoll.ts`, `PhysicsScene.ts` | 분리 시 새 생명 추가, 잔해는 독립 조작/충돌 유지 후 5초에 해당 객체만 정리 |
-| 기반 회귀 검증 | `tests/damage-rules.spec.ts`, `foundation.spec.ts` | `npm run test:foundation` 20개. `test:multi` 14개. `test:current`는 다중 인형·사진 포함 58개 |
+| 기반 회귀 검증 | `tests/damage-rules.spec.ts`, `foundation.spec.ts` | `npm run test:foundation` 22개. `test:multi` 14개. `test:current`는 다중 인형·사진 포함 60개 |
 | 상처 에셋 부착 | `src/game/InjuryRenderer.ts`, `src/game/FaceRenderer.ts` | 자국 크기와 무관하게 테두리까지 균일하게 중심 선택. 사진은 불투명 픽셀 좌표를 보존해 배율 추종 |
 | 사진 회귀 검증 | `tests/photo.spec.ts` | `npm run test:photo`. 실제 모델 확인 결과는 2단계 진행 기록 참고 |
 | 회귀 검증 | `tests/physics.spec.ts` | 실제 포인터 조작과 가속된 물리 반복 검증 포함 |
@@ -209,6 +209,6 @@ LeeDamageWeb/
 
 ## 충돌 효과음 연결 (2026-11-13)
 
-`ImpactCollector`는 HP와 독립적인 소리 재생을 위해 잔해를 포함한 실제 접촉 소유자의 회차를 수집합니다. 신체 ID 쌍으로 만든 `contactKey`로 양쪽 보고와 하위 스텝을 렌더 프레임에서 합칩니다. HP 수신은 기존 `receiveHit`를 거쳐 생존·생성 보호·무적 조건을 따르고, 사운드는 별도 속도 범위와 재생 간격을 따릅니다. 실제 관절 분리 시 `death.burst`를 한 번 발생시킵니다.
+`ImpactCollector`는 공통 데미지 등급에 따른 소리 재생을 위해 잔해를 포함한 실제 접촉 소유자의 회차를 수집합니다. 신체 ID 쌍으로 만든 `contactKey`로 양쪽 보고와 하위 스텝을 렌더 프레임에서 합칩니다. HP 수신은 기존 `receiveHit`를 거쳐 생존·생성 보호·무적 조건을 따르고, 사운드는 `DamageSystem.damageFeedback`의 등급과 재생 간격을 따릅니다. 별도 충돌 속도 구간은 없습니다. 데미지 0은 무음이며 무적 중에는 원래 계산된 타격 강도를 유지합니다. 실제 관절 분리 시 `death.burst`를 한 번 발생시킵니다.
 
 `ImpactAudio`는 Phaser가 소유한 AudioContext를 공유합니다. 사용자 `sounds.json`이 있으면 검증한 설정만 적용하고, 없으면 타입스크립트 기본값으로 동작합니다. JSON을 생성하지 않습니다. 선택한 파일을 한 번 디코딩해 캐시하고 재생 때만 짧은 Source/Gain 노드를 만듭니다. 소리 종료·정지에서 노드를 끊고 R에서는 버퍼를 재사용하며 장면 종료에서는 비동기 로딩·입력 리스너·버퍼까지 해제합니다. 음원·설정 형식은 `public/assets/audio/README.md`에 정리했습니다.

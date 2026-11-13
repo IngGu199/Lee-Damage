@@ -9,7 +9,7 @@ import { PointerController } from "./PointerController";
 import { drawRoom } from "./draw";
 import { RagdollActor } from "./RagdollActor";
 import type { Ragdoll } from "./Ragdoll";
-import type { DamageHit } from "./DamageSystem";
+import { damageFeedback, type DamageHit } from "./DamageSystem";
 import type { ContactMotion } from "./ImpactCollector";
 import { DAMAGE_RULES } from "./damageConfig";
 import { separateBodies } from "./SelfCollision";
@@ -342,8 +342,9 @@ export class PhysicsScene extends Phaser.Scene {
       actor.impacts.boundaries();
       if (actor.impacts.touchedFloor) actor.lifecycle.landed(this.simulationTime);
       for (const hit of actor.impacts.flush()) {
-        if (!actor.lifecycle.protected(this.simulationTime)) this.audio.collision(actor.id, hit.time, hit.strength,
-          hit.contactKey, actor.lifecycle.state === "bursting" || Boolean(hit.debris));
+        const debris = actor.lifecycle.state === "bursting" || Boolean(hit.debris);
+        if (!actor.lifecycle.protected(this.simulationTime)) this.audio.collision(actor.id, hit.time,
+          damageFeedback({ ...hit, debris }), hit.contactKey, debris);
         this.receiveHit(hit);
       }
       if (actor.lifecycle.state === "bursting") {

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { collisionDamage, DamageSystem, type DamageHit } from "../src/game/DamageSystem";
+import { collisionDamage, damageFeedback, damageIntensity, DamageSystem, type DamageHit } from "../src/game/DamageSystem";
 import { HealthState } from "../src/game/HealthState";
 import { InjuryProgression, photoStage } from "../src/game/InjuryProgression";
 import { RagdollLifecycle } from "../src/game/RagdollLifecycle";
@@ -184,4 +184,27 @@ test("a fast softened fragment does not mask a stronger simultaneous room impact
   const damage = new DamageSystem();
   for (const impact of impacts) damage.apply(impact);
   expect(damage.health.lostHp).toBeCloseTo(20);
+});
+
+
+test("damage feedback centrally grades zero/light/medium/heavy attacks for every hit source", () => {
+  for (const amount of [-1, 0, NaN, Infinity]) expect(damageIntensity(amount)).toBeNull();
+  expect(damageIntensity(0.001)).toBe("light"); expect(damageIntensity(19.999)).toBe("light");
+  expect(damageIntensity(20)).toBe("medium"); expect(damageIntensity(59.999)).toBe("medium");
+  expect(damageIntensity(60)).toBe("heavy"); expect(damageIntensity(180)).toBe("heavy");
+  expect(damageFeedback(hit({ strength: 800 }))).toEqual({ damage: 0, intensity: null });
+  expect(damageFeedback(hit({ strength: 1400 }))).toEqual({ damage: 20, intensity: "medium" });
+  expect(damageFeedback(hit({ source: "body", strength: 4000, debris: true }))).toEqual({ damage: 12, intensity: "light" });
+  expect(damageFeedback(hit({ source: "weapon", damage: 60 }))).toEqual({ damage: 60, intensity: "heavy" });
+});
+
+test("immunity and remaining HP do not change the calculated attack intensity", () => {
+  const damage = new DamageSystem();
+  damage.apply(hit({ source: "weapon", damage: 990 }));
+  const heavy = hit({ source: "weapon", damage: 180, hitId: 2, time: 100 });
+  expect(damage.apply(heavy)).toBeNull();
+  expect(damageFeedback(heavy)).toEqual({ damage: 180, intensity: "heavy" });
+  expect(damage.apply({ ...heavy, hitId: 3, time: 300 })).toMatchObject({
+    lostHp: 10, lethal: true, impact: { damage: 180, intensity: "heavy" },
+  });
 });

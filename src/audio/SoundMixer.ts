@@ -1,3 +1,4 @@
+import type { DamageFeedback } from "../game/DamageSystem";
 import { collisionEvent, type SoundConfig } from "./SoundConfig";
 
 export interface SoundVoice { stop(): void }
@@ -5,7 +6,7 @@ export interface SoundBackend {
   available(file: string): boolean;
   play(file: string, volume: number, rate: number, ended: () => void): SoundVoice | null;
 }
-interface Request { event: string; owners: Set<number>; time: number; strength: number; debris: boolean }
+interface Request { event: string; owners: Set<number>; time: number; damage: number; debris: boolean }
 interface Playing { event: string; priority: number; voice: SoundVoice }
 
 /** Sim-time contact/cooldown rules, render-frame aggregation, bounded real-time playback. */
@@ -20,13 +21,14 @@ export class SoundMixer {
 
   constructor(readonly config: SoundConfig, private readonly backend: SoundBackend, private readonly random = Math.random) {}
 
-  collision(owner: number, time: number, strength: number, contact: string, debris = false) {
-    const event = collisionEvent(this.config, strength);
-    if (event) this.queue(`collision:${contact}`, { event, owners: new Set([owner]), time, strength, debris });
+  collision(owner: number, time: number, impact: DamageFeedback, contact: string, debris = false) {
+    if (!Number.isFinite(impact.damage) || impact.damage <= 0) return;
+    const event = collisionEvent(this.config, impact.intensity);
+    if (event) this.queue(`collision:${contact}`, { event, owners: new Set([owner]), time, damage: impact.damage, debris });
   }
   death(owner: number, time: number) {
     if (this.config.events["death.burst"]) this.queue(`death:${owner}`, {
-      event: "death.burst", owners: new Set([owner]), time, strength: Infinity, debris: false,
+      event: "death.burst", owners: new Set([owner]), time, damage: Infinity, debris: false,
     });
   }
   private queue(key: string, request: Request) {
@@ -35,14 +37,14 @@ export class SoundMixer {
     if (previous) {
       for (const owner of previous.owners) request.owners.add(owner);
       request.debris ||= previous.debris;
-      if (previous.strength > request.strength) { previous.debris = request.debris; previous.owners = request.owners; return; }
+      if (previous.damage > request.damage) { previous.debris = request.debris; previous.owners = request.owners; return; }
     }
     this.pending.set(key, request);
   }
 
   flush() {
     const requests = [...this.pending.values()].sort((a, b) =>
-      this.config.events[b.event].priority - this.config.events[a.event].priority || b.strength - a.strength);
+      this.config.events[b.event].priority - this.config.events[a.event].priority || b.damage - a.damage);
     this.pending.clear();
     if (this.muted) return;
     for (const request of requests) {

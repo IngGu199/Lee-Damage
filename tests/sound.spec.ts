@@ -37,7 +37,7 @@ test("default Kenney clips decode once and native playback produces an audio sig
   expect(result.reset).toMatchObject({ buffers: 11, active: 0, owners: 0, pending: 0 });
 });
 
-test("weak wall contacts sound without HP loss and physical sound still plays during HP immunity", async ({ page }) => {
+test("zero-damage wall contacts stay silent and physical sound still plays during HP immunity", async ({ page }) => {
   await open(page);
   const result = await page.evaluate(() => {
     const s = window.__physicsLab; s.reset(); s.selectedActor.interact(); s.matter.world.setGravity(0, 0);
@@ -54,24 +54,24 @@ test("weak wall contacts sound without HP loss and physical sound still plays du
     for (let i = 0; i < 16; i++) s.update(0, 1000 / 120);
     return { weak, immuneHp: s.damage.health.hp, newSounds: s.audio.snapshot().played - previous, audio: s.audio.snapshot() };
   });
-  expect(result.weak.hp).toBe(1000); expect(result.weak.audio.played).toBeGreaterThan(0);
+  expect(result.weak.hp).toBe(1000); expect(result.weak.audio.played).toBe(0);
   expect(result.immuneHp).toBe(965); expect(result.newSounds).toBeGreaterThan(0);
 });
 
-test("custom JSON chooses new files and thresholds, deduplicates clips and softens debris", async ({ page }) => {
-  const file = "sfx/kenney_impact-sounds/impactWood_light_000.ogg";
+test("custom JSON chooses new files for shared damage grades, deduplicates clips and softens debris", async ({ page }) => {
+  const file = "sfx/kenney-impact/impactWood_light_000.ogg";
   await page.route("**/assets/audio/sounds.json", route => route.fulfill({ json: {
     version: 1, basePath: "assets/audio/", defaults: { volume: 0.4, rateRange: [1, 1] },
     masterVolume: 0.5, debris: { volumeScale: 0.2 },
-    events: { "collision.custom": { files: [file], speedRange: [10, null] }, "death.burst": { files: [file] } },
+    events: { "collision.medium": { files: [file] }, "death.burst": { files: [file] } },
   } }));
   await open(page);
   const result = await page.evaluate(() => {
-    const s = window.__physicsLab; s.audio.collision(1, 0, 11, "one", true); s.audio.flush();
+    const s = window.__physicsLab; s.audio.collision(1, 0, { damage: 20, intensity: "medium" }, "one", true); s.audio.flush();
     return s.audio.snapshot();
   });
   expect(result).toMatchObject({ source: "json", state: "ready", buffers: 1, played: 1, errors: [] });
-  expect(result.recent[0]).toMatchObject({ event: "collision.custom", file, rate: 1 });
+  expect(result.recent[0]).toMatchObject({ event: "collision.medium", file, rate: 1 });
   expect(result.recent[0].volume).toBeCloseTo(0.08);
 });
 
@@ -88,7 +88,7 @@ test("volume and mute persist and paused/photo/reset scenes never replay queued 
   const result = await page.evaluate(() => {
     const s = window.__physicsLab, time = s.snapshot().simulationTime;
     s.audio.death(1, time); s.audio.flush(); const played = s.audio.snapshot().played;
-    s.audio.collision(1, time, 2000, "pending", false); s.setPaused(true);
+    s.audio.collision(1, time, { damage: 100, intensity: "heavy" }, "pending", false); s.setPaused(true);
     const paused = s.audio.snapshot(); s.update(0, 50); s.setPaused(false); s.update(0, 0);
     const resumed = s.audio.snapshot(); s.audio.death(2, time); s.audio.flush(); s.beginPhotoEdit();
     const photo = s.audio.snapshot(); s.endPhotoEdit(); s.reset();
@@ -106,7 +106,7 @@ test("bad JSON falls back safely and a missing clip leaves remaining configured 
   expect(await page.evaluate(() => window.__physicsLab.audio.snapshot())).toMatchObject({ source: "default", state: "partial", buffers: 11 });
   await page.route("**/assets/audio/sounds.json", route => route.fulfill({ json: {
     version: 1, basePath: "assets/audio/", events: { "death.burst": {
-      files: ["sfx/kenney_impact-sounds/impactSoft_heavy_000.ogg", "sfx/missing.ogg"],
+      files: ["sfx/kenney-impact/impactSoft_heavy_000.ogg", "sfx/missing.ogg"],
     } },
   } }));
   await page.route("**/sfx/missing.ogg", route => route.fulfill({ status: 404, body: "" }));
@@ -155,7 +155,7 @@ test("preview and controlled landings stay silent while an actual fragment-wall 
       last: s.audio.snapshot().recent.at(-1), hp: replacement.damage.health.hp };
   });
   expect(result.quiet).toBe(0); expect(result.newSounds).toBe(1); expect(result.hp).toBe(1000);
-  expect(result.last?.event).toBe("collision.medium"); expect(result.last?.volume).toBeCloseTo(0.5 * 0.35);
+  expect(result.last?.event).toBe("collision.light"); expect(result.last?.volume).toBeCloseTo(0.25 * 0.35);
 });
 
 test("unavailable audio leaves gameplay usable and scene shutdown releases every voice and buffer", async ({ page }) => {

@@ -32,6 +32,22 @@ export function hitDamage(hit: DamageHit) {
     ? Math.min(DAMAGE_RULES.maxDebrisDamage, amount * DAMAGE_RULES.debrisDamageScale) : amount;
 }
 
+export type DamageIntensity = "light" | "medium" | "heavy";
+export interface DamageFeedback { damage: number; intensity: DamageIntensity | null }
+
+/** Shared hit feedback uses computed damage before immunity/remaining-HP clipping.
+ * The reference hit is medium; three reference hits are heavy. Audio owns no thresholds.
+ */
+export function damageIntensity(damage: number): DamageIntensity | null {
+  if (!Number.isFinite(damage) || damage <= 0) return null;
+  if (damage < DAMAGE_RULES.referenceDamage) return "light";
+  return damage < DAMAGE_RULES.referenceDamage * 3 ? "medium" : "heavy";
+}
+export function damageFeedback(hit: DamageHit): DamageFeedback {
+  const damage = hitDamage(hit);
+  return { damage, intensity: damageIntensity(damage) };
+}
+
 /** One shared hit path. Every actual HP loss starts a simulation-time invulnerability window. */
 export class DamageSystem {
   readonly health = new HealthState();
@@ -53,12 +69,12 @@ export class DamageSystem {
     this.lastHit.set(hit.source, hit.hitId);
     this.lastTime = hit.time;
     if (this.invulnerable(hit.time)) return null;
-    const amount = hitDamage(hit);
+    const impact = damageFeedback(hit), amount = impact.damage;
     if (!Number.isFinite(amount) || amount <= 0) return null;
     const lostHp = this.health.lose(amount);
     if (!lostHp) return null;
     this.invulnerableUntil = hit.time + DAMAGE_RULES.invulnerabilityMs;
-    return { hit, lostHp, hp: this.health.hp, lethal: this.health.dead,
+    return { hit, impact, lostHp, hp: this.health.hp, lethal: this.health.dead,
       injuries: this.progression.advance(this.health.lostHp), variant: this.variant };
   }
 
