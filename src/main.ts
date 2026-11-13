@@ -47,6 +47,13 @@ app.innerHTML = `
           <p class="photo-panel-note">사진은 브라우저 안에서만 처리해요.<br>재배치해도 유지 · 새로고침하면 해제</p>
           <details class="appearance-preview"><summary>충격에 따른 변화 미리보기</summary><p>물리적인 힘 없이 사진과 상처의 변화만 확인해요.</p><label for="impact-part">확인할 부위</label><select id="impact-part"><option value="0">머리</option><option value="1">몸통</option><option value="3">왼팔</option><option value="5">오른팔</option><option value="7">왼다리</option><option value="9">오른다리</option></select><button id="impact-preview" disabled>충격 미리보기</button><button id="appearance-clear" disabled>상처 지우기</button><p id="appearance-state" role="status" aria-live="polite">상처 0개</p></details>
         </section>
+        <section class="sound-panel" aria-labelledby="sound-title">
+          <h2 id="sound-title">효과음</h2>
+          <div class="sound-volume-label"><label for="sound-volume">효과음 음량</label><output id="sound-volume-value" for="sound-volume">100%</output></div>
+          <input id="sound-volume" type="range" min="0" max="100" value="100" aria-label="효과음 음량">
+          <label class="sound-mute"><input id="sound-muted" type="checkbox">음소거</label>
+          <p id="sound-state" role="status" aria-live="polite">효과음을 준비하고 있어요.</p>
+        </section>
         <div class="panel-heading"><h2>실험 노트</h2><span>LAB NOTES</span></div>
         <section class="appearance-settings" aria-label="외형 고정값">
           <dl class="fixed-settings" aria-label="확정된 외형 설정">
@@ -167,6 +174,18 @@ function renderStats(stats: LabStats) {
   );
 }
 
+scene.onAudioState = () => {
+  const audio = scene.audio.snapshot();
+  element<HTMLInputElement>("sound-volume").value = String(Math.round(audio.volume * 100));
+  element("sound-volume-value").textContent = `${Math.round(audio.volume * 100)}%`;
+  element<HTMLInputElement>("sound-muted").checked = audio.muted;
+  element("sound-state").textContent = audio.state === "loading" ? "효과음을 준비하고 있어요."
+    : audio.state === "disabled" ? "효과음을 사용할 수 없어요. 소리 없이 계속할 수 있어요."
+    : audio.muted || audio.volume === 0 ? "소리를 껐어요."
+    : audio.locked ? "화면을 클릭하거나 키를 누르면 소리가 켜져요."
+    : audio.state === "partial" ? "일부 효과음을 불러오지 못했어요. 준비된 소리로 진행해요."
+    : "충돌 강도에 따라 소리가 달라져요.";
+};
 scene.onStats = renderStats;
 scene.onNotice = (message) => {
   element("notice").textContent = message;
@@ -177,7 +196,7 @@ scene.onReady = () => {
   app.querySelectorAll<HTMLButtonElement>("button:not(#photo-remove)").forEach((button) => {
     button.disabled = false;
   });
-  scene.configure(settings);
+  scene.configure(settings); scene.onAudioState();
 };
 
 function clearPhoto() {
@@ -190,6 +209,13 @@ element("impact-preview").addEventListener("click", () => scene.previewImpact(Nu
 element("appearance-clear").addEventListener("click", () => scene.resetAppearance());
 window.addEventListener("pagehide", (event) => {
   if (!(event as PageTransitionEvent).persisted) photoEditor.destroy();
+});
+
+element<HTMLInputElement>("sound-volume").addEventListener("input", event => {
+  if (ready) scene.audio.setVolume(Number((event.target as HTMLInputElement).value) / 100);
+});
+element<HTMLInputElement>("sound-muted").addEventListener("change", event => {
+  if (ready) scene.audio.setMuted((event.target as HTMLInputElement).checked);
 });
 
 element("spawn").addEventListener("click", () => scene.spawnRagdoll());

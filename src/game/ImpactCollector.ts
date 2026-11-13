@@ -3,6 +3,8 @@ import type { Ragdoll } from "./Ragdoll";
 import { hitDamage, type DamageHit } from "./DamageSystem";
 import type { Point } from "../photo/PhotoTransform";
 
+export interface ContactImpact extends DamageHit { contactKey: string }
+
 export type RoomSurface = "left" | "right" | "ceiling" | "floor";
 interface Contact { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; collision: { supports: Point[]; normal?: Point } }
 export interface ContactMotion { x: number; y: number; angular: number; center: Point; debris?: boolean }
@@ -20,7 +22,7 @@ export class ImpactCollector {
   private delta = 0;
   private readonly motion = new Map<MatterJS.BodyType, ContactMotion>();
   private peers?: ReadonlyMap<MatterJS.BodyType, ContactMotion>;
-  private readonly pending = new Map<string, DamageHit & { surface: string }>();
+  private readonly pending = new Map<string, ContactImpact & { surface: string }>();
   private readonly episodes = new Map<string, { separatedMs: number; separatedSteps: number }>();
   private readonly near = new Set<string>();
   touchedFloor = false;
@@ -44,7 +46,7 @@ export class ImpactCollector {
     this.boundaries();
   };
 
-  private contact(body: MatterJS.BodyType, point: Point, surface: RoomSurface | `body:${number}`, touching = true, peer?: ContactMotion, peerNormal?: Point) {
+  private contact(body: MatterJS.BodyType, point: Point, surface: RoomSurface | `body:${number}`, touching = true, peer?: ContactMotion, peerNormal?: Point, otherId?: number) {
     if (!this.enabled || !this.doll) return;
     const part = this.doll.parts.findIndex((p) => p.body === body);
     if (part < 0) return;
@@ -65,6 +67,7 @@ export class ImpactCollector {
     const c = Math.cos(body.angle), s = Math.sin(body.angle);
     this.pending.set(key, { lifeId: this.lifeId, hitId: 0, source: peer ? "body" : "room", surface,
       part, position: { ...point }, strength, time: this.time, debris: peer?.debris,
+      contactKey: otherId === undefined ? `${body.id}:room:${surface}` : `${Math.min(body.id, otherId)}:${Math.max(body.id, otherId)}`,
       local: { x: dx * c + dy * s, y: -dx * s + dy * c } });
   }
 
@@ -80,7 +83,7 @@ export class ImpactCollector {
         const normal = { x: collision.normal.x * (ownA ? 1 : -1), y: collision.normal.y * (ownA ? 1 : -1) };
         const supports = collision.supports.filter(Boolean);
         for (const point of supports.length ? supports : [body.position])
-          this.contact(body, point, `body:${other.id}`, true, peer, normal);
+          this.contact(body, point, `body:${other.id}`, true, peer, normal, other.id);
         continue;
       }
       const wallA = bodyA.label === "room-wall", body = wallA ? bodyB : bodyA, wall = wallA ? bodyA : bodyB;
@@ -116,7 +119,7 @@ export class ImpactCollector {
   }
 
   flush() {
-    const impacts: DamageHit[] = [];
+    const impacts: ContactImpact[] = [];
     for (const [key, hit] of this.pending) {
       if (!this.episodes.has(key)) {
         this.episodes.set(key, { separatedMs: 0, separatedSteps: 0 });

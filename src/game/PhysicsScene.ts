@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { ImpactAudio } from "../audio/ImpactAudio";
 import { Matter, Collision } from "./matter";
 import {
   DEFAULT_SETTINGS, FIXED_SETTINGS, FIXED_STEP, MAX_TRAVEL_PER_SUBSTEP, MAX_SUBSTEPS,
@@ -25,6 +26,7 @@ export class PhysicsScene extends Phaser.Scene {
   settings: LabSettings = { ...DEFAULT_SETTINGS };
   readonly actors: RagdollActor[] = [];
   pointer!: PointerController;
+  audio!: ImpactAudio;
   paused = false;
   recoveries = 0;
   private selectedId = 0;
@@ -42,6 +44,7 @@ export class PhysicsScene extends Phaser.Scene {
   private readonly abort = new AbortController();
   onStats: (stats: LabStats) => void = () => {};
   onReady: () => void = () => {};
+  onAudioState: () => void = () => {};
   onNotice: (message: string) => void = () => {};
 
   constructor() { super("PhysicsLab"); }
@@ -64,6 +67,7 @@ export class PhysicsScene extends Phaser.Scene {
 
   create() {
     this.matter.world.autoUpdate = false;
+    this.audio = new ImpactAudio(this, () => this.onAudioState());
     for (const [x, y, width, height] of [
       [-70, 350, 200, 1100], [1270, 350, 200, 1100], [600, -58, 1600, 200], [600, 750, 1600, 200],
     ]) this.matter.world.add(Matter.Bodies.rectangle(x, y, width, height, {
@@ -89,7 +93,7 @@ export class PhysicsScene extends Phaser.Scene {
     window.addEventListener("blur", this.blur, { signal: this.abort.signal });
     document.addEventListener("visibilitychange", this.visibility, { signal: this.abort.signal });
     this.events.once("shutdown", () => {
-      this.pointer.destroy();
+      this.pointer.destroy(); this.audio.destroy();
       Matter.Events.off(this.matter.world.engine, "beforeSolve", this.beforeSolve);
       Matter.Events.off(this.matter.world.engine, "collisionStart collisionActive", this.collisions);
       for (const actor of [...this.actors]) this.removeActor(actor);
@@ -103,7 +107,9 @@ export class PhysicsScene extends Phaser.Scene {
 
   setPaused(value: boolean) {
     if (this.photoEditing && !value) return;
-    this.pointer.cancel(); this.paused = value; this.accumulator = 0; this.publishStats();
+    this.pointer.cancel();
+    if (value) this.audio.stop();
+    this.paused = value; this.accumulator = 0; this.publishStats();
   }
   beginPhotoEdit() { this.resumeAfterPhoto = !this.paused; this.photoEditing = true; this.setPaused(true); }
   endPhotoEdit() { this.photoEditing = false; this.setPaused(!this.resumeAfterPhoto); }
@@ -148,7 +154,7 @@ export class PhysicsScene extends Phaser.Scene {
     if (this.pointer?.owner === actor.doll) this.pointer.cancel();
     const bodies = new Set(actor.doll.bodies);
     for (const body of bodies) { this.owners.delete(body); this.motion.delete(body); }
-    this.bodyContacts.delete(actor);
+    this.bodyContacts.delete(actor); this.audio.forget(actor.id);
     actor.dispose();
     this.actors.splice(this.actors.indexOf(actor), 1);
     // Remove only this actor's cached pairs. Other actors keep their contacts and impulses.
@@ -201,7 +207,7 @@ export class PhysicsScene extends Phaser.Scene {
   reset() {
     const photo = { frames: this.photoFrames.length ? this.photoFrames : this.face?.preparedFrames ?? [],
       outline: this.photoFrames.length ? this.photoOutline : this.face?.customOutline ?? false };
-    this.pointer.cancel();
+    this.pointer.cancel(); this.audio.reset();
     for (const actor of [...this.actors]) this.removeActor(actor);
     Matter.Engine.clear(this.matter.world.engine);
     this.createActor(false, 600, true, undefined, photo);
@@ -228,7 +234,7 @@ export class PhysicsScene extends Phaser.Scene {
         debris: actor.lifecycle.state === "bursting" });
     }
     for (const pair of this.matter.world.engine.pairs.list) this.softenContact(pair);
-    for (const actor of this.livingActors) actor.impacts.beforeSolve();
+    for (const actor of this.actors) actor.impacts.beforeSolve();
   };
 
   private softenContact(pair: BodyContact) {
@@ -245,9 +251,9 @@ export class PhysicsScene extends Phaser.Scene {
       this.softenContact(pair); // New pairs are reported before the velocity solver.
       const { bodyA, bodyB } = pair;
       const a = this.owners.get(bodyA), b = this.owners.get(bodyB);
-      // Dispatch only to the living owners, rather than rescanning every pair for every actor.
+      // Dispatch to the actual owners; debris also needs contact episodes for quiet collision audio.
       for (const actor of a === b ? [a] : [a, b]) {
-        if (!actor?.lifecycle.interactive) continue;
+        if (!actor) continue;
         const owned = contacts.get(actor);
         if (owned) owned.push(pair); else contacts.set(actor, [pair]);
       }
@@ -297,6 +303,7 @@ export class PhysicsScene extends Phaser.Scene {
         if (this.pointer.owner === actor.doll) this.pointer.cancel();
         const select = this.selectedId === actor.id;
         actor.burst(this.simulationTime);
+        this.audio.death(actor.id, this.simulationTime);
         // The old body remains as independent debris. Its living slot is replaced immediately.
         this.createActor(true, this.spawnX(), select, undefined,
           { frames: actor.face.preparedFrames, outline: actor.face.customOutline });
@@ -325,7 +332,7 @@ export class PhysicsScene extends Phaser.Scene {
     this.pointer.step(remainingSlices);
     const previous = new Map(actors.filter(actor => actor.lifecycle.interactive)
       .map(actor => [actor, actor.doll.capturePose()]));
-    for (const actor of actors) actor.impacts.beginStep(actor.doll, actor.lifecycle.interactive,
+    for (const actor of actors) actor.impacts.beginStep(actor.doll, true,
       this.simulationTime, actor.id, step, this.motion);
     // One engine update for the whole room, regardless of how many actors are present.
     this.bodyContacts.clear();
@@ -334,7 +341,11 @@ export class PhysicsScene extends Phaser.Scene {
     for (const actor of actors) {
       actor.impacts.boundaries();
       if (actor.impacts.touchedFloor) actor.lifecycle.landed(this.simulationTime);
-      for (const hit of actor.impacts.flush()) this.receiveHit(hit);
+      for (const hit of actor.impacts.flush()) {
+        if (!actor.lifecycle.protected(this.simulationTime)) this.audio.collision(actor.id, hit.time, hit.strength,
+          hit.contactKey, actor.lifecycle.state === "bursting" || Boolean(hit.debris));
+        this.receiveHit(hit);
+      }
       if (actor.lifecycle.state === "bursting") {
         separateBodies(actor.doll.bodies, 2, { selfCollision: false });
         actor.doll.limitDebrisMotion(this.pointer.owner === actor.doll ? this.pointer.held : undefined);
@@ -373,6 +384,7 @@ export class PhysicsScene extends Phaser.Scene {
         this.onNotice("불안정한 인형을 체력을 유지한 채 재배치했습니다.");
       }
     }
+    this.audio.flush();
     for (const actor of this.actors) actor.render(this.simulationTime, this.pointer, this.settings.debug, actor.id === this.selectedId);
     this.statsElapsed += delta;
     if (this.statsElapsed >= 150) { this.publishStats(); this.statsElapsed = 0; }

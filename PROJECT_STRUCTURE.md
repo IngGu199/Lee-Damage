@@ -19,7 +19,9 @@ LeeDamageWeb/
 ├── .gitignore                 # 의존성·빌드·테스트 출력 제외
 ├── public/
 │   ├── models/                # Face Landmarker 모델과 출처·해시 설명
-│   └── assets/injuries/       # 투명 배경 멍·상처·반창고 SVG 검증 에셋
+│   └── assets/
+│       ├── audio/             # Kenney 음원·라이선스·설정 안내 (JSON은 사용자 작성)
+│       └── injuries/          # 투명 배경 멍·상처·반창고 SVG 검증 에셋
 ├── src/
 │   ├── main.ts                # 웹 UI 생성, 버튼·단축키, 설정 전달, Phaser 시작
 │   ├── style.css              # 페이지·도구·설정 패널·반응형 레이아웃
@@ -30,6 +32,10 @@ LeeDamageWeb/
 │   │   ├── FaceAnalyzer.ts    # 로컬 모델·WASM 준비와 특징점 검출
 │   │   ├── PhotoTransform.ts  # 사진·특징점·윤곽의 정/역변환, 마스크 출력
 │   │   └── PhotoVariants.ts   # 입·각 눈의 중심 고정/양끝 처짐 변형 2장 생성
+│   ├── audio/
+│   │   ├── SoundConfig.ts      # 사용자 JSON 검증·기본 Kenney 설정·속도 범위 선택
+│   │   ├── SoundMixer.ts       # 접촉 합치기·동시 재생·우선순위·재생 간격
+│   │   └── ImpactAudio.ts      # 기존 AudioContext·음원 로딩/디코딩·버퍼·음량·해제
 │   └── game/
 │       ├── config.ts          # 고정 게임 좌표, 물리 간격·세분화, 공통 상태 타입
 │       ├── appearanceConfig.ts # 물리와 분리한 확정 외형값: 사진 2·일그러짐 1.8·자국 1.5
@@ -62,6 +68,8 @@ LeeDamageWeb/
 │   ├── damage-rules.spec.ts   # 곡선·손상·상처·접촉 회차·시간 단위·무적/소멸·잔해 감쇠 11개
 │   ├── foundation.spec.ts     # 실제 HP·즉시 재등장·잔해 만료·100회 교체·기립·무적 9개
 │   ├── multi-ragdoll.spec.ts  # T키/10개 제한·개별 HP·잔해 조작·상호 충돌·자원 정리·폭주 방지·분리 운동 보존 14개
+│   ├── sound-rules.spec.ts    # 설정·접촉 합치기·재생 간격·우선순위·상한 7개
+│   ├── sound.spec.ts          # 실제 음원 신호·JSON 읽기·조작/실패/정리 8개
 │   └── photo.spec.ts          # 현재 사진 편집·변형·상처·수명주기 검증 24개
 ├── README.md                  # 설치·실행·조작·검증 방법
 ├── STAGE_1_PROGRESS.md        # 1단계 누적 진행·2번 채택·현재 동작·검증 범위
@@ -197,3 +205,10 @@ LeeDamageWeb/
 실험 1 당시 자동 시나리오 25개 통과 기록과 현재 2번의 검증 상태는 구분합니다. 1단계 마감 당시 사용자 요청에 따라 실행하지 않았던 검사와 별도로, 이번 2단계에서는 타입 검사·빌드·사진 관련 24개 Chromium 검사를 통과했습니다. 기존 물리 테스트의 모드·설정·동작 기대값 갱신과 전체 물리 검증은 별도입니다. 누적 이력은 [STAGE_1_PROGRESS.md](STAGE_1_PROGRESS.md), 이번 결과는 [STAGE_2_PROGRESS.md](STAGE_2_PROGRESS.md)에 기록합니다.
 
 체력·충돌 데미지·상처 임계값·공중 재등장은 [STAGE_3_FOUNDATION_REPORT.md](STAGE_3_FOUNDATION_REPORT.md)의 설계 제안이다. 해당 보고서에 제안한 새 소스 파일은 아직 생성하지 않았다.
+
+
+## 충돌 효과음 연결 (2026-11-13)
+
+`ImpactCollector`는 HP와 독립적인 소리 재생을 위해 잔해를 포함한 실제 접촉 소유자의 회차를 수집합니다. 신체 ID 쌍으로 만든 `contactKey`로 양쪽 보고와 하위 스텝을 렌더 프레임에서 합칩니다. HP 수신은 기존 `receiveHit`를 거쳐 생존·생성 보호·무적 조건을 따르고, 사운드는 별도 속도 범위와 재생 간격을 따릅니다. 실제 관절 분리 시 `death.burst`를 한 번 발생시킵니다.
+
+`ImpactAudio`는 Phaser가 소유한 AudioContext를 공유합니다. 사용자 `sounds.json`이 있으면 검증한 설정만 적용하고, 없으면 타입스크립트 기본값으로 동작합니다. JSON을 생성하지 않습니다. 선택한 파일을 한 번 디코딩해 캐시하고 재생 때만 짧은 Source/Gain 노드를 만듭니다. 소리 종료·정지에서 노드를 끊고 R에서는 버퍼를 재사용하며 장면 종료에서는 비동기 로딩·입력 리스너·버퍼까지 해제합니다. 음원·설정 형식은 `public/assets/audio/README.md`에 정리했습니다.
