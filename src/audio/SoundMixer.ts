@@ -9,10 +9,9 @@ export interface SoundBackend {
 interface Request { event: string; owners: Set<number>; time: number; damage: number; debris: boolean }
 interface Playing { event: string; priority: number; voice: SoundVoice }
 
-/** Sim-time contact/cooldown rules, render-frame aggregation, bounded real-time playback. */
+/** Merge duplicate contact reports; every new contact starts a voice without a time cooldown. */
 export class SoundMixer {
   private readonly pending = new Map<string, Request>();
-  private readonly cooldowns = new Map<number, Map<string, number>>();
   private readonly active = new Set<Playing>();
   private readonly lastFiles = new Map<string, string>();
   private played = 0;
@@ -24,7 +23,7 @@ export class SoundMixer {
   collision(owner: number, time: number, impact: DamageFeedback, contact: string, debris = false) {
     if (!Number.isFinite(impact.damage) || impact.damage <= 0) return;
     const event = collisionEvent(this.config, impact.intensity);
-    if (event) this.queue(`collision:${contact}`, { event, owners: new Set([owner]), time, damage: impact.damage, debris });
+    if (event) this.queue(`collision:${contact}:${time}`, { event, owners: new Set([owner]), time, damage: impact.damage, debris });
   }
   death(owner: number, time: number) {
     if (this.config.events["death.burst"]) this.queue(`death:${owner}`, {
@@ -43,34 +42,31 @@ export class SoundMixer {
   }
 
   flush() {
-    const requests = [...this.pending.values()].sort((a, b) =>
-      this.config.events[b.event].priority - this.config.events[a.event].priority || b.damage - a.damage);
+    // Preserve contact order. At the same instant start stronger sounds last,
+    // so bounded voice replacement retains them instead of cutting them first.
+    const requests = [...this.pending.values()].sort((a, b) => a.time - b.time ||
+      this.config.events[a.event].priority - this.config.events[b.event].priority || a.damage - b.damage);
     this.pending.clear();
     if (this.muted) return;
     for (const request of requests) {
       const event = this.config.events[request.event];
       const volume = event.volume * (request.debris ? this.config.debris.volumeScale : 1);
-      if (volume <= 0 || [...request.owners].some(owner =>
-        request.time - (this.cooldowns.get(owner)?.get(request.event) ?? -Infinity) + 0.000001 < event.cooldownMs)) continue;
+      if (volume <= 0) continue;
       let files = event.files.filter(file => this.backend.available(file));
       if (!files.length) continue;
       if (files.length > 1) files = files.filter(file => file !== this.lastFiles.get(request.event));
-      if ([...this.active].filter(voice => voice.event === request.event).length >= event.maxVoices) continue;
+      const sameEvent = [...this.active].filter(voice => voice.event === request.event);
+      if (sameEvent.length >= event.maxVoices) this.stopVoice(sameEvent[0]);
       if (this.active.size >= this.config.maxConcurrentSounds) {
         const lowest = [...this.active].sort((a, b) => a.priority - b.priority)[0];
-        if (lowest.priority >= event.priority) continue;
         this.stopVoice(lowest);
       }
       const file = files[Math.min(files.length - 1, Math.floor(this.random() * files.length))];
       const rate = event.rateRange[0] + this.random() * (event.rateRange[1] - event.rateRange[0]);
       let playing: Playing | undefined;
       const voice = this.backend.play(file, volume, rate, () => { if (playing) this.active.delete(playing); });
-      if (!voice) continue; // Unloaded/locked contexts never start cooldowns or build a backlog.
+      if (!voice) continue; // Unloaded/locked contexts never build a backlog.
       playing = { event: request.event, priority: event.priority, voice }; this.active.add(playing);
-      for (const owner of request.owners) {
-        if (!this.cooldowns.has(owner)) this.cooldowns.set(owner, new Map());
-        this.cooldowns.get(owner)!.set(request.event, request.time);
-      }
       this.lastFiles.set(request.event, file); this.played++;
       this.recent.push({ event: request.event, file, volume, rate });
       if (this.recent.length > 16) this.recent.shift();
@@ -78,11 +74,11 @@ export class SoundMixer {
   }
   private stopVoice(playing: Playing) { this.active.delete(playing); playing.voice.stop(); }
   stop() { this.pending.clear(); for (const playing of [...this.active]) this.stopVoice(playing); }
-  reset() { this.stop(); this.cooldowns.clear(); this.lastFiles.clear(); }
+  reset() { this.stop(); this.lastFiles.clear(); }
   forget(owner: number) {
-    this.cooldowns.delete(owner);
     for (const [key, request] of this.pending) { request.owners.delete(owner); if (!request.owners.size) this.pending.delete(key); }
   }
-  snapshot() { return { active: this.active.size, pending: this.pending.size, owners: this.cooldowns.size,
+  snapshot() { return { active: this.active.size, pending: this.pending.size,
+    owners: new Set([...this.pending.values()].flatMap(request => [...request.owners])).size,
     played: this.played, recent: [...this.recent] }; }
 }

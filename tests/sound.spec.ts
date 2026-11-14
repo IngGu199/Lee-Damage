@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { PhysicsScene } from "../src/game/PhysicsScene";
+import { DEFAULT_SOUND_CONFIG } from "../src/audio/SoundConfig";
 declare global { interface Window { __physicsLab: PhysicsScene } }
 
 async function open(page: Page) {
@@ -56,6 +57,39 @@ test("zero-damage wall contacts stay silent and physical sound still plays durin
   });
   expect(result.weak.hp).toBe(1000); expect(result.weak.audio.played).toBe(0);
   expect(result.immuneHp).toBe(965); expect(result.newSounds).toBeGreaterThan(0);
+});
+
+test("three rapid physical wall impacts all sound during one HP immunity window even at a one-voice limit", async ({ page }) => {
+  await page.route("**/assets/audio/sounds.json", route => route.fulfill({ json: {
+    ...DEFAULT_SOUND_CONFIG, maxConcurrentSounds: 1,
+    defaults: { ...DEFAULT_SOUND_CONFIG.defaults, cooldownMs: 10000 },
+    events: Object.fromEntries(Object.entries(DEFAULT_SOUND_CONFIG.events).map(([name, event]) =>
+      [name, { ...event, cooldownMs: 10000, maxVoices: 1 }])),
+  } }));
+  await open(page);
+  const result = await page.evaluate(() => {
+    const s = window.__physicsLab; s.reset(); s.selectedActor.interact(); s.matter.world.setGravity(0, 0);
+    const cycles: { played: number; hp: number; active: number; time: number }[] = [];
+    for (let cycle = 0; cycle < 3; cycle++) {
+      for (let i = 0; i < s.doll.parts.length; i++) {
+        const body = s.doll.parts[i].body, pose = s.doll.standingPose[i];
+        s.matter.body.setPosition(body, { x: 160 + pose.x, y: pose.y });
+        s.matter.body.setAngle(body, pose.angle);
+      }
+      s.doll.syncAnchors(); s.doll.launch({ x: -35, y: 0 });
+      for (let i = 0; i < 8; i++) s.update(0, 1000 / 120);
+      const audio = s.audio.snapshot();
+      cycles.push({ played: audio.played, hp: s.damage.health.hp, active: audio.active, time: s.snapshot().simulationTime });
+    }
+    return cycles;
+  });
+  expect(result[0].hp).toBeLessThan(1000);
+  expect(result[1].hp).toBe(result[0].hp); expect(result[2].hp).toBe(result[0].hp);
+  expect(result[0].played).toBeGreaterThan(0);
+  expect(result[1].played).toBeGreaterThan(result[0].played);
+  expect(result[2].played).toBeGreaterThan(result[1].played);
+  expect(result[2].time - result[0].time).toBeLessThan(300);
+  for (const cycle of result) expect(cycle.active).toBeLessThanOrEqual(1);
 });
 
 test("custom JSON chooses new files for shared damage grades, deduplicates clips and softens debris", async ({ page }) => {
@@ -127,7 +161,7 @@ test("a death storm respects voice caps and expiry/reset do not reload or duplic
     const expired = s.audio.snapshot(); s.reset();
     return { first, expired, reset: s.audio.snapshot(), stats: s.snapshot() };
   });
-  expect(result.first.recent.filter(sound => sound.event === "death.burst")).toHaveLength(2);
+  expect(result.first.recent.filter(sound => sound.event === "death.burst")).toHaveLength(5);
   expect(result.first.active).toBeLessThanOrEqual(8); expect(result.expired.active).toBeLessThanOrEqual(8);
   expect(result.expired.owners).toBeLessThanOrEqual(10);
   expect(result.reset).toMatchObject({ active: 0, pending: 0, owners: 0, buffers: 11 });

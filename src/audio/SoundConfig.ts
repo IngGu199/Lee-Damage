@@ -4,7 +4,6 @@ export interface SoundEventConfig {
   files: string[];
   volume: number;
   rateRange: [number, number];
-  cooldownMs: number;
   maxVoices: number;
   priority: number;
 }
@@ -18,7 +17,7 @@ export interface SoundConfig {
   debris: { volumeScale: number };
 }
 
-const defaults = { volume: 0.6, rateRange: [0.96, 1.04] as [number, number], cooldownMs: 80, maxVoices: 2, priority: 1 };
+const defaults = { volume: 0.6, rateRange: [0.96, 1.04] as [number, number], maxVoices: 2, priority: 1 };
 const pack = "sfx/kenney-impact/";
 /** Used only when the user-authored sounds.json is absent or invalid. No JSON is generated. */
 export const DEFAULT_SOUND_CONFIG = parseSoundConfig({
@@ -27,7 +26,7 @@ export const DEFAULT_SOUND_CONFIG = parseSoundConfig({
     "collision.light": { files: [0, 1, 2].map(i => `${pack}impactGeneric_light_00${i}.ogg`), volume: 0.25 },
     "collision.medium": { files: [0, 1, 2].map(i => `${pack}impactPunch_medium_00${i}.ogg`), volume: 0.5, priority: 2 },
     "collision.heavy": { files: [0, 1, 2].map(i => `${pack}impactPunch_heavy_00${i}.ogg`), volume: 0.8, priority: 3 },
-    "death.burst": { files: [`${pack}impactSoft_heavy_000.ogg`, `${pack}impactSoft_heavy_001.ogg`], volume: 0.85, cooldownMs: 100, priority: 4 },
+    "death.burst": { files: [`${pack}impactSoft_heavy_000.ogg`, `${pack}impactSoft_heavy_001.ogg`], volume: 0.85, priority: 4 },
   },
   debris: { volumeScale: 0.35 },
 });
@@ -56,7 +55,6 @@ function playback(value: Record<string, unknown>, fallback: typeof defaults, pat
   return {
     volume: number(value.volume ?? fallback.volume, `${path}.volume`, 0, 1),
     rateRange: range(value.rateRange ?? fallback.rateRange, `${path}.rateRange`),
-    cooldownMs: number(value.cooldownMs ?? fallback.cooldownMs, `${path}.cooldownMs`, 0, 60000),
     maxVoices: number(value.maxVoices ?? fallback.maxVoices, `${path}.maxVoices`, 1, 32, true),
     priority: number(value.priority ?? fallback.priority, `${path}.priority`, 0, 100, true),
   };

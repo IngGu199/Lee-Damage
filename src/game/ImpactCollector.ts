@@ -24,6 +24,8 @@ export class ImpactCollector {
   private peers?: ReadonlyMap<MatterJS.BodyType, ContactMotion>;
   private readonly pending = new Map<string, ContactImpact & { surface: string }>();
   private readonly episodes = new Map<string, { separatedMs: number; separatedSteps: number }>();
+  private readonly soundEpisodes = new Set<string>();
+  private soundHits: ContactImpact[] = [];
   private readonly near = new Set<string>();
   touchedFloor = false;
 
@@ -120,12 +122,18 @@ export class ImpactCollector {
 
   flush() {
     const impacts: ContactImpact[] = [];
+    this.soundHits = [];
     for (const [key, hit] of this.pending) {
+      if (!this.soundEpisodes.has(key)) this.soundHits.push(hit);
       if (!this.episodes.has(key)) {
         this.episodes.set(key, { separatedMs: 0, separatedSteps: 0 });
         impacts.push(hit);
       }
     }
+    // Audio needs only actual contact separation, not the damage episode's 20ms
+    // hysteresis. Supports/boundary observations still merge into one report.
+    this.soundEpisodes.clear();
+    for (const key of this.pending.keys()) this.soundEpisodes.add(key);
     for (const [key, episode] of this.episodes) {
       if (this.near.has(key)) { episode.separatedMs = episode.separatedSteps = 0; continue; }
       episode.separatedMs += this.delta; episode.separatedSteps++;
@@ -139,8 +147,11 @@ export class ImpactCollector {
       .map(hit => ({ ...hit, hitId: ++this.nextHit }));
   }
 
+  flushSounds() { const hits = this.soundHits; this.soundHits = []; return hits; }
+
   clear() {
     this.pending.clear(); this.motion.clear(); this.episodes.clear(); this.near.clear();
+    this.soundEpisodes.clear(); this.soundHits = [];
     this.doll = undefined; this.peers = undefined; this.enabled = false; this.touchedFloor = false; this.nextHit = 0;
   }
 }

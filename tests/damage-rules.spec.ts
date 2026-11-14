@@ -208,3 +208,22 @@ test("immunity and remaining HP do not change the calculated attack intensity", 
     lostHp: 10, lethal: true, impact: { damage: 180, intensity: "heavy" },
   });
 });
+
+test("audio contact episodes rearm immediately after separation while HP keeps its contact hysteresis", () => {
+  const collector = new ImpactCollector(), { body, doll } = fixture();
+  body.velocity.x = -1400 * body.deltaTime / 1000;
+  const step = (time: number) => {
+    collector.beginStep(doll, true, time, 1, 1); collector.beforeSolve();
+    return { damage: collector.flush(), sounds: collector.flushSounds() };
+  };
+  expect(step(0).sounds).toHaveLength(1);
+  expect(step(1).sounds).toHaveLength(0); // Still touching: no solver-tick repeats.
+  body.vertices!.forEach(vertex => { vertex.x += 1; });
+  expect(step(2).sounds).toHaveLength(0); // Actual separation; still in HP's 2px margin.
+  body.vertices!.forEach(vertex => { vertex.x -= 1; });
+  const next = step(3);
+  expect(next.damage).toHaveLength(0); // Neither HP's 20ms margin nor its 300ms immunity is changed.
+  expect(next.sounds).toHaveLength(1);
+  expect(next.sounds[0].time).toBe(3);
+  expect(collector.flushSounds()).toHaveLength(0);
+});

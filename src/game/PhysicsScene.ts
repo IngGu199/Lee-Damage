@@ -341,12 +341,13 @@ export class PhysicsScene extends Phaser.Scene {
     for (const actor of actors) {
       actor.impacts.boundaries();
       if (actor.impacts.touchedFloor) actor.lifecycle.landed(this.simulationTime);
-      for (const hit of actor.impacts.flush()) {
+      const damageHits = actor.impacts.flush();
+      for (const hit of actor.impacts.flushSounds()) {
         const debris = actor.lifecycle.state === "bursting" || Boolean(hit.debris);
         if (!actor.lifecycle.protected(this.simulationTime)) this.audio.collision(actor.id, hit.time,
           damageFeedback({ ...hit, debris }), hit.contactKey, debris);
-        this.receiveHit(hit);
       }
+      for (const hit of damageHits) this.receiveHit(hit);
       if (actor.lifecycle.state === "bursting") {
         separateBodies(actor.doll.bodies, 2, { selfCollision: false });
         actor.doll.limitDebrisMotion(this.pointer.owner === actor.doll ? this.pointer.held : undefined);

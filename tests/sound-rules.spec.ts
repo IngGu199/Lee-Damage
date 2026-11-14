@@ -21,14 +21,16 @@ function fixture(overrides: Record<string, unknown> = {}) {
     available: (value: boolean) => { available = value; }, locked: (value: boolean) => { locked = value; } };
 }
 
-test("sound config maps named damage levels without speed rules and ignores legacy ranges", () => {
+test("sound config maps damage levels and ignores legacy speed and cooldown fields", () => {
   const config = parseSoundConfig({ version: 1, basePath: "assets/audio", defaults: { volume: 0.4, cooldownMs: 123 },
     events: { "collision.light": { files: ["sfx/a.ogg", "sfx/a.ogg"], speedRange: [200, null] },
       "collision.heavy": { files: ["sfx/c.ogg"], speedRange: "ignored" },
       "death.burst": { files: ["sfx/b.ogg"], volume: 0.9 } } });
   expect(config.basePath).toBe("assets/audio/"); expect(config.events["collision.light"].files).toEqual(["sfx/a.ogg"]);
-  expect(config.events["collision.light"]).toMatchObject({ volume: 0.4, cooldownMs: 123 });
+  expect(config.events["collision.light"]).toMatchObject({ volume: 0.4 });
   expect(config.events["collision.light"]).not.toHaveProperty("speedRange");
+  expect(config.events["collision.light"]).not.toHaveProperty("cooldownMs");
+  expect(config.defaults).not.toHaveProperty("cooldownMs");
   expect(config.events["death.burst"].volume).toBe(0.9);
   expect(collisionEvent(config, null)).toBeUndefined();
   expect(collisionEvent(config, "light")).toBe("collision.light");
@@ -43,7 +45,6 @@ test("invalid configs reject bad versions, numeric values, files and unsupported
     (c: any) => { c.maxConcurrentSounds = 1.5; }, (c: any) => { c.events["collision.light"].files = []; },
     (c: any) => { c.events["collision.light"].rateRange = [1.1, 1]; },
     (c: any) => { c.events["collision.custom"] = { files: ["sfx/a.ogg"] }; },
-    (c: any) => { c.events["collision.light"].cooldownMs = -1; },
     (c: any) => { c.events["collision.light"].files = ["../outside.ogg"]; },
     (c: any) => { c.events["collision.light"].files = ["https://example.com/a.ogg"]; },
   ]) { const config = valid(); edit(config); expect(() => parseSoundConfig(config)).toThrow(); }
@@ -52,24 +53,24 @@ test("invalid configs reject bad versions, numeric values, files and unsupported
 test("one physical pair is aggregated across both actors and adaptive steps, with quiet debris audio", () => {
   const f = fixture();
   f.mixer.collision(1, 0, feedback(80), "12:42");
-  f.mixer.collision(2, 0.1, feedback(90), "12:42", true);
-  f.mixer.collision(1, 0.2, feedback(85), "12:42");
+  f.mixer.collision(2, 0, feedback(90), "12:42", true);
+  f.mixer.collision(1, 0, feedback(85), "12:42");
   f.mixer.flush(); expect(f.plays).toHaveLength(1);
   expect(f.plays[0].volume).toBeCloseTo(0.8 * 0.35);
-  f.mixer.collision(2, 40, feedback(90), "12:43"); f.mixer.flush(); expect(f.plays).toHaveLength(1);
+  f.mixer.collision(2, 40, feedback(90), "12:43"); f.mixer.flush(); expect(f.plays).toHaveLength(2);
   f.plays[0].end(); f.mixer.collision(2, 81, feedback(90), "12:43"); f.mixer.flush();
-  expect(f.plays).toHaveLength(2); expect(f.plays[1].volume).toBe(0.8);
+  expect(f.plays).toHaveLength(3); expect(f.plays[1].volume).toBe(0.8);
 });
 
-test("cooldowns are per actor/event, zero damage stays silent, and variants avoid immediate repeats", () => {
+test("rapid contacts have no cooldown, zero damage stays silent, and variants avoid immediate repeats", () => {
   const f = fixture();
   f.mixer.collision(1, 0, feedback(0), "weak"); f.mixer.flush(); expect(f.plays).toHaveLength(0);
   f.mixer.collision(1, 0, feedback(5), "one"); f.mixer.flush();
   f.mixer.collision(2, 0, feedback(5), "two"); f.mixer.flush(); expect(f.plays).toHaveLength(2);
   expect(f.plays[0].file).not.toBe(f.plays[1].file);
   for (const play of f.plays) { expect(play.rate).toBeGreaterThanOrEqual(0.96); expect(play.rate).toBeLessThanOrEqual(1.04); play.end(); }
-  f.mixer.collision(1, 79.99, feedback(5), "three"); f.mixer.flush(); expect(f.plays).toHaveLength(2);
-  f.mixer.collision(1, 80, feedback(5), "four"); f.mixer.flush(); expect(f.plays).toHaveLength(3);
+  f.mixer.collision(1, 1, feedback(5), "three"); f.mixer.flush(); expect(f.plays).toHaveLength(3);
+  f.mixer.collision(1, 2, feedback(5), "four"); f.mixer.flush(); expect(f.plays).toHaveLength(4);
 });
 
 test("bounded voices prioritize death sounds and stronger simultaneous collisions", () => {
@@ -78,9 +79,10 @@ test("bounded voices prioritize death sounds and stronger simultaneous collision
   f.mixer.flush(); expect(f.mixer.snapshot().active).toBe(2);
   f.mixer.death(3, 10); f.mixer.flush();
   expect(f.plays[0].stopped).toBe(true); expect(f.mixer.snapshot().active).toBe(2);
-  f.mixer.collision(4, 20, feedback(5), "low"); f.mixer.flush(); expect(f.plays).toHaveLength(3);
+  f.mixer.collision(4, 20, feedback(5), "low"); f.mixer.flush(); expect(f.plays).toHaveLength(4);
+  expect(f.mixer.snapshot().active).toBe(2);
   f.mixer.stop(); f.mixer.collision(5, 100, feedback(5), "weak"); f.mixer.collision(5, 100, feedback(100), "strong"); f.mixer.flush();
-  expect(f.mixer.snapshot().recent.at(-2)?.event).toBe("collision.heavy");
+  expect(f.mixer.snapshot().recent.at(-1)?.event).toBe("collision.heavy");
 });
 
 test("per-event limits remain bounded with ten actors and repeated fragment contacts", () => {
@@ -92,9 +94,10 @@ test("per-event limits remain bounded with ten actors and repeated fragment cont
     for (const play of f.plays.slice(-2)) play.end();
   }
   expect(f.mixer.snapshot().recent.length).toBeLessThanOrEqual(16);
+  expect(f.plays).toHaveLength(10000);
 });
 
-test("unavailable and locked sounds leave no backlog or cooldown; stop/reset/expiry release state", () => {
+test("unavailable and locked sounds leave no backlog; stop/reset/expiry release state", () => {
   const f = fixture();
   f.available(false); f.mixer.death(1, 0); f.mixer.flush(); expect(f.mixer.snapshot().owners).toBe(0);
   f.available(true); f.locked(true); f.mixer.death(1, 1); f.mixer.flush(); expect(f.mixer.snapshot().pending).toBe(0);
@@ -104,4 +107,17 @@ test("unavailable and locked sounds leave no backlog or cooldown; stop/reset/exp
   f.mixer.stop(); expect(f.mixer.snapshot().active).toBe(0);
   f.mixer.muted = true; f.mixer.death(2, 100); f.mixer.flush(); expect(f.plays).toHaveLength(1);
   f.mixer.reset(); expect(f.mixer.snapshot()).toMatchObject({ active: 0, pending: 0, owners: 0 });
+});
+
+test("two contacts of the same pair in one frame both play while duplicate reports merge", () => {
+  const f = fixture({ maxConcurrentSounds: 1 });
+  for (const time of [0, 1]) {
+    f.mixer.collision(1, time, feedback(80), "pair");
+    f.mixer.collision(2, time, feedback(80), "pair");
+  }
+  f.mixer.flush();
+  expect(f.plays).toHaveLength(2);
+  expect(f.plays[0].stopped).toBe(true);
+  expect(f.plays[1].stopped).toBe(false);
+  expect(f.mixer.snapshot()).toMatchObject({ active: 1, pending: 0 });
 });

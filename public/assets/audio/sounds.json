@@ -7,7 +7,7 @@
   "defaults": {
     "volume": 0.6,
     "rateRange": [0.96, 1.04],
-    "cooldownMs": 80,
+    "cooldownMs": 0,
     "maxVoices": 2,
     "priority": 1
   },
@@ -18,7 +18,6 @@
         "sfx/kenney-impact/light-01.ogg",
         "sfx/kenney-impact/light-02.ogg"
       ],
-      "speedRange": [120, 600],
       "volume": 0.25
     },
 
@@ -27,7 +26,6 @@
         "sfx/kenney-impact/medium-01.ogg",
         "sfx/kenney-impact/medium-02.ogg"
       ],
-      "speedRange": [600, 1400],
       "volume": 0.5,
       "priority": 2
     },
@@ -37,7 +35,6 @@
         "sfx/kenney-impact/impactMining_004.ogg",
         "sfx/kenney-impact/impactPunch_heavy_004.ogg"
       ],
-      "speedRange": [1400, null],
       "volume": 0.8,
       "priority": 3
     },
