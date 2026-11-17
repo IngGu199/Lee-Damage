@@ -8,14 +8,14 @@ async function open(page: Page) {
   await page.goto("/?diagnostics");
   await page.waitForFunction(() => Boolean(window.__physicsLab?.doll));
   await page.evaluate(async () => { const s = window.__physicsLab; s.game.loop.sleep(); await s.audio.ready; });
+  await page.evaluate(() => window.__physicsLab.setMaxDamage(1000));
   await page.locator("#sound-title").click();
   await page.waitForFunction(() => !window.__physicsLab.audio.snapshot().locked);
 }
 test.beforeEach(async ({ page }) => {
   await page.route("**/assets/audio/sounds.json", route => route.fulfill({ status: 404, body: "" }));
-  // User audio packs can be pruned/replaced. Serve a retained, real OGG clip as
-  // the decoding fixture for configured Kenney names without changing their assets.
-  const clip = readFileSync(new URL("../public/assets/audio/sfx/kenney-impact/ground-001.ogg", import.meta.url));
+  // Keep decoding tests independent of user audio pack changes.
+  const clip = readFileSync(new URL("./fixtures/impact.ogg", import.meta.url));
   await page.route("**/assets/audio/sfx/kenney-impact/*.ogg", route => route.fulfill({ contentType: "audio/ogg", body: clip }));
 });
 
@@ -57,7 +57,7 @@ for (const surface of ["left", "right", "ceiling", "floor"] as const) {
     const result = await page.evaluate(surface => {
       const s = window.__physicsLab; s.reset(); s.selectedActor.interact(); s.matter.world.setGravity(0, 0);
       const centerX = surface === "left" ? 160 : surface === "right" ? 1040 : 600;
-      const offsetY = surface === "ceiling" || surface === "floor" ? -120 : 0;
+      const offsetY = surface === "ceiling" ? -220 : surface === "floor" ? -120 : 0;
       for (let i = 0; i < s.doll.parts.length; i++) {
         const body = s.doll.parts[i].body, pose = s.doll.standingPose[i];
         s.matter.body.setPosition(body, { x: centerX + pose.x, y: pose.y + offsetY });
@@ -253,6 +253,7 @@ test("unavailable audio leaves gameplay usable and scene shutdown releases every
   await page.route("**/*.m4a", route => route.fulfill({ status: 404, body: "" }));
   await open(page);
   expect(await page.evaluate(() => window.__physicsLab.audio.snapshot())).toMatchObject({ state: "disabled", buffers: 0 });
+  await page.locator("#game canvas").focus();
   await page.keyboard.press("t");
   expect(await page.evaluate(() => window.__physicsLab.livingActors.length)).toBe(2);
   await expect(page.locator("#sound-state")).toContainText("소리 없이 계속");

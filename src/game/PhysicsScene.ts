@@ -3,7 +3,7 @@ import { ImpactAudio } from "../audio/ImpactAudio";
 import { Matter, Collision } from "./matter";
 import {
   DEFAULT_SETTINGS, FIXED_SETTINGS, FIXED_STEP, MAX_TRAVEL_PER_SUBSTEP, MAX_SUBSTEPS,
-  REFERENCE_STEP, type LabSettings, type LabStats,
+  REFERENCE_STEP, ROOM, type LabSettings, type LabStats,
 } from "./config";
 import { PointerController } from "./PointerController";
 import { drawRoom } from "./draw";
@@ -29,6 +29,9 @@ export class PhysicsScene extends Phaser.Scene {
   audio!: ImpactAudio;
   paused = false;
   recoveries = 0;
+  maxDamage: number = DAMAGE_RULES.maxCollisionDamage;
+  private readonly walls: MatterJS.BodyType[] = [];
+  private roomGraphics?: Phaser.GameObjects.Graphics;
   private selectedId = 0;
   private nextId = 0;
   private accumulator = 0;
@@ -68,16 +71,12 @@ export class PhysicsScene extends Phaser.Scene {
   create() {
     this.matter.world.autoUpdate = false;
     this.audio = new ImpactAudio(this, () => this.onAudioState());
-    for (const [x, y, width, height] of [
-      [-70, 350, 200, 1100], [1270, 350, 200, 1100], [600, -58, 1600, 200], [600, 750, 1600, 200],
-    ]) this.matter.world.add(Matter.Bodies.rectangle(x, y, width, height, {
-      isStatic: true, restitution: 0, friction: 0.4, label: "room-wall",
-    }));
-    drawRoom(this);
-    this.createActor(false, 600, true);
+    this.resizeRoom();
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.resizeRoom, this);
+    this.createActor(false, (ROOM.left + ROOM.right) / 2, true);
     const canvas = this.game.canvas;
     canvas.tabIndex = 0;
-    canvas.setAttribute("aria-label", "물리 실험실. 인형과 잔해를 잡고 던지세요. T 인형 추가, R 전체 재배치, 스페이스 일시정지.");
+    canvas.setAttribute("aria-label", "물리 실험실. 인형과 잔해를 잡고 던지세요. T 인형 추가, B 선택 인형 강제 폭파, R 전체 재배치, 스페이스 일시정지.");
     this.pointer = new PointerController(canvas, this.matter.world, () => this.doll,
       () => this.paused || this.photoEditing,
       doll => {
@@ -94,6 +93,7 @@ export class PhysicsScene extends Phaser.Scene {
     document.addEventListener("visibilitychange", this.visibility, { signal: this.abort.signal });
     this.events.once("shutdown", () => {
       this.pointer.destroy(); this.audio.destroy();
+      this.scale.off(Phaser.Scale.Events.RESIZE, this.resizeRoom, this);
       Matter.Events.off(this.matter.world.engine, "beforeSolve", this.beforeSolve);
       Matter.Events.off(this.matter.world.engine, "collisionStart collisionActive", this.collisions);
       for (const actor of [...this.actors]) this.removeActor(actor);
@@ -101,6 +101,41 @@ export class PhysicsScene extends Phaser.Scene {
     });
     this.onReady(); this.publishStats();
   }
+
+  private resizeRoom() {
+    const oldWidth = ROOM.width;
+    ROOM.width = Math.max(320, this.scale.width / Math.max(1, this.scale.height) * ROOM.height);
+    ROOM.right = ROOM.width - 30;
+    this.pointer?.cancel();
+    for (const actor of this.actors) actor.moveToX(Phaser.Math.Clamp(
+      actor.doll.parts[1].body.position.x / oldWidth * ROOM.width, ROOM.left + 85, ROOM.right - 85));
+    const layouts = [
+      [ROOM.left - 100, ROOM.height / 2, 200, ROOM.height + 400],
+      [ROOM.right + 100, ROOM.height / 2, 200, ROOM.height + 400],
+      [ROOM.width / 2, ROOM.top - 100, ROOM.width + 400, 200],
+      [ROOM.width / 2, ROOM.bottom + 100, ROOM.width + 400, 200],
+    ];
+    layouts.forEach(([x, y, width, height], index) => {
+      const wall = this.walls[index];
+      if (wall) {
+        Matter.Body.scale(wall, width / (wall.bounds.max.x - wall.bounds.min.x), height / (wall.bounds.max.y - wall.bounds.min.y));
+        Matter.Body.setPosition(wall, { x, y });
+      } else {
+        const body = Matter.Bodies.rectangle(x, y, width, height, { isStatic: true, restitution: 0, friction: 0.4, label: "room-wall" });
+        this.walls.push(body); this.matter.world.add(body);
+      }
+    });
+    this.roomGraphics = drawRoom(this, this.roomGraphics);
+    const camera = this.cameras.main;
+    camera.setSize(this.scale.width, this.scale.height).setZoom(this.scale.height / ROOM.height).centerOn(ROOM.width / 2, ROOM.height / 2);
+    camera.preRender();
+  }
+
+  setMaxDamage(value: number) {
+    if (Number.isFinite(value)) this.maxDamage = Math.max(0, value);
+  }
+
+  get room() { return { ...ROOM }; }
 
   private blur = () => { this.resumeAfterPhoto = false; this.setPaused(true); };
   private visibility = () => { if (document.hidden) this.blur(); };
@@ -128,11 +163,26 @@ export class PhysicsScene extends Phaser.Scene {
     this.publishStats(); return actor;
   }
 
+  /** B explicitly kills the selected life, regardless of damage caps or protection. */
+  forceBurst() {
+    const actor = this.selectedActor;
+    if (this.paused || this.photoEditing || !actor?.lifecycle.interactive) return false;
+    actor.damage.health.lose(actor.damage.health.hp);
+    actor.lifecycle.kill(actor.id);
+    this.finishDeaths();
+    this.audio.flush();
+    for (const current of this.actors)
+      current.render(this.simulationTime, this.pointer, this.settings.debug, current.id === this.selectedId);
+    this.publishStats();
+    return true;
+  }
+
   private spawnX() {
-    const candidates = [600, 180, 1020, 390, 810, 110, 1090, 285, 915, 495, 705];
+    const candidates = [0.5, 0.15, 0.85, 0.325, 0.675, 0.1, 0.9, 0.24, 0.76, 0.41, 0.59]
+      .map(fraction => Phaser.Math.Linear(ROOM.left + 85, ROOM.right - 85, fraction));
     return candidates.reduce((best, x) => {
       const clearance = (position: number) => Math.min(...this.actors.map(actor =>
-        Math.abs(actor.doll.parts[1].body.position.x - position)), 1200);
+        Math.abs(actor.doll.parts[1].body.position.x - position)), ROOM.width);
       return clearance(x) > clearance(best) ? x : best;
     }, candidates[0]);
   }
@@ -195,7 +245,7 @@ export class PhysicsScene extends Phaser.Scene {
     const actor = this.actors.find(actor => actor.id === hit.lifeId);
     if (this.paused || this.photoEditing || !actor?.lifecycle.interactive || hit.time > this.simulationTime + 0.000001) return null;
     if (hit.source !== "weapon" && actor.lifecycle.protected(this.simulationTime)) return null;
-    const result = actor.damage.apply(hit); if (!result) return null;
+    const result = actor.damage.apply(hit, this.maxDamage); if (!result) return null;
     if (hit.source === "weapon") actor.interact();
     const part = actor.doll.parts[hit.part];
     for (let i = 0; i < result.injuries; i++) actor.injuries.add(actor.appearance.addInjury(hit, part.body), part);
@@ -210,7 +260,7 @@ export class PhysicsScene extends Phaser.Scene {
     this.pointer.cancel(); this.audio.reset();
     for (const actor of [...this.actors]) this.removeActor(actor);
     Matter.Engine.clear(this.matter.world.engine);
-    this.createActor(false, 600, true, undefined, photo);
+    this.createActor(false, (ROOM.left + ROOM.right) / 2, true, undefined, photo);
     this.accumulator = 0; this.publishStats();
   }
 
@@ -317,6 +367,7 @@ export class PhysicsScene extends Phaser.Scene {
     const actors = [...this.actors];
     for (const actor of actors) {
       actor.lifecycle.update(this.simulationTime);
+      actor.regenerate(step);
       if (!actor.lifecycle.interactive) {
         actor.doll.limitDebrisMotion(this.pointer.owner === actor.doll ? this.pointer.held : undefined);
         continue;
@@ -374,16 +425,16 @@ export class PhysicsScene extends Phaser.Scene {
     if (!this.actors.length) return;
     if (!this.paused) {
       this.accumulator += Math.min(delta, 50);
-      while (this.accumulator >= FIXED_STEP) {
+      while (this.accumulator + 1e-6 >= FIXED_STEP) {
         const speed = Math.max(...this.actors.map(actor => actor.doll.motionSpeed));
         const slices = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(Math.max(speed * FIXED_STEP / 1000,
           this.pointer.travelDistance) / MAX_TRAVEL_PER_SUBSTEP)));
         for (let slice = 0; slice < slices; slice++) this.physicsStep(FIXED_STEP / slices, slices - slice);
-        this.accumulator -= FIXED_STEP;
+        this.accumulator = Math.max(0, this.accumulator - FIXED_STEP);
       }
       for (const actor of [...this.livingActors]) if (actor.doll.unstable) {
         this.recoveries++;
-        const x = 600, select = this.selectedId === actor.id;
+        const x = (ROOM.left + ROOM.right) / 2, select = this.selectedId === actor.id;
         const photo = { frames: actor.face.preparedFrames, outline: actor.face.customOutline };
         const retained = { damage: actor.damage, appearance: actor.appearance };
         this.removeActor(actor); this.createActor(false, x, select, retained, photo);

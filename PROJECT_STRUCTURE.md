@@ -65,7 +65,7 @@ LeeDamageWeb/
 ├── tests/
 │   ├── physics.spec.ts        # 브라우저 조작·관절·경계·반복 재배치 검증
 │   ├── collision-cycle.spec.ts # 실험 1의 자기 충돌 전환·재잡기·기립 완료 검증
-│   ├── damage-rules.spec.ts   # 곡선·손상·상처·접촉 회차·시간 단위·무적/소멸·잔해 감쇠·공통 타격 등급·사운드 회차 분리 14개
+│   ├── damage-rules.spec.ts   # 곡선·손상·상처·접촉 회차·시간 단위·무적/소멸·잔해 감쇠·공통 타격 등급·사운드 회차 분리·회복 후 손상 누적 15개
 │   ├── foundation.spec.ts     # 실제 HP·즉시 재등장·잔해 만료·100회 교체·기립·무적 9개
 │   ├── multi-ragdoll.spec.ts  # T키/10개 제한·개별 HP·잔해 조작·상호 충돌·자원 정리·폭주 방지·분리 운동 보존 14개
 │   ├── sound-rules.spec.ts    # 설정·속도/음량 보간·충돌 후 속도·두 소리·쿨다운·상한 13개
@@ -98,7 +98,7 @@ LeeDamageWeb/
 1. Vite가 `index.html`을 제공하고 `src/main.ts`를 불러옵니다.
 2. `main.ts`가 웹 UI와 `PhysicsScene`을 만들고 캔버스용 한글 글꼴을 준비한 뒤 Phaser를 시작합니다.
 3. `PhysicsScene.create()`가 내장 Matter 월드에 벽 4개와 첫 `RagdollActor`를 추가합니다. T키로 생존 인형 최대 10개를 생성하며, 각각 신체 10개·관절 9개·독립 체력/자세/외형을 소유합니다.
-4. `PointerController`가 화면의 포인터 좌표를 1200×700 게임 좌표로 변환합니다. CSS 크기가 바뀌어도 물리 공간은 같습니다.
+4. `PointerController`가 화면의 포인터를 현재 방 좌표로 변환합니다. 방은 높이 800과 캔버스 비율에 맞춘 폭을 사용하고, 크기 변경 시 실제 벽·카메라·그리드·생성 위치를 함께 갱신합니다.
 5. 잡기는 자기 충돌을 켠 뒤 동적 점 제약 1개로 클릭 지점을 연결합니다. 선택 부위도 동적으로 중력·관절·접촉 토크를 계산하고, 회전한 로컬 클릭 좌표를 갱신해 같은 지점을 포인터에 유지합니다. `PointerVelocity`는 실제 이벤트 시각으로 마지막 이동 벡터를 계산합니다. 놓을 때 채택한 2번은 자기 충돌을 유지하고(비교용 1번은 해제), `Ragdoll.launch()`가 벡터의 50%를 몸 전체에 적용하며 기존 각속도를 유지합니다. 밀치기 경로는 제거했습니다.
 6. `PhysicsScene.update()`는 120Hz 기준으로 상태 제어 → 포인터 연결점 갱신 → 물리 계산 → 클릭 지점 잔여 위치 오차 보정 → 겹침·경계·속도 보정 → 관절 정렬/복구를 수행합니다. 채택한 2번의 `TorsoAlignment`는 물리 계산 뒤 현재 몸통을 기준으로 보정하고 해당 보정 전의 속도 벡터를 복원합니다. 고속 비행·잡기 이동은 기준 스텝을 추가 분할합니다. 국소 관절 복구 중에는 엔진을 계속 실행합니다. `waiting`에서도 물리 계산을 계속하며, 시작·완료된 기립 상태와 기립 모션에서만 자세를 직접 제어합니다. 기립은 `PoseRecovery`가 담당합니다.
 7. 약 150ms마다 관절 정렬 남은 시간·자기 충돌 ON/OFF·FPS·속도·부위 수·관절 수·잡은 부위·기립 상태·대기 시간·복구 횟수를 웹 UI로 전달합니다. 신체의 좌표는 DOM에서 관리하지 않습니다.
@@ -138,7 +138,7 @@ LeeDamageWeb/
 | HP·데미지·상처 임계값 | `src/game/DamageSystem.ts`, `HealthState.ts`, `InjuryProgression.ts`, `damageConfig.ts` | 최소 속도 800px/s·피격 후 300ms 무적과 실제 HP 손실을 외형에서 분리 |
 | 기립 낙하·착지 | `src/game/SpawnLanding.ts`, `PhysicsScene.ts` | 전체 기립 자세를 수직 이동, 잡기·유효 공격 시 동적 물리로 전환 |
 | 사망·관절 분리·즉시 재등장 | `src/game/RagdollActor.ts`, `RagdollLifecycle.ts`, `Ragdoll.ts`, `PhysicsScene.ts` | 분리 시 새 생명 추가, 잔해는 독립 조작/충돌 유지 후 5초에 해당 객체만 정리 |
-| 기반 회귀 검증 | `tests/damage-rules.spec.ts`, `foundation.spec.ts` | `npm run test:foundation` 23개. `test:multi` 14개. `test:current`는 다중 인형·사진 포함 61개 |
+| 기반 회귀 검증 | `tests/damage-rules.spec.ts`, `foundation.spec.ts` | `npm run test:foundation` 24개. `test:multi` 14개. `test:current`는 다중 인형·사진 포함 62개 |
 | 상처 에셋 부착 | `src/game/InjuryRenderer.ts`, `src/game/FaceRenderer.ts` | 자국 크기와 무관하게 테두리까지 균일하게 중심 선택. 사진은 불투명 픽셀 좌표를 보존해 배율 추종 |
 | 사진 회귀 검증 | `tests/photo.spec.ts` | `npm run test:photo`. 실제 모델 확인 결과는 2단계 진행 기록 참고 |
 | 회귀 검증 | `tests/physics.spec.ts` | 실제 포인터 조작과 가속된 물리 반복 검증 포함 |
@@ -214,3 +214,7 @@ LeeDamageWeb/
 `SoundConfig`는 `collision.normal`, `collision.wall`, `death.burst`를 읽습니다. 충돌 이벤트의 `speed` 구간 내 위치를 `sound-size` 배수 구간에 선형 대응하며 범위 밖은 무음입니다. 일반음과 벽·바닥음은 함께 재생하고 각 쿨다운·파일·음량은 독립적입니다. 음량 배수와 이벤트 volume·잔해 배율을 곱하고 전체·이벤트 재생 상한을 적용합니다. HP 데미지 등급은 오디오에서 사용하지 않습니다.
 
 `ImpactAudio`는 Phaser AudioContext를 공유합니다. 선택 파일을 한 번 디코딩해 공유 버퍼로 보관하고 재생 때만 Source/Gain 노드를 만듭니다. 일시정지·사진 편집에서 재생을 정리하며 R은 버퍼를 유지하고 쿨다운을 초기화합니다. 장면 종료는 비동기 로딩·입력·버퍼·노드를 해제합니다. 런타임은 사용자 JSON을 쓰지 않습니다. 이번 설정 형식 변경에 따른 JSON 통합은 요청에 따라 한 번 수행했습니다. 설정 상세는 `public/assets/audio/README.md`에 정리했습니다.
+
+## 창 크기와 체력 조절
+
+상단 조작바에 효과음·최대 데미지·사진·일시정지·재배치를 모으고 기존 노트와 체력 목록을 제거했습니다. `ResizeObserver`가 모서리 드래그와 창 크기 변경을 캔버스·물리 방에 반영합니다. `HealthState`는 회복과 누적 실제 손상을 분리하고 `RagdollActor`는 생존 중 1초마다 100을 회복하며 머리 위 체력바를 그립니다. `tests/playground.spec.ts`의 8개 검증과 [화면 보고서](PLAYGROUND_LAYOUT_REPORT.md)를 참고합니다.

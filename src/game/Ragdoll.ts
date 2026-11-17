@@ -65,8 +65,8 @@ export class Ragdoll {
         slop: 0,
       };
       const body = radius
-        ? Bodies.circle(x, y + STANDING_OFFSET_Y, radius + 2, options)
-        : Bodies.rectangle(x, y + STANDING_OFFSET_Y, width, height, {
+        ? Bodies.circle(x, y + STANDING_OFFSET_Y + ROOM.bottom - 650, radius + 2, options)
+        : Bodies.rectangle(x, y + STANDING_OFFSET_Y + ROOM.bottom - 650, width, height, {
             ...options,
             chamfer: { radius: 11 },
           });
@@ -76,7 +76,7 @@ export class Ragdoll {
       this.inertia.push(body.inertia);
       this.standingPose.push({
         x: x - 600,
-        y: y + STANDING_OFFSET_Y,
+        y: y + STANDING_OFFSET_Y + ROOM.bottom - 650,
         angle: 0,
       });
       this.parts.push({ name, body, color, width, height, radius, mass });

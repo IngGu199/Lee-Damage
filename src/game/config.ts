@@ -1,10 +1,10 @@
 export const ROOM = {
-  width: 1200,
-  height: 700,
+  width: 1600,
+  height: 800,
   left: 30,
-  right: 1170,
+  right: 1570,
   top: 42,
-  bottom: 650,
+  bottom: 750,
 };
 export const FIXED_STEP = 1000 / 120;
 export const REFERENCE_STEP = 1000 / 60;

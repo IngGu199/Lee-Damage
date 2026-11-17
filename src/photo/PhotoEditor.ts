@@ -542,6 +542,8 @@ export class PhotoEditor {
     }
   }
 
+  refreshPreview() { if (this.open) this.draw(); }
+
   destroy() {
     this.close(); this.analyzer.destroy(); this.abort.abort(); this.dialog.remove(); this.session.clear();
   }

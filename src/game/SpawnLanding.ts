@@ -36,4 +36,9 @@ export class SpawnLanding {
     this.doll.syncAnchors();
     this.doll.clearMotion();
   }
+
+  translate(x: number) {
+    for (const pose of this.origin) pose.x += x;
+    this.applyPose();
+  }
 }

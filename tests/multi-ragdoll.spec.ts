@@ -5,27 +5,27 @@ declare global { interface Window { __physicsLab: PhysicsScene } }
 async function open(page: Page) {
   await page.goto("/?diagnostics");
   await page.waitForFunction(() => Boolean(window.__physicsLab?.doll));
-  await page.evaluate(() => window.__physicsLab.game.loop.sleep());
+  await page.evaluate(() => { window.__physicsLab.game.loop.sleep(); window.__physicsLab.setMaxDamage(1000); });
 }
 async function point(page: Page, actorId: number, part = 0) {
   const position = await page.evaluate(({ actorId, part }) => ({
     ...window.__physicsLab.actors.find(actor => actor.id === actorId)!.doll.parts[part].body.position,
   }), { actorId, part });
   const box = (await page.locator("#game canvas").boundingBox())!;
-  return { x: box.x + position.x / 1200 * box.width, y: box.y + position.y / 700 * box.height };
+  return { x: box.x + position.x / (await page.evaluate(() => window.__physicsLab.room.width)) * box.width, y: box.y + position.y / (await page.evaluate(() => window.__physicsLab.room.height)) * box.height };
 }
 
 test("T adds independent actors up to ten, ignores repeats and editing, and R resets the entire room", async ({ page }) => {
   await open(page);
   for (let i = 0; i < 9; i++) await page.keyboard.press("t");
-  await expect(page.locator("#actor-list button")).toHaveCount(10);
+  expect(await page.evaluate(() => window.__physicsLab.livingActors.length)).toBe(10);
   expect(await page.evaluate(() => window.__physicsLab.snapshot())).toMatchObject({ aliveCount: 10, bodies: 104, joints: 90 });
-  await page.locator("#actor-list button").first().click();
+  await page.evaluate(() => { const s = window.__physicsLab; s.selectActor(s.livingActors[0].id); });
   await page.keyboard.press("t");
   await expect(page.locator("#notice")).toContainText("최대 10개");
   expect(await page.evaluate(() => new Set(window.__physicsLab.actors.map(actor => actor.id)).size)).toBe(10);
   await expect(page.locator("#spawn")).toBeDisabled();
-  await page.locator("#reset").click(); await expect(page.locator("#actor-list button")).toHaveCount(1);
+  await page.locator("#reset").click(); expect(await page.evaluate(() => window.__physicsLab.livingActors.length)).toBe(1);
   await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyT", key: "t", repeat: true })));
   expect(await page.evaluate(() => window.__physicsLab.livingActors.length)).toBe(1);
   await page.evaluate(() => window.__physicsLab.setPaused(true)); await page.keyboard.press("t");
@@ -55,9 +55,9 @@ test("health, immunity and photo variants belong to each life, and selecting an 
   expect(result.map(actor => actor.hp)).toEqual([900, 650, 340]);
   expect(result.map(actor => actor.variant)).toEqual([0, 1, 2]);
   expect(result.map(actor => actor.marks)).toEqual([2, 8, 16]);
-  await expect(page.locator("#hp-value")).toHaveText("650 / 1,000");
-  await page.locator(`[data-actor="${result[0].id}"]`).click();
-  await expect(page.locator("#hp-value")).toHaveText("900 / 1,000");
+  expect(await page.evaluate(() => window.__physicsLab.damage.health.hp)).toBe(650);
+  await page.evaluate(id => window.__physicsLab.selectActor(id), result[0].id);
+  expect(await page.evaluate(() => window.__physicsLab.damage.health.hp)).toBe(900);
 });
 
 test("a moving ragdoll wakes a standing neighbor and transfers physical impulse and relative-speed damage", async ({ page }) => {
@@ -166,7 +166,7 @@ test("ten interacting actors remain finite inside the room and reset clears all 
     const elapsed = performance.now() - started, full = s.snapshot();
     const valid = s.actors.every(actor => actor.doll.parts.every(({ body }) =>
       Number.isFinite(body.position.x + body.position.y + body.angle + body.velocity.x + body.velocity.y) &&
-      body.vertices!.every(p => p.x >= 29 && p.x <= 1171 && p.y >= 41 && p.y <= 651)));
+      body.vertices!.every(p => p.x >= s.room.left - 1 && p.x <= s.room.right + 1 && p.y >= s.room.top - 1 && p.y <= s.room.bottom + 1)));
     s.reset(); s.update(0, 0);
     return { full, valid, elapsed, reset: s.snapshot(), objects, afterObjects: s.children.length,
       textures, afterTextures: s.textures.getTextureKeys().length };
@@ -197,14 +197,15 @@ test("a gentle external push still wakes the standing target without causing col
   const result = await page.evaluate(() => {
     const s = window.__physicsLab, target = s.selectedActor, mover = s.spawnRagdoll()!;
     mover.interact();
-    const xOffset = 470 - mover.doll.parts[1].body.position.x;
+    const initialX = target.doll.parts[1].body.position.x;
+    const xOffset = initialX - 130 - mover.doll.parts[1].body.position.x;
     for (const { body } of mover.doll.parts) s.matter.body.translate(body, { x: xOffset, y: 180 });
     s.matter.world.setGravity(0, 0); mover.doll.launch({ x: 2, y: 0 });
     for (let i = 0; i < 30; i++) s.update(0, 1000 / 120);
-    return { x: target.doll.parts[1].body.position.x, dynamic: target.doll.parts.every(p => !p.body.isStatic),
+    return { initialX, x: target.doll.parts[1].body.position.x, dynamic: target.doll.parts.every(p => !p.body.isStatic),
       hp: target.damage.health.hp, moverHp: mover.damage.health.hp };
   });
-  expect(result.dynamic).toBe(true); expect(result.x).toBeGreaterThan(600);
+  expect(result.dynamic).toBe(true); expect(result.x).toBeGreaterThan(result.initialX);
   expect(result.hp).toBe(1000); expect(result.moverHp).toBe(1000);
 });
 

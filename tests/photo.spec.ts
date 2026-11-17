@@ -7,6 +7,7 @@ async function open(page: Page) {
   await page.goto("/?diagnostics");
   await page.waitForFunction(() => Boolean(window.__physicsLab?.doll));
   await expect(page.locator("#photo-open")).toBeEnabled();
+  await page.evaluate(() => window.__physicsLab.setMaxDamage(1000));
 }
 
 async function mockFaces(page: Page, count = 1, delay = 0) {
@@ -91,8 +92,7 @@ test("landmarks produce distinct variants; head hits swap photos without deletin
   await open(page); await applyPhoto(page);
   expect(await page.evaluate(() => window.__physicsLab.face.frameCount)).toBe(3);
   const before = await page.evaluate(() => (window.__physicsLab.textures.get("user-face").getSourceImage() as HTMLCanvasElement).toDataURL());
-  await page.locator(".appearance-preview summary").click();
-  await page.locator("#impact-preview").click({ clickCount: 3 });
+  await page.evaluate(() => { for (let i = 0; i < 3; i++) window.__physicsLab.previewImpact(0); });
   const after = await page.evaluate(() => {
     const s = window.__physicsLab;
     return { photo: (s.textures.get("user-face").getSourceImage() as HTMLCanvasElement).toDataURL(),
@@ -100,8 +100,7 @@ test("landmarks produce distinct variants; head hits swap photos without deletin
   });
   expect(after).toMatchObject({ variant: 1, hits: 3, injuries: 3 });
   expect(after.photo).not.toEqual(before);
-  await page.locator("#impact-part").selectOption("1");
-  await page.locator("#impact-preview").click();
+  await page.evaluate(() => window.__physicsLab.previewImpact(1));
   expect(await page.evaluate(() => window.__physicsLab.appearance.injuries.at(-1)?.part)).toBe(1);
   expect(await page.evaluate(() => window.__physicsLab.appearance.headHits)).toBe(3);
   await page.locator("#reset").click();
@@ -226,12 +225,11 @@ test("replacing and clearing photos keeps textures, bodies and render objects bo
     await page.locator("#reset").click();
   }
   expect(await counts()).toEqual(initial);
-  await page.locator(".appearance-preview summary").click();
   await page.evaluate(() => { for (let i = 0; i < 150; i++) window.__physicsLab.previewImpact(i % 10); });
   await page.waitForTimeout(100);
   expect(await page.evaluate(() => window.__physicsLab.appearance.injuries.length)).toBe(100);
   expect((await counts()).display).toBe(initial.display + 100);
-  await page.locator("#photo-remove").click();
+  await page.locator("#photo-open").click(); await page.locator("#photo-clear").click();
   expect(await page.evaluate(() => window.__physicsLab.textures.exists("user-face"))).toBe(false);
   expect((await counts()).display).toBe(initial.display - 1);
 });
@@ -257,13 +255,16 @@ test("room impacts create injuries and pose corrections do not", async ({ page }
 test("editor has no horizontal overflow and the preview matches the displayed head size", async ({ page }) => {
   await open(page); await applyPhoto(page);
   await page.locator("#photo-open").click();
-  const headSize = (await page.locator("#game canvas").boundingBox())!.width / 1200 * 144;
+  const headSize = (await page.locator("#game canvas").boundingBox())!.width / (await page.evaluate(() => window.__physicsLab.room.width)) * 144;
   expect((await page.locator("#photo-small").boundingBox())!.width).toBeCloseTo(headSize, 1);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(await page.locator("dialog").evaluate((d) => d.scrollWidth <= d.clientWidth)).toBe(true);
-  const narrowHeadSize = (await page.locator("#game canvas").boundingBox())!.width / 1200 * 144;
-  await expect.poll(async () => (await page.locator("#photo-small").boundingBox())!.width).toBeCloseTo(narrowHeadSize, 1);
+  await expect.poll(() => page.evaluate(() => {
+    const actual = document.querySelector("#photo-small")!.getBoundingClientRect().width;
+    const expected = window.__physicsLab.game.canvas.getBoundingClientRect().width / window.__physicsLab.room.width * 144;
+    return Math.abs(actual - expected);
+  })).toBeLessThan(0.05);
   await page.locator("#photo-apply").scrollIntoViewIfNeeded();
   await expect(page.locator("#photo-apply")).toBeVisible();
 });
@@ -501,22 +502,19 @@ test("fixed photo scale is two, visual controls are absent and overhang stays ou
   await applyPhoto(page);
   await expect(page.locator(".appearance-settings input")).toHaveCount(0);
   await expect(page.locator("#photo-scale, #deformation-scale, [id^='injury-scale-']:not([id$='-value'])")).toHaveCount(0);
-  await expect(page.locator("#photo-scale-value")).toHaveText("2.0×");
-  await expect(page.locator("#deformation-scale-value")).toHaveText("1.8×");
-  for (const kind of ["bruise", "scratch", "bandage"])
-    await expect(page.locator(`#injury-scale-${kind}-value`)).toHaveText("1.5×");
+  await expect(page.locator(".lab-panel")).toHaveCount(0);
   expect(await page.evaluate(() => window.__physicsLab.face.snapshot().width)).toBe(144);
   expect(await bodyState()).toEqual(initial);
   const box = (await page.locator("#game canvas").boundingBox())!;
   const head = await page.evaluate(() => ({ ...window.__physicsLab.doll.parts[0].body.position }));
-  await page.mouse.move(box.x + (head.x + 60) / 1200 * box.width, box.y + head.y / 700 * box.height);
+  await page.mouse.move(box.x + (head.x + 60) / (await page.evaluate(() => window.__physicsLab.room.width)) * box.width, box.y + head.y / (await page.evaluate(() => window.__physicsLab.room.height)) * box.height);
   await page.mouse.down();
   expect(await page.evaluate(() => window.__physicsLab.pointer.grabbed)).toBeNull();
   await page.mouse.up();
   await page.locator("#reset").click();
   expect(await page.evaluate(() => window.__physicsLab.face.snapshot().width)).toBe(144);
   await page.locator("#photo-open").click();
-  const displaySize = (await page.locator("#game canvas").boundingBox())!.width / 1200 * 144;
+  const displaySize = (await page.locator("#game canvas").boundingBox())!.width / (await page.evaluate(() => window.__physicsLab.room.width)) * 144;
   expect((await page.locator("#photo-small").boundingBox())!.width).toBeCloseTo(displaySize, 1);
 });
 

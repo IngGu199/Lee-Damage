@@ -227,3 +227,13 @@ test("audio contact episodes rearm immediately after separation while HP keeps i
   expect(next.sounds[0].time).toBe(3);
   expect(collector.flushSounds()).toHaveLength(0);
 });
+
+test("healing caps at full HP, never revives dead dolls and preserves accumulated injury damage", () => {
+  const damage = new DamageSystem();
+  expect(damage.apply(hit({ source: "weapon", damage: 40 }))?.injuries).toBe(1);
+  expect(damage.health.heal(100)).toBe(40); expect(damage.health.hp).toBe(1000);
+  expect(damage.apply(hit({ source: "weapon", damage: 40, hitId: 2, time: 300 }))?.injuries).toBe(1);
+  expect(damage.health.totalDamage).toBe(80);
+  damage.health.lose(2000); expect(damage.health.heal(1000)).toBe(0); expect(damage.health.hp).toBe(0);
+  damage.reset(2); expect(damage.health.totalDamage).toBe(0); expect(damage.health.hp).toBe(1000);
+});

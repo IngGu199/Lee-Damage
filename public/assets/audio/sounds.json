@@ -10,7 +10,7 @@
       1.04
     ],
     "cooldownMs": 1000,
-    "maxVoices": 2,
+    "maxVoices": 10,
     "priority": 1
   },
   "events": {
@@ -20,13 +20,13 @@
       ],
       "volume": 1,
       "priority": 3,
-      "cooldownMs": 10,
+      "cooldownMs": 20,
       "speed": [
-        0,
-        2400
+        300,
+        1000
       ],
       "sound-size": [
-        0.01,
+        0.1,
         2
       ]
     },
@@ -40,7 +40,7 @@
       ],
       "volume": 1,
       "priority": 1,
-      "cooldownMs": 100,
+      "cooldownMs": 200,
       "speed": [
         200,
         2400

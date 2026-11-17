@@ -60,7 +60,7 @@ export class DamageSystem {
 
   invulnerable(time: number) { return time + 0.000001 < this.invulnerableUntil; }
 
-  apply(hit: DamageHit) {
+  apply(hit: DamageHit, maxDamage = Infinity) {
     if (hit.lifeId !== this.lifeId || this.health.dead || !Number.isFinite(hit.time) ||
       hit.time < this.lastTime || !Number.isSafeInteger(hit.hitId) || hit.hitId < 0 ||
       hit.hitId <= (this.lastHit.get(hit.source) ?? -1) ||
@@ -69,13 +69,13 @@ export class DamageSystem {
     this.lastHit.set(hit.source, hit.hitId);
     this.lastTime = hit.time;
     if (this.invulnerable(hit.time)) return null;
-    const impact = damageFeedback(hit), amount = impact.damage;
+    const impact = damageFeedback(hit), amount = Math.min(impact.damage, Math.max(0, maxDamage));
     if (!Number.isFinite(amount) || amount <= 0) return null;
     const lostHp = this.health.lose(amount);
     if (!lostHp) return null;
     this.invulnerableUntil = hit.time + DAMAGE_RULES.invulnerabilityMs;
     return { hit, impact, lostHp, hp: this.health.hp, lethal: this.health.dead,
-      injuries: this.progression.advance(this.health.lostHp), variant: this.variant };
+      injuries: this.progression.advance(this.health.totalDamage), variant: this.variant };
   }
 
   reset(lifeId: number, preserveHealth = false) {

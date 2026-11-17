@@ -1,6 +1,8 @@
 /** Stage-three starting values; physics and the approved appearance scales stay separate. */
 export const DAMAGE_RULES = Object.freeze({
   maxHp: 1000,
+  regenerationHp: 100,
+  regenerationMs: 1000,
   minSpeed: 800,
   referenceSpeed: 1400,
   referenceDamage: 20,

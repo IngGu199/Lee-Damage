@@ -4,6 +4,7 @@ import { DAMAGE_RULES } from "./damageConfig";
 export class HealthState {
   readonly maxHp = DAMAGE_RULES.maxHp;
   hp: number = this.maxHp;
+  totalDamage = 0;
   get lostHp() { return this.maxHp - this.hp; }
   get lossRatio() { return this.lostHp / this.maxHp; }
   get dead() { return this.hp === 0; }
@@ -12,8 +13,16 @@ export class HealthState {
     if (!Number.isFinite(damage) || damage <= 0 || this.dead) return 0;
     const previous = this.hp;
     this.hp = Math.max(0, this.hp - damage);
+    this.totalDamage += previous - this.hp;
     return previous - this.hp;
   }
 
-  reset() { this.hp = this.maxHp; }
+  heal(amount: number) {
+    if (!Number.isFinite(amount) || amount <= 0 || this.dead) return 0;
+    const previous = this.hp;
+    this.hp = Math.min(this.maxHp, this.hp + amount);
+    return this.hp - previous;
+  }
+
+  reset() { this.hp = this.maxHp; this.totalDamage = 0; }
 }

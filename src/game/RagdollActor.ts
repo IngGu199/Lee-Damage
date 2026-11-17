@@ -28,8 +28,9 @@ export class RagdollActor {
   private readonly graphics: Phaser.GameObjects.Graphics;
   private readonly overlay: Phaser.GameObjects.Graphics;
   private readonly effects: Phaser.GameObjects.Graphics;
-  private readonly label: Phaser.GameObjects.Text;
-  private labelSelected?: boolean;
+  readonly healthBar: Phaser.GameObjects.Graphics;
+  healthBarWidth = 72;
+  private regenerationElapsed = 0;
   private burstOrigin = { x: 600, y: 350 };
 
   constructor(scene: Phaser.Scene, world: Phaser.Physics.Matter.World, settings: LabSettings,
@@ -47,8 +48,7 @@ export class RagdollActor {
     this.graphics = scene.add.graphics();
     this.overlay = scene.add.graphics().setDepth(30);
     this.effects = scene.add.graphics().setDepth(25);
-    this.label = scene.add.text(0, 0, "", { fontFamily: '"Noto Sans KR Variable", sans-serif', fontSize: "12px",
-      color: "#405039", backgroundColor: "#f8f9f4", padding: { x: 5, y: 3 } }).setOrigin(0.5, 1).setDepth(40);
+    this.healthBar = scene.add.graphics().setDepth(40);
     this.face = new FaceRenderer(scene, textureKey);
     this.injuries = new InjuryRenderer(scene, this.face);
     if (frames.length) this.face.apply(frames, customOutline);
@@ -63,6 +63,25 @@ export class RagdollActor {
     this.landing = undefined;
     this.lifecycle.interact();
     this.posture.interact();
+  }
+
+  regenerate(delta: number) {
+    if (!this.lifecycle.interactive) return;
+    this.regenerationElapsed += delta;
+    const ticks = Math.floor((this.regenerationElapsed + 1e-6) / DAMAGE_RULES.regenerationMs);
+    if (!ticks) return;
+    this.regenerationElapsed = Math.max(0, this.regenerationElapsed - ticks * DAMAGE_RULES.regenerationMs);
+    if (this.damage.health.heal(ticks * DAMAGE_RULES.regenerationHp)) this.face.showVariant(this.damage.variant);
+  }
+
+  moveToX(x: number) {
+    const dx = x - this.doll.parts[1].body.position.x;
+    if (this.landing) this.landing.translate(dx);
+    else {
+      if (this.lifecycle.interactive && this.posture.state !== "standing") this.posture.interact();
+      for (const body of this.doll.bodies) Matter.Body.translate(body, { x: dx, y: 0 });
+    }
+    this.impacts.clear();
   }
 
   burst(time: number) {
@@ -83,15 +102,16 @@ export class RagdollActor {
     this.graphics.setAlpha(alpha); this.overlay.setAlpha(alpha);
     this.face.update(this.doll.parts[0]); this.face.setAlpha(alpha);
     this.injuries.update(this.doll, this.appearance.injuries, alpha);
-    const head = this.doll.parts[0].body.position;
-    this.label.setText(`${this.lifecycle.interactive ? "인형" : "잔해"} ${this.id} · ${Math.ceil(this.damage.health.hp)}`)
-      .setPosition(Phaser.Math.Clamp(head.x, ROOM.left + 50, ROOM.right - 50),
-        Math.max(ROOM.top + 20, head.y - (this.face.active ? this.face.displaySize / 2 : 38) - 8))
-      .setAlpha(alpha);
-    if (this.labelSelected !== selected) {
-      this.labelSelected = selected;
-      this.label.setBackgroundColor(selected ? "#e5edce" : "#f8f9f4");
-    }
+    const head = this.doll.parts[0].body;
+    const width = this.healthBarWidth = this.face.active ? this.face.displaySize : 72;
+    const headHeight = this.face.active ? width / 2 * (Math.abs(Math.cos(head.angle)) + Math.abs(Math.sin(head.angle))) : 38;
+    const ratio = this.damage.health.hp / this.damage.health.maxHp;
+    this.healthBar.clear().setVisible(this.lifecycle.interactive)
+      .setPosition(Phaser.Math.Clamp(head.position.x - width / 2, ROOM.left, ROOM.right - width),
+        Math.max(ROOM.top + 4, head.position.y - headHeight - 15));
+    this.healthBar.fillStyle(0xe2e7da).fillRoundedRect(0, 0, width, 7, 3);
+    if (ratio > 0) this.healthBar.fillStyle(ratio < 0.3 ? 0xc97959 : 0x7f9e48).fillRoundedRect(0, 0, width * ratio, 7, 3);
+    this.healthBar.lineStyle(1, selected ? 0x536c32 : 0xb9c4ad).strokeRoundedRect(0, 0, width, 7, 3);
     this.effects.clear();
     if (this.lifecycle.state !== "bursting") return;
     const progress = this.lifecycle.burstElapsed(time) / DAMAGE_RULES.burstEffectMs;
@@ -109,6 +129,6 @@ export class RagdollActor {
 
   dispose() {
     this.doll.destroy(); this.impacts.clear(); this.face.clear(); this.injuries.clear();
-    this.graphics.destroy(); this.overlay.destroy(); this.effects.destroy(); this.label.destroy();
+    this.graphics.destroy(); this.overlay.destroy(); this.effects.destroy(); this.healthBar.destroy();
   }
 }

@@ -4,40 +4,22 @@ import type { Ragdoll } from "./Ragdoll";
 import type { PointerController } from "./PointerController";
 import { ROOM } from "./config";
 
-export function drawRoom(scene: Phaser.Scene) {
-  const g = scene.add.graphics();
-  g.fillStyle(0xeceee8).fillRoundedRect(14, 26, 1172, 646, 18);
-  g.fillStyle(0xf8f9f4).fillRect(ROOM.left, ROOM.top, 1140, 608);
+export function drawRoom(scene: Phaser.Scene, g = scene.add.graphics().setDepth(-10)) {
+  const width = ROOM.right - ROOM.left, height = ROOM.bottom - ROOM.top;
+  g.clear();
+  g.fillStyle(0xeceee8).fillRoundedRect(ROOM.left - 16, ROOM.top - 16, width + 32, height + 38, 18);
+  g.fillStyle(0xf8f9f4).fillRect(ROOM.left, ROOM.top, width, height);
   g.lineStyle(1, 0xe6e9df);
   for (let x = 60; x < ROOM.right; x += 40)
     g.lineBetween(x, ROOM.top, x, ROOM.bottom);
   for (let y = 50; y < ROOM.bottom; y += 40)
     g.lineBetween(ROOM.left, y, ROOM.right, y);
-  g.lineStyle(2, 0xcfd5c6).strokeRect(ROOM.left, ROOM.top, 1140, 608);
-  g.fillStyle(0xd8ddce).fillRect(ROOM.left, ROOM.bottom, 1140, 8);
+  g.lineStyle(2, 0xcfd5c6).strokeRect(ROOM.left, ROOM.top, width, height);
+  g.fillStyle(0xd8ddce).fillRect(ROOM.left, ROOM.bottom, width, 8);
   for (let x = 40; x < ROOM.right; x += 18) {
-    g.lineStyle(2, 0xc4cdb9).lineBetween(x, 660, x - 8, 670);
+    g.lineStyle(2, 0xc4cdb9).lineBetween(x, ROOM.bottom + 10, x - 8, ROOM.bottom + 20);
   }
-  scene.add.text(58, 65, "ROOM 01", {
-    fontFamily: "monospace",
-    fontSize: "14px",
-    color: "#88917d",
-    letterSpacing: 3,
-  });
-  scene.add
-    .text(1140, 65, "1200 × 700", {
-      fontFamily: "monospace",
-      fontSize: "13px",
-      color: "#88917d",
-    })
-    .setOrigin(1, 0);
-  scene.add
-    .text(600, 110, "잡아서 위로 들어 보세요", {
-      fontFamily: '"Noto Sans KR Variable", sans-serif',
-      fontSize: "20px",
-      color: "#a2ab96",
-    })
-    .setOrigin(0.5);
+  return g;
 }
 
 export function drawDoll(
@@ -54,8 +36,8 @@ export function drawDoll(
   overlay?.clear();
   const debugGraphics = overlay ?? g;
   const torso = doll.parts[1].body.position;
-  const shadowWidth = 80 + Math.max(0, 600 - torso.y) * 0.12;
-  g.fillStyle(0x4b583c, 0.09).fillEllipse(torso.x, 643, shadowWidth, 12);
+  const shadowWidth = 80 + Math.max(0, ROOM.bottom - 50 - torso.y) * 0.12;
+  g.fillStyle(0x4b583c, 0.09).fillEllipse(torso.x, ROOM.bottom - 7, shadowWidth, 12);
   for (const joint of doll.joints) {
     const a = Vector.add(joint.bodyA!.position, joint.pointA),
       b = Vector.add(joint.bodyB!.position, joint.pointB);

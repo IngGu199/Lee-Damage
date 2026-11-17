@@ -5,7 +5,7 @@ declare global { interface Window { __physicsLab: PhysicsScene } }
 async function open(page: Page) {
   await page.goto("/?diagnostics");
   await page.waitForFunction(() => Boolean(window.__physicsLab?.doll));
-  await page.evaluate(() => window.__physicsLab.game.loop.sleep());
+  await page.evaluate(() => { window.__physicsLab.game.loop.sleep(); window.__physicsLab.setMaxDamage(1000); });
 }
 
 test("real wall collisions lose HP while rest, preview and pose correction do not", async ({ page }) => {
@@ -49,7 +49,7 @@ test("death immediately replaces the living actor while detached parts and photo
     const moved = old.doll.capturePose(), alphaEarly = old.lifecycle.alpha(s.snapshot().simulationTime);
     for (let i = 0; i < 540; i++) s.update(0, 1000 / 120);
     const retained = { exists: s.actors.includes(old), alpha: old.lifecycle.alpha(s.snapshot().simulationTime),
-      inside: old.doll.parts.every(({ body }) => body.vertices!.every(p => p.x >= 30 && p.x <= 1170 && p.y >= 42 && p.y <= 650)) };
+      inside: old.doll.parts.every(({ body }) => body.vertices!.every(p => p.x >= s.room.left && p.x <= s.room.right && p.y >= s.room.top && p.y <= s.room.bottom)) };
     for (let i = 0; i < 24; i++) s.update(0, 1000 / 120);
     const fading = old.lifecycle.alpha(s.snapshot().simulationTime);
     for (let i = 0; i < 24; i++) s.update(0, 1000 / 120);
@@ -120,7 +120,7 @@ test("new actors land upright without damage and grabbing during entry ends prot
   expect(await page.evaluate(() => window.__physicsLab.snapshot().spawnProtected)).toBe(true);
   const head = await page.evaluate(() => ({ ...window.__physicsLab.doll.parts[0].body.position }));
   const box = (await page.locator("#game canvas").boundingBox())!;
-  await page.mouse.move(box.x + head.x / 1200 * box.width, box.y + head.y / 700 * box.height); await page.mouse.down();
+  await page.mouse.move(box.x + head.x / (await page.evaluate(() => window.__physicsLab.room.width)) * box.width, box.y + head.y / (await page.evaluate(() => window.__physicsLab.room.height)) * box.height); await page.mouse.down();
   expect(await page.evaluate(() => window.__physicsLab.snapshot())).toMatchObject({ grabbed: "머리", spawnProtected: false, hp: 1000 });
   await page.mouse.up();
   const final = await page.evaluate(() => {
@@ -135,7 +135,7 @@ test("death while grabbed cancels the old grip and photo editing pauses debris a
   await open(page);
   const head = await page.evaluate(() => ({ ...window.__physicsLab.doll.parts[0].body.position }));
   const box = (await page.locator("#game canvas").boundingBox())!;
-  await page.mouse.move(box.x + head.x / 1200 * box.width, box.y + head.y / 700 * box.height); await page.mouse.down();
+  await page.mouse.move(box.x + head.x / (await page.evaluate(() => window.__physicsLab.room.width)) * box.width, box.y + head.y / (await page.evaluate(() => window.__physicsLab.room.height)) * box.height); await page.mouse.down();
   const result = await page.evaluate(() => {
     const s = window.__physicsLab, old = s.selectedActor, grabbed = s.pointer.grabbed;
     s.receiveHit({ lifeId: old.id, hitId: 1, source: "weapon", part: 0, position: { ...old.doll.parts[0].body.position },
@@ -159,10 +159,14 @@ test("actual fixed-step wall damage agrees at 30, 60 and 120 render fps", async 
     return [30, 60, 120].map(fps => {
       s.reset(); s.posture.interact(); s.doll.launch({ x: -35, y: 0 });
       for (let frame = 0; frame < fps; frame++) s.update(0, 1000 / fps);
-      return { hp: s.damage.health.hp, injuries: s.appearance.injuries.length };
+      return { hp: s.damage.health.hp, totalDamage: s.damage.health.totalDamage, injuries: s.appearance.injuries.length };
     });
   });
-  for (const result of results) { expect(result.hp).toBeCloseTo(results[0].hp, 5); expect(result.injuries).toBe(results[0].injuries); }
+  expect(results[0].totalDamage).toBeGreaterThan(0);
+  for (const result of results) {
+    expect(result.hp).toBeCloseTo(results[0].hp, 5); expect(result.totalDamage).toBeCloseTo(results[0].totalDamage, 5);
+    expect(result.injuries).toBe(results[0].injuries);
+  }
 });
 
 test("damage immunity pauses with the simulation and photo editing", async ({ page }) => {
