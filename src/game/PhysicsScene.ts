@@ -344,8 +344,9 @@ export class PhysicsScene extends Phaser.Scene {
       const damageHits = actor.impacts.flush();
       for (const hit of actor.impacts.flushSounds()) {
         const debris = actor.lifecycle.state === "bursting" || Boolean(hit.debris);
+        const target = hit.source === "room" ? (hit.surface === "floor" ? "floor" : "wall") : "body";
         if (!actor.lifecycle.protected(this.simulationTime)) this.audio.collision(actor.id, hit.time,
-          damageFeedback({ ...hit, debris }), hit.contactKey, debris);
+          damageFeedback({ ...hit, debris }), hit.contactKey, debris, target);
       }
       for (const hit of damageHits) this.receiveHit(hit);
       if (actor.lifecycle.state === "bursting") {

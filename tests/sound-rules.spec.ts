@@ -50,6 +50,36 @@ test("invalid configs reject bad versions, numeric values, files and unsupported
   ]) { const config = valid(); edit(config); expect(() => parseSoundConfig(config)).toThrow(); }
 });
 
+test("wall and floor override each damage grade independently and otherwise use common collision audio", () => {
+  const events: Record<string, unknown> = {};
+  for (const grade of ["light", "medium", "heavy"] as const) {
+    events[`collision.${grade}`] = { files: [`common-${grade}.ogg`] };
+    events[`collision.wall.${grade}`] = { files: [`wall-${grade}.ogg`] };
+    events[`collision.floor.${grade}`] = { files: [`floor-${grade}.ogg`] };
+  }
+  const f = fixture({ events });
+  for (const [index, amount] of [5, 20, 60].entries()) {
+    const grade = feedback(amount).intensity!;
+    for (const target of ["body", "wall", "floor"] as const) {
+      const event = target === "body" ? `collision.${grade}` : `collision.${target}.${grade}`;
+      expect(collisionEvent(f.config, grade, target)).toBe(event);
+      f.mixer.collision(1, index, feedback(amount), `${target}:${index}`, false, target); f.mixer.flush();
+      expect(f.mixer.snapshot().recent.at(-1)?.event).toBe(event);
+    }
+  }
+  delete f.config.events["collision.wall.medium"];
+  expect(collisionEvent(f.config, "medium", "wall")).toBe("collision.medium");
+  expect(collisionEvent(f.config, "medium", "floor")).toBe("collision.floor.medium");
+  delete f.config.events["collision.medium"];
+  expect(collisionEvent(f.config, "medium", "wall")).toBeUndefined();
+  expect(collisionEvent(f.config, "medium")).toBeUndefined();
+  expect(collisionEvent(f.config, null, "floor")).toBeUndefined();
+  f.config.events["collision.floor.light"].volume = 0;
+  const previous = f.plays.length;
+  f.mixer.collision(1, 100, feedback(5), "muted-floor", false, "floor"); f.mixer.flush();
+  expect(f.plays).toHaveLength(previous); // Explicit silence does not fall back to common audio.
+});
+
 test("one physical pair is aggregated across both actors and adaptive steps, with quiet debris audio", () => {
   const f = fixture();
   f.mixer.collision(1, 0, feedback(80), "12:42");

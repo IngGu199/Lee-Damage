@@ -1,5 +1,7 @@
 import type { DamageIntensity } from "../game/DamageSystem";
 
+export type CollisionSoundTarget = "body" | "wall" | "floor";
+
 export interface SoundEventConfig {
   files: string[];
   volume: number;
@@ -68,8 +70,8 @@ export function parseSoundConfig(input: unknown): SoundConfig {
   const shared = playback(object(root.defaults ?? {}, "defaults"), defaults, "defaults");
   const definitions = object(root.events, "events"), events: Record<string, SoundEventConfig> = Object.create(null);
   for (const [name, inputEvent] of Object.entries(definitions)) {
-    if (!["collision.light", "collision.medium", "collision.heavy", "death.burst"].includes(name))
-      throw new Error(`events.${name}: collision.light/medium/heavy 또는 death.burst 이벤트가 필요합니다.`);
+    if (name !== "death.burst" && !/^collision\.(?:(?:wall|floor)\.)?(?:light|medium|heavy)$/.test(name))
+      throw new Error(`events.${name}: collision.light/medium/heavy, collision.wall.light/medium/heavy, collision.floor.light/medium/heavy 또는 death.burst 이벤트가 필요합니다.`);
     const event = object(inputEvent, `events.${name}`);
     if (!Array.isArray(event.files) || !event.files.length) throw new Error(`events.${name}.files: 음원 목록이 필요합니다.`);
     events[name] = { ...playback(event, shared, `events.${name}`),
@@ -85,8 +87,12 @@ export function parseSoundConfig(input: unknown): SoundConfig {
   };
 }
 
-export function collisionEvent(config: SoundConfig, intensity: DamageIntensity | null) {
+export function collisionEvent(config: SoundConfig, intensity: DamageIntensity | null, target: CollisionSoundTarget = "body") {
   if (!intensity) return undefined;
+  if (target !== "body") {
+    const specific = `collision.${target}.${intensity}`;
+    if (config.events[specific]) return specific;
+  }
   const event = `collision.${intensity}`;
   return config.events[event] ? event : undefined;
 }

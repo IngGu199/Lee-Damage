@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import type { PhysicsScene } from "../src/game/PhysicsScene";
 import { DEFAULT_SOUND_CONFIG } from "../src/audio/SoundConfig";
 declare global { interface Window { __physicsLab: PhysicsScene } }
@@ -12,9 +13,13 @@ async function open(page: Page) {
 }
 test.beforeEach(async ({ page }) => {
   await page.route("**/assets/audio/sounds.json", route => route.fulfill({ status: 404, body: "" }));
+  // User audio packs can be pruned/replaced. Serve a retained, real OGG clip as
+  // the decoding fixture for configured Kenney names without changing their assets.
+  const clip = readFileSync(new URL("../public/assets/audio/sfx/kenney-impact/impactPlate_heavy_000.ogg", import.meta.url));
+  await page.route("**/assets/audio/sfx/kenney-impact/*.ogg", route => route.fulfill({ contentType: "audio/ogg", body: clip }));
 });
 
-test("default Kenney clips decode once and native playback produces an audio signal", async ({ page }) => {
+test("default clip paths load once with a real OGG fixture and native playback produces an audio signal", async ({ page }) => {
   const requests: string[] = []; page.on("request", request => { if (request.url().endsWith(".ogg")) requests.push(request.url()); });
   await open(page);
   const result = await page.evaluate(async () => {
@@ -37,6 +42,45 @@ test("default Kenney clips decode once and native playback produces an audio sig
   expect(new Set(requests).size).toBe(11); expect(requests).toHaveLength(11);
   expect(result.reset).toMatchObject({ buffers: 11, active: 0, owners: 0, pending: 0 });
 });
+
+for (const surface of ["left", "right", "ceiling", "floor"] as const) {
+  test(`physical ${surface} contact selects its surface audio instead of common collision audio`, async ({ page }) => {
+    const pack = "sfx/kenney-impact/";
+    const events: Record<string, { files: string[] }> = {};
+    for (const grade of ["light", "medium", "heavy"]) {
+      events[`collision.${grade}`] = { files: [`${pack}impactPlate_heavy_000.ogg`] };
+      events[`collision.wall.${grade}`] = { files: [`${pack}impactPlate_heavy_001.ogg`] };
+      events[`collision.floor.${grade}`] = { files: [`${pack}impactPlate_heavy_002.ogg`] };
+    }
+    await page.route("**/assets/audio/sounds.json", route => route.fulfill({ json: {
+      version: 1, basePath: "assets/audio/", events,
+    } }));
+    await open(page);
+    const result = await page.evaluate(surface => {
+      const s = window.__physicsLab; s.reset(); s.selectedActor.interact(); s.matter.world.setGravity(0, 0);
+      const centerX = surface === "left" ? 160 : surface === "right" ? 1040 : 600;
+      const offsetY = surface === "ceiling" || surface === "floor" ? -120 : 0;
+      for (let i = 0; i < s.doll.parts.length; i++) {
+        const body = s.doll.parts[i].body, pose = s.doll.standingPose[i];
+        s.matter.body.setPosition(body, { x: centerX + pose.x, y: pose.y + offsetY });
+        s.matter.body.setAngle(body, pose.angle);
+      }
+      s.doll.syncAnchors();
+      s.doll.launch({ x: surface === "left" ? -35 : surface === "right" ? 35 : 0,
+        y: surface === "ceiling" ? -35 : surface === "floor" ? 35 : 0 });
+      for (let i = 0; i < 12; i++) s.update(0, 1000 / 120);
+      return { hp: s.damage.health.hp, audio: s.audio.snapshot() };
+    }, surface);
+    expect(result.hp).toBeLessThan(1000);
+    expect(result.audio).toMatchObject({ state: "ready", source: "json", buffers: 3, errors: [] });
+    expect(result.audio.played).toBeGreaterThan(0);
+    const target = surface === "floor" ? "floor" : "wall";
+    for (const sound of result.audio.recent) {
+      expect(sound.event).toMatch(new RegExp(`^collision\\.${target}\\.(light|medium|heavy)$`));
+      expect(sound.file).toBe(`${pack}impactPlate_heavy_00${target === "floor" ? 2 : 1}.ogg`);
+    }
+  });
+}
 
 test("zero-damage wall contacts stay silent and physical sound still plays during HP immunity", async ({ page }) => {
   await open(page);

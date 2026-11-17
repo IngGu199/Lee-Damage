@@ -1,5 +1,5 @@
 import type { DamageFeedback } from "../game/DamageSystem";
-import { collisionEvent, type SoundConfig } from "./SoundConfig";
+import { collisionEvent, type CollisionSoundTarget, type SoundConfig } from "./SoundConfig";
 
 export interface SoundVoice { stop(): void }
 export interface SoundBackend {
@@ -20,9 +20,9 @@ export class SoundMixer {
 
   constructor(readonly config: SoundConfig, private readonly backend: SoundBackend, private readonly random = Math.random) {}
 
-  collision(owner: number, time: number, impact: DamageFeedback, contact: string, debris = false) {
+  collision(owner: number, time: number, impact: DamageFeedback, contact: string, debris = false, target: CollisionSoundTarget = "body") {
     if (!Number.isFinite(impact.damage) || impact.damage <= 0) return;
-    const event = collisionEvent(this.config, impact.intensity);
+    const event = collisionEvent(this.config, impact.intensity, target);
     if (event) this.queue(`collision:${contact}:${time}`, { event, owners: new Set([owner]), time, damage: impact.damage, debris });
   }
   death(owner: number, time: number) {

@@ -1,6 +1,6 @@
 # 충돌 효과음
 
-현재 `sfx/kenney-impact/`의 Kenney Impact Sounds 1.0을 사용한다. 원본 파일명과 `License.txt`를 유지한다. CC0이며 출처는 https://kenney.nl/assets/impact-sounds 이다.
+기본 설정은 `sfx/kenney-impact/`의 Kenney Impact Sounds 1.0을 사용하며, 사용자 JSON으로 다른 음원을 지정할 수 있다. Kenney 팩의 원본 파일명과 `License.txt`를 유지한다. CC0이며 출처는 https://kenney.nl/assets/impact-sounds 이다.
 
 ## 사용자 설정 위치
 
@@ -17,7 +17,7 @@ JSON이 없으면 `src/audio/SoundConfig.ts`의 기본값으로 실행한다. �
 | `masterVolume` | 전체 배율 0~1, 생략 시 0.8 |
 | `maxConcurrentSounds` | 전체 동시 재생 상한, 정수 1~32. 생략 시 8 |
 | `defaults` | 이벤트의 기본 `volume`, `rateRange`, `maxVoices`, `priority`. 이벤트 필드가 우선 |
-| `events` | 데미지 시스템의 등급에 대응하는 `collision.light`, `collision.medium`, `collision.heavy`와 사망 분리 `death.burst` |
+| `events` | 공통 충돌 `collision.light/medium/heavy`, 벽 전용 `collision.wall.light/medium/heavy`, 바닥 전용 `collision.floor.light/medium/heavy`, 사망 분리 `death.burst` |
 | `events.*.files` | 비어 있지 않은 상대 음원 경로 목록. `basePath` 뒤에 붙이며 같은 파일은 한 번만 디코딩한다 |
 | `volume` | 이벤트 음량 0~1, 생략 시 0.6 |
 | `rateRange` | 두 재생 속도 배율. 각각 0.25~4, 작은 값부터. 기본 `[0.96, 1.04]`. 음높이도 함께 변한다 |
@@ -25,7 +25,17 @@ JSON이 없으면 `src/audio/SoundConfig.ts`의 기본값으로 실행한다. �
 | `priority` | 정수 0~100, 기본 1. 큰 값이 우선. 전체 상한에 걸리면 기존 소리 중 우선순위가 가장 낮은 소리를 교체한다. 새 충돌은 우선순위가 낮아도 재생을 생략하지 않는다 |
 | `debris.volumeScale` | 잔해가 포함된 충돌의 음량 배율 0~1, 기본 0.35. 사망 분리음에는 적용하지 않는다 |
 
-현재 실제 경로는 `sfx/kenney-impact/원본파일명.ogg`이다. 다른 사운드 팩도 배치한 후 `files`를 바꿔 사용할 수 있다. 이벤트 이름은 위의 고정된 데미지 등급에 맞춘다. 정의하지 않은 등급은 무음이다. 새 무기 전용 이벤트는 게임에서 발생시키는 연결이 별도로 필요하다.
+다른 사운드 팩도 배치한 후 `files`를 바꿔 사용할 수 있다. 예를 들어 `sfx/others/음원명.mp3`처럼 실제 파일의 상대 경로를 지정한다. OGG 외에 MP3도 같은 로딩·공유 버퍼 경로를 사용한다. 현재 업로드된 `small-punch.mp3`와 `hard-punch.mp3`는 Chromium에서 디코딩과 실제 오디오 신호 출력을 확인했다. 확장자를 바꾸는 변환 작업은 필요하지 않으며, 파일의 실제 코덱은 브라우저가 디코딩할 수 있어야 한다.
+
+### 벽·바닥 구분
+
+| 충돌 대상 | 우선 사용하는 이벤트 | 전용 설정이 없을 때 |
+| --- | --- | --- |
+| 왼쪽·오른쪽·위쪽 벽 | `collision.wall.light`, `collision.wall.medium`, `collision.wall.heavy` | 같은 등급의 `collision.light/medium/heavy` |
+| 바닥 | `collision.floor.light`, `collision.floor.medium`, `collision.floor.heavy` | 같은 등급의 `collision.light/medium/heavy` |
+| 다른 랙돌·잔해 | `collision.light`, `collision.medium`, `collision.heavy` | 무음 |
+
+전용 설정은 등급별로 선택하므로 벽의 강한 충돌만 별도로 정의해도 된다. 공통 설정까지 없으면 해당 등급은 무음이다. 전용 이벤트의 `volume: 0`은 그 소리만 끄며 공통 소리로 바꾸지 않는다. 전용 이벤트에 없는 파일을 지정하면 해당 이벤트의 다른 후보만 사용하며 공통 이벤트로 바꾸지 않는다. 저장 후 새로고침하면 적용된다. 새 무기 전용 이벤트는 게임에서 발생시키는 연결이 별도로 필요하다.
 
 충돌음은 `DamageSystem`의 `damageFeedback`을 받아 선택한다. 데미지 계산에는 기존 800px/s 조건·곡선·출처별 보정·잔해 손상 상한이 그대로 적용된다. 소리 설정에는 충돌 속도나 데미지 범위가 없다. 기존 JSON에 남아 있는 `speedRange`와 `cooldownMs`는 읽지 않으므로 JSON을 다시 쓰지 않아도 새 경로로 동작한다.
 
@@ -54,4 +64,4 @@ JSON이 없으면 `src/audio/SoundConfig.ts`의 기본값으로 실행한다. �
 
 `npx playwright test tests/sound-rules.spec.ts tests/sound.spec.ts`
 
-규칙 8개와 Chromium 브라우저 9개를 검증한다. 실제 OGG 디코딩·오디오 신호 출력, JSON 교체·누락·오류, 데미지 0인 접촉의 무음·무적 중 충돌, 잔해 충돌·조용한 기립 낙하, 지속 접촉, 동시 재생/우선순위·기존 소리 교체, 무적 중 3회 연속 벽 충돌의 매회 재생, 음량·음소거 저장, 일시정지·사진 편집·R·장면 종료의 정리를 포함한다. 최종 음색과 음량 밸런스는 실제 플레이로 조율한다.
+규칙 9개와 Chromium 브라우저 13개를 검증한다. 실제 OGG 디코딩·오디오 신호 출력, JSON 교체·누락·오류, 왼쪽·오른쪽·위쪽 벽과 바닥의 실제 충돌별 전용 소리 선택·공통 설정 호환, 데미지 0인 접촉의 무음·무적 중 충돌, 잔해 충돌·조용한 기립 낙하, 지속 접촉, 동시 재생/우선순위·기존 소리 교체, 무적 중 3회 연속 벽 충돌의 매회 재생, 음량·음소거 저장, 일시정지·사진 편집·R·장면 종료의 정리를 포함한다. 브라우저 검사는 사용자 음원 교체와 독립적으로 실제 OGG 샘플을 테스트 응답으로 사용한다. 최종 음색과 음량 밸런스는 실제 플레이로 조율한다.

@@ -15,16 +15,16 @@
   "events": {
     "collision.light": {
       "files": [
-        "sfx/kenney-impact/light-01.ogg",
-        "sfx/kenney-impact/light-02.ogg"
+        "sfx/others/small-punch.mp3",
+        "sfx/others/small-punch.mp3"
       ],
       "volume": 0.25
     },
 
     "collision.medium": {
       "files": [
-        "sfx/kenney-impact/medium-01.ogg",
-        "sfx/kenney-impact/medium-02.ogg"
+        "sfx/others/medium-punch.mp3",
+        "sfx/others/medium-punch.mp3"
       ],
       "volume": 0.5,
       "priority": 2
@@ -33,9 +33,9 @@
     "collision.heavy": {
       "files": [
         "sfx/kenney-impact/impactMining_004.ogg",
-        "sfx/kenney-impact/impactPunch_heavy_004.ogg"
+        "sfx/others/hard-punch-sound.m4a"
       ],
-      "volume": 0.8,
+      "volume": 0.5,
       "priority": 3
     },
 

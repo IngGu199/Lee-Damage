@@ -3,7 +3,7 @@ import type { Ragdoll } from "./Ragdoll";
 import { hitDamage, type DamageHit } from "./DamageSystem";
 import type { Point } from "../photo/PhotoTransform";
 
-export interface ContactImpact extends DamageHit { contactKey: string }
+export interface ContactImpact extends DamageHit { contactKey: string; surface: RoomSurface | `body:${number}` }
 
 export type RoomSurface = "left" | "right" | "ceiling" | "floor";
 interface Contact { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; collision: { supports: Point[]; normal?: Point } }
@@ -22,7 +22,7 @@ export class ImpactCollector {
   private delta = 0;
   private readonly motion = new Map<MatterJS.BodyType, ContactMotion>();
   private peers?: ReadonlyMap<MatterJS.BodyType, ContactMotion>;
-  private readonly pending = new Map<string, ContactImpact & { surface: string }>();
+  private readonly pending = new Map<string, ContactImpact>();
   private readonly episodes = new Map<string, { separatedMs: number; separatedSteps: number }>();
   private readonly soundEpisodes = new Set<string>();
   private soundHits: ContactImpact[] = [];
