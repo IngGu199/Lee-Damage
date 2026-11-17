@@ -9,8 +9,8 @@
       0.96,
       1.04
     ],
-    "cooldownMs": 0,
-    "maxVoices": 10,
+    "cooldownMs": 1000,
+    "maxVoices": 2,
     "priority": 1
   },
   "events": {
@@ -20,14 +20,14 @@
       ],
       "volume": 1,
       "priority": 3,
-      "cooldownMs": 2,
+      "cooldownMs": 10,
       "speed": [
         0,
         2400
       ],
       "sound-size": [
         0.01,
-        0.5
+        2
       ]
     },
     "collision.wall": {
@@ -40,9 +40,9 @@
       ],
       "volume": 1,
       "priority": 1,
-      "cooldownMs": 10,
+      "cooldownMs": 100,
       "speed": [
-        0,
+        200,
         2400
       ],
       "sound-size": [
@@ -52,7 +52,7 @@
     },
     "death.burst": {
       "files": [
-        "sfx/kenney-impact/burst-01.ogg"
+        "sfx/others/BOOM.mp3"
       ],
       "volume": 0.85,
       "cooldownMs": 100,
@@ -61,6 +61,6 @@
     }
   },
   "debris": {
-    "volumeScale": 0.35
+    "volumeScale": 0.1
   }
 }
