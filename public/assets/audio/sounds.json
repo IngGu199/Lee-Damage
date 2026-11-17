@@ -3,42 +3,53 @@
   "basePath": "assets/audio/",
   "masterVolume": 0.8,
   "maxConcurrentSounds": 8,
-
   "defaults": {
-    "volume": 0.6,
-    "rateRange": [0.96, 1.04],
+    "volume": 1,
+    "rateRange": [
+      0.96,
+      1.04
+    ],
     "cooldownMs": 0,
-    "maxVoices": 2,
+    "maxVoices": 10,
     "priority": 1
   },
-
   "events": {
-    "collision.light": {
+    "collision.normal": {
       "files": [
-        "sfx/others/small-punch.mp3",
-        "sfx/others/small-punch.mp3"
-      ],
-      "volume": 0.25
-    },
-
-    "collision.medium": {
-      "files": [
-        "sfx/others/medium-punch.mp3",
-        "sfx/others/medium-punch.mp3"
-      ],
-      "volume": 0.5,
-      "priority": 2
-    },
-
-    "collision.heavy": {
-      "files": [
-        "sfx/kenney-impact/impactMining_004.ogg",
         "sfx/others/hard-punch-sound.m4a"
       ],
-      "volume": 0.5,
-      "priority": 3
+      "volume": 1,
+      "priority": 3,
+      "cooldownMs": 2,
+      "speed": [
+        0,
+        2400
+      ],
+      "sound-size": [
+        0.01,
+        0.5
+      ]
     },
-
+    "collision.wall": {
+      "files": [
+        "sfx/kenney-impact/wall-000.ogg",
+        "sfx/kenney-impact/wall-001.ogg",
+        "sfx/kenney-impact/wall-002.ogg",
+        "sfx/kenney-impact/wall-003.ogg",
+        "sfx/kenney-impact/wall-004.ogg"
+      ],
+      "volume": 1,
+      "priority": 1,
+      "cooldownMs": 10,
+      "speed": [
+        0,
+        2400
+      ],
+      "sound-size": [
+        0.1,
+        1
+      ]
+    },
     "death.burst": {
       "files": [
         "sfx/kenney-impact/burst-01.ogg"
@@ -49,7 +60,6 @@
       "priority": 4
     }
   },
-
   "debris": {
     "volumeScale": 0.35
   }

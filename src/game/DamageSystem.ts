@@ -35,8 +35,8 @@ export function hitDamage(hit: DamageHit) {
 export type DamageIntensity = "light" | "medium" | "heavy";
 export interface DamageFeedback { damage: number; intensity: DamageIntensity | null }
 
-/** Shared hit feedback uses computed damage before immunity/remaining-HP clipping.
- * The reference hit is medium; three reference hits are heavy. Audio owns no thresholds.
+/** Damage feedback uses computed damage before immunity/remaining-HP clipping.
+ * The reference hit is medium; three reference hits are heavy.
  */
 export function damageIntensity(damage: number): DamageIntensity | null {
   if (!Number.isFinite(damage) || damage <= 0) return null;

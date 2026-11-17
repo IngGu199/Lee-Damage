@@ -172,7 +172,7 @@ test("debris damage keeps the 800px/s threshold, scales to 15%, caps at 12 and s
 test("a fast softened fragment does not mask a stronger simultaneous room impact", () => {
   const collector = new ImpactCollector(), { body, doll } = fixture();
   body.velocity.x = -1400 * body.deltaTime / 1000;
-  const fragment = { id: 99 } as MatterJS.BodyType;
+  const fragment = { id: 99, position: { x: 20, y: 300 }, velocity: { x: 0, y: 0 }, angularVelocity: 0 } as MatterJS.BodyType;
   const peers = new Map([[fragment, { x: 5000, y: 0, angular: 0, center: { x: 20, y: 300 }, debris: true }]]);
   collector.beginStep(doll, true, 0, 1, body.deltaTime, peers); collector.beforeSolve();
   collector.collisions({ pairs: [{ bodyA: body, bodyB: fragment,

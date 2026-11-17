@@ -184,7 +184,7 @@ scene.onAudioState = () => {
     : audio.muted || audio.volume === 0 ? "소리를 껐어요."
     : audio.locked ? "화면을 클릭하거나 키를 누르면 소리가 켜져요."
     : audio.state === "partial" ? "일부 효과음을 불러오지 못했어요. 준비된 소리로 진행해요."
-    : "충돌 강도에 따라 소리가 달라져요.";
+    : "충돌 속도에 따라 소리 크기가 달라져요.";
 };
 scene.onStats = renderStats;
 scene.onNotice = (message) => {

@@ -1,33 +1,34 @@
-import type { DamageFeedback } from "../game/DamageSystem";
-import { collisionEvent, type CollisionSoundTarget, type SoundConfig } from "./SoundConfig";
+import { collisionGain, type CollisionSoundTarget, type SoundConfig } from "./SoundConfig";
 
 export interface SoundVoice { stop(): void }
 export interface SoundBackend {
   available(file: string): boolean;
   play(file: string, volume: number, rate: number, ended: () => void): SoundVoice | null;
 }
-interface Request { event: string; owners: Set<number>; time: number; damage: number; debris: boolean }
+interface Request { events: string[]; owners: Set<number>; time: number; speed: number; debris: boolean }
 interface Playing { event: string; priority: number; voice: SoundVoice }
 
-/** Merge duplicate contact reports; every new contact starts a voice without a time cooldown. */
+/** Merge duplicate reports and apply each event's configured cooldown independently. */
 export class SoundMixer {
   private readonly pending = new Map<string, Request>();
   private readonly active = new Set<Playing>();
   private readonly lastFiles = new Map<string, string>();
+  private readonly lastPlayed = new Map<string, number>();
   private played = 0;
-  private readonly recent: { event: string; file: string; volume: number; rate: number }[] = [];
+  private readonly recent: { event: string; file: string; volume: number; rate: number; speed: number | null }[] = [];
   muted = false;
 
   constructor(readonly config: SoundConfig, private readonly backend: SoundBackend, private readonly random = Math.random) {}
 
-  collision(owner: number, time: number, impact: DamageFeedback, contact: string, debris = false, target: CollisionSoundTarget = "body") {
-    if (!Number.isFinite(impact.damage) || impact.damage <= 0) return;
-    const event = collisionEvent(this.config, impact.intensity, target);
-    if (event) this.queue(`collision:${contact}:${time}`, { event, owners: new Set([owner]), time, damage: impact.damage, debris });
+  collision(owner: number, time: number, speed: number, contact: string, debris = false, target: CollisionSoundTarget = "body") {
+    if (!Number.isFinite(speed) || speed <= 0) return;
+    const events = (target === "wall" ? ["collision.normal", "collision.wall"] : ["collision.normal"])
+      .filter(name => this.config.events[name]);
+    if (events.length) this.queue(`collision:${contact}:${time}`, { events, owners: new Set([owner]), time, speed, debris });
   }
   death(owner: number, time: number) {
     if (this.config.events["death.burst"]) this.queue(`death:${owner}`, {
-      event: "death.burst", owners: new Set([owner]), time, damage: Infinity, debris: false,
+      events: ["death.burst"], owners: new Set([owner]), time, speed: Infinity, debris: false,
     });
   }
   private queue(key: string, request: Request) {
@@ -36,7 +37,7 @@ export class SoundMixer {
     if (previous) {
       for (const owner of previous.owners) request.owners.add(owner);
       request.debris ||= previous.debris;
-      if (previous.damage > request.damage) { previous.debris = request.debris; previous.owners = request.owners; return; }
+      if (previous.speed > request.speed) { previous.debris = request.debris; previous.owners = request.owners; return; }
     }
     this.pending.set(key, request);
   }
@@ -44,37 +45,48 @@ export class SoundMixer {
   flush() {
     // Preserve contact order. At the same instant start stronger sounds last,
     // so bounded voice replacement retains them instead of cutting them first.
+    // Keep a contact's body/surface layers together so they cannot evict one another
+    // while older voices are still available to replace.
+    const priority = (request: Request) => Math.max(...request.events.map(name => this.config.events[name].priority));
     const requests = [...this.pending.values()].sort((a, b) => a.time - b.time ||
-      this.config.events[a.event].priority - this.config.events[b.event].priority || a.damage - b.damage);
+      priority(a) - priority(b) || a.speed - b.speed);
     this.pending.clear();
     if (this.muted) return;
     for (const request of requests) {
-      const event = this.config.events[request.event];
-      const volume = event.volume * (request.debris ? this.config.debris.volumeScale : 1);
-      if (volume <= 0) continue;
-      let files = event.files.filter(file => this.backend.available(file));
-      if (!files.length) continue;
-      if (files.length > 1) files = files.filter(file => file !== this.lastFiles.get(request.event));
-      const sameEvent = [...this.active].filter(voice => voice.event === request.event);
-      if (sameEvent.length >= event.maxVoices) this.stopVoice(sameEvent[0]);
-      if (this.active.size >= this.config.maxConcurrentSounds) {
-        const lowest = [...this.active].sort((a, b) => a.priority - b.priority)[0];
-        this.stopVoice(lowest);
+      const started = new Set<Playing>();
+      for (const name of request.events) {
+        const event = this.config.events[name];
+        const last = this.lastPlayed.get(name);
+        if (event.cooldownMs > 0 && last !== undefined && request.time - last < event.cooldownMs) continue;
+        const gain = name.startsWith("collision.") ? collisionGain(event, request.speed) : 1;
+        const volume = event.volume * gain * (request.debris ? this.config.debris.volumeScale : 1);
+        if (volume <= 0) continue;
+        let files = event.files.filter(file => this.backend.available(file));
+        if (!files.length) continue;
+        if (files.length > 1) files = files.filter(file => file !== this.lastFiles.get(name));
+        const sameEvent = [...this.active].filter(voice => voice.event === name);
+        if (sameEvent.length >= event.maxVoices) this.stopVoice(sameEvent[0]);
+        if (this.active.size >= this.config.maxConcurrentSounds) {
+          const older = [...this.active].filter(voice => !started.has(voice));
+          const lowest = (older.length ? older : [...this.active]).sort((a, b) => a.priority - b.priority)[0];
+          this.stopVoice(lowest);
+        }
+        const file = files[Math.min(files.length - 1, Math.floor(this.random() * files.length))];
+        const rate = event.rateRange[0] + this.random() * (event.rateRange[1] - event.rateRange[0]);
+        let playing: Playing | undefined;
+        const voice = this.backend.play(file, volume, rate, () => { if (playing) this.active.delete(playing); });
+        if (!voice) continue; // Unloaded/locked contexts never build a backlog.
+        this.lastPlayed.set(name, request.time);
+        playing = { event: name, priority: event.priority, voice }; this.active.add(playing); started.add(playing);
+        this.lastFiles.set(name, file); this.played++;
+        this.recent.push({ event: name, file, volume, rate, speed: Number.isFinite(request.speed) ? request.speed : null });
+        if (this.recent.length > 16) this.recent.shift();
       }
-      const file = files[Math.min(files.length - 1, Math.floor(this.random() * files.length))];
-      const rate = event.rateRange[0] + this.random() * (event.rateRange[1] - event.rateRange[0]);
-      let playing: Playing | undefined;
-      const voice = this.backend.play(file, volume, rate, () => { if (playing) this.active.delete(playing); });
-      if (!voice) continue; // Unloaded/locked contexts never build a backlog.
-      playing = { event: request.event, priority: event.priority, voice }; this.active.add(playing);
-      this.lastFiles.set(request.event, file); this.played++;
-      this.recent.push({ event: request.event, file, volume, rate });
-      if (this.recent.length > 16) this.recent.shift();
     }
   }
   private stopVoice(playing: Playing) { this.active.delete(playing); playing.voice.stop(); }
   stop() { this.pending.clear(); for (const playing of [...this.active]) this.stopVoice(playing); }
-  reset() { this.stop(); this.lastFiles.clear(); }
+  reset() { this.stop(); this.lastFiles.clear(); this.lastPlayed.clear(); }
   forget(owner: number) {
     for (const [key, request] of this.pending) { request.owners.delete(owner); if (!request.owners.size) this.pending.delete(key); }
   }

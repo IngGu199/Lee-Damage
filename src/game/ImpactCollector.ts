@@ -4,6 +4,7 @@ import { hitDamage, type DamageHit } from "./DamageSystem";
 import type { Point } from "../photo/PhotoTransform";
 
 export interface ContactImpact extends DamageHit { contactKey: string; surface: RoomSurface | `body:${number}` }
+export interface SoundContact extends ContactImpact { speed: number }
 
 export type RoomSurface = "left" | "right" | "ceiling" | "floor";
 interface Contact { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; collision: { supports: Point[]; normal?: Point } }
@@ -23,16 +24,17 @@ export class ImpactCollector {
   private readonly motion = new Map<MatterJS.BodyType, ContactMotion>();
   private peers?: ReadonlyMap<MatterJS.BodyType, ContactMotion>;
   private readonly pending = new Map<string, ContactImpact>();
+  private readonly contactBodies = new Map<string, { body: MatterJS.BodyType; peer?: MatterJS.BodyType }>();
   private readonly episodes = new Map<string, { separatedMs: number; separatedSteps: number }>();
   private readonly soundEpisodes = new Set<string>();
-  private soundHits: ContactImpact[] = [];
+  private soundHits: SoundContact[] = [];
   private readonly near = new Set<string>();
   touchedFloor = false;
 
   beginStep(doll: Ragdoll, enabled: boolean, time: number, lifeId = 1, delta = REFERENCE_STEP, peers?: ReadonlyMap<MatterJS.BodyType, ContactMotion>) {
     this.doll = doll; this.enabled = enabled; this.time = time; this.lifeId = lifeId; this.delta = delta;
     this.peers = peers;
-    this.pending.clear(); this.near.clear(); this.motion.clear(); this.touchedFloor = false;
+    this.pending.clear(); this.contactBodies.clear(); this.near.clear(); this.motion.clear(); this.touchedFloor = false;
   }
 
   /** Matter's beforeSolve is after force/gravity integration and before contact response.
@@ -48,7 +50,7 @@ export class ImpactCollector {
     this.boundaries();
   };
 
-  private contact(body: MatterJS.BodyType, point: Point, surface: RoomSurface | `body:${number}`, touching = true, peer?: ContactMotion, peerNormal?: Point, otherId?: number) {
+  private contact(body: MatterJS.BodyType, point: Point, surface: RoomSurface | `body:${number}`, touching = true, peer?: ContactMotion, peerNormal?: Point, other?: MatterJS.BodyType) {
     if (!this.enabled || !this.doll) return;
     const part = this.doll.parts.findIndex((p) => p.body === body);
     if (part < 0) return;
@@ -69,8 +71,9 @@ export class ImpactCollector {
     const c = Math.cos(body.angle), s = Math.sin(body.angle);
     this.pending.set(key, { lifeId: this.lifeId, hitId: 0, source: peer ? "body" : "room", surface,
       part, position: { ...point }, strength, time: this.time, debris: peer?.debris,
-      contactKey: otherId === undefined ? `${body.id}:room:${surface}` : `${Math.min(body.id, otherId)}:${Math.max(body.id, otherId)}`,
+      contactKey: other === undefined ? `${body.id}:room:${surface}` : `${Math.min(body.id, other.id)}:${Math.max(body.id, other.id)}`,
       local: { x: dx * c + dy * s, y: -dx * s + dy * c } });
+    this.contactBodies.set(key, { body, peer: other });
   }
 
   collisions = (event: { pairs: Contact[] }) => {
@@ -85,7 +88,7 @@ export class ImpactCollector {
         const normal = { x: collision.normal.x * (ownA ? 1 : -1), y: collision.normal.y * (ownA ? 1 : -1) };
         const supports = collision.supports.filter(Boolean);
         for (const point of supports.length ? supports : [body.position])
-          this.contact(body, point, `body:${other.id}`, true, peer, normal, other.id);
+          this.contact(body, point, `body:${other.id}`, true, peer, normal, other);
         continue;
       }
       const wallA = bodyA.label === "room-wall", body = wallA ? bodyB : bodyA, wall = wallA ? bodyA : bodyB;
@@ -124,7 +127,10 @@ export class ImpactCollector {
     const impacts: ContactImpact[] = [];
     this.soundHits = [];
     for (const [key, hit] of this.pending) {
-      if (!this.soundEpisodes.has(key)) this.soundHits.push(hit);
+      if (!this.soundEpisodes.has(key)) {
+        const bodies = this.contactBodies.get(key)!;
+        this.soundHits.push({ ...hit, speed: postCollisionSpeed(hit, bodies.body, bodies.peer) });
+      }
       if (!this.episodes.has(key)) {
         this.episodes.set(key, { separatedMs: 0, separatedSteps: 0 });
         impacts.push(hit);
@@ -142,7 +148,7 @@ export class ImpactCollector {
     }
     // Prioritize actual damage: a fast, softened fragment must not hide a harder wall hit.
     // Assign IDs after sorting to keep each source monotonic in application order.
-    this.pending.clear();
+    this.pending.clear(); this.contactBodies.clear();
     return impacts.sort((a, b) => hitDamage(b) - hitDamage(a) || b.strength - a.strength)
       .map(hit => ({ ...hit, hitId: ++this.nextHit }));
   }
@@ -150,8 +156,24 @@ export class ImpactCollector {
   flushSounds() { const hits = this.soundHits; this.soundHits = []; return hits; }
 
   clear() {
-    this.pending.clear(); this.motion.clear(); this.episodes.clear(); this.near.clear();
+    this.pending.clear(); this.contactBodies.clear(); this.motion.clear(); this.episodes.clear(); this.near.clear();
     this.soundEpisodes.clear(); this.soundHits = [];
     this.doll = undefined; this.peers = undefined; this.enabled = false; this.touchedFloor = false; this.nextHit = 0;
   }
+}
+
+/** Matter normalizes velocity to 60Hz after solving. Sample the relative contact
+ * point speed now, before pose correction, damage reactions or debris limits.
+ */
+export function postCollisionSpeed(hit: ContactImpact, body: MatterJS.BodyType, peer?: MatterJS.BodyType) {
+  const local = hit.local ?? { x: hit.position.x - body.position.x, y: hit.position.y - body.position.y };
+  const c = Math.cos(body.angle), s = Math.sin(body.angle);
+  const offset = { x: local.x * c - local.y * s, y: local.x * s + local.y * c };
+  const point = { x: body.position.x + offset.x, y: body.position.y + offset.y };
+  const vx = body.velocity.x - body.angularVelocity * offset.y - (peer
+    ? peer.velocity.x - peer.angularVelocity * (point.y - peer.position.y) : 0);
+  const vy = body.velocity.y + body.angularVelocity * offset.x - (peer
+    ? peer.velocity.y + peer.angularVelocity * (point.x - peer.position.x) : 0);
+  const speed = Math.hypot(vx, vy) * 1000 / REFERENCE_STEP;
+  return Number.isFinite(speed) ? speed : 0;
 }

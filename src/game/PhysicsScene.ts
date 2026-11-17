@@ -9,7 +9,7 @@ import { PointerController } from "./PointerController";
 import { drawRoom } from "./draw";
 import { RagdollActor } from "./RagdollActor";
 import type { Ragdoll } from "./Ragdoll";
-import { damageFeedback, type DamageHit } from "./DamageSystem";
+import type { DamageHit } from "./DamageSystem";
 import type { ContactMotion } from "./ImpactCollector";
 import { DAMAGE_RULES } from "./damageConfig";
 import { separateBodies } from "./SelfCollision";
@@ -338,15 +338,18 @@ export class PhysicsScene extends Phaser.Scene {
     this.bodyContacts.clear();
     this.matter.world.step(step);
     this.pointer.afterStep();
-    for (const actor of actors) {
+    const contacts = actors.map(actor => {
       actor.impacts.boundaries();
       if (actor.impacts.touchedFloor) actor.lifecycle.landed(this.simulationTime);
       const damageHits = actor.impacts.flush();
-      for (const hit of actor.impacts.flushSounds()) {
+      return { actor, damageHits, sounds: actor.impacts.flushSounds() };
+    });
+    for (const { actor, damageHits, sounds } of contacts) {
+      for (const hit of sounds) {
         const debris = actor.lifecycle.state === "bursting" || Boolean(hit.debris);
-        const target = hit.source === "room" ? (hit.surface === "floor" ? "floor" : "wall") : "body";
+        const target = hit.source === "room" ? "wall" : "body";
         if (!actor.lifecycle.protected(this.simulationTime)) this.audio.collision(actor.id, hit.time,
-          damageFeedback({ ...hit, debris }), hit.contactKey, debris, target);
+          hit.speed, hit.contactKey, debris, target);
       }
       for (const hit of damageHits) this.receiveHit(hit);
       if (actor.lifecycle.state === "bursting") {

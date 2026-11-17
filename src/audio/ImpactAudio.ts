@@ -1,5 +1,4 @@
 import Phaser from "phaser";
-import type { DamageFeedback } from "../game/DamageSystem";
 import { DEFAULT_SOUND_CONFIG, parseSoundConfig, type CollisionSoundTarget, type SoundConfig } from "./SoundConfig";
 import { SoundMixer, type SoundBackend, type SoundVoice } from "./SoundMixer";
 
@@ -94,8 +93,8 @@ export class ImpactAudio {
     return { stop: () => { if (finished) return; try { source.stop(); } finally { finish(); } } };
   }
 
-  collision(owner: number, time: number, impact: DamageFeedback, contact: string, debris: boolean, target: CollisionSoundTarget = "body") {
-    this.mixer.collision(owner, time, impact, contact, debris, target);
+  collision(owner: number, time: number, speed: number, contact: string, debris: boolean, target: CollisionSoundTarget = "body") {
+    this.mixer.collision(owner, time, speed, contact, debris, target);
   }
   death(owner: number, time: number) { this.mixer.death(owner, time); }
   flush() { this.mixer.flush(); }

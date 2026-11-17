@@ -1,33 +1,33 @@
-import type { DamageIntensity } from "../game/DamageSystem";
-
-export type CollisionSoundTarget = "body" | "wall" | "floor";
+export type CollisionSoundTarget = "body" | "wall";
 
 export interface SoundEventConfig {
   files: string[];
   volume: number;
   rateRange: [number, number];
+  cooldownMs: number;
   maxVoices: number;
   priority: number;
+  speed?: [number, number];
+  "sound-size"?: [number, number];
 }
 export interface SoundConfig {
   version: 1;
   basePath: string;
   masterVolume: number;
   maxConcurrentSounds: number;
-  defaults: Omit<SoundEventConfig, "files">;
+  defaults: Omit<SoundEventConfig, "files" | "speed" | "sound-size">;
   events: Record<string, SoundEventConfig>;
   debris: { volumeScale: number };
 }
 
-const defaults = { volume: 0.6, rateRange: [0.96, 1.04] as [number, number], maxVoices: 2, priority: 1 };
+const defaults = { volume: 0.6, rateRange: [0.96, 1.04] as [number, number], cooldownMs: 0, maxVoices: 2, priority: 1 };
 const pack = "sfx/kenney-impact/";
 /** Used only when the user-authored sounds.json is absent or invalid. No JSON is generated. */
 export const DEFAULT_SOUND_CONFIG = parseSoundConfig({
   version: 1, basePath: "assets/audio/", masterVolume: 0.8, maxConcurrentSounds: 8, defaults,
   events: {
-    "collision.light": { files: [0, 1, 2].map(i => `${pack}impactGeneric_light_00${i}.ogg`), volume: 0.25 },
-    "collision.medium": { files: [0, 1, 2].map(i => `${pack}impactPunch_medium_00${i}.ogg`), volume: 0.5, priority: 2 },
-    "collision.heavy": { files: [0, 1, 2].map(i => `${pack}impactPunch_heavy_00${i}.ogg`), volume: 0.8, priority: 3 },
+    "collision.normal": { files: ["sfx/others/hard-punch-sound.m4a"], speed: [0, 2400], "sound-size": [0, 1] },
+    "collision.wall": { files: [0, 1, 2, 3, 4].map(i => `${pack}wall-00${i}.ogg`), speed: [0, 2400], "sound-size": [0, 1] },
     "death.burst": { files: [`${pack}impactSoft_heavy_000.ogg`, `${pack}impactSoft_heavy_001.ogg`], volume: 0.85, priority: 4 },
   },
   debris: { volumeScale: 0.35 },
@@ -53,16 +53,24 @@ function range(value: unknown, path: string): [number, number] {
   return [min, number(value[1], `${path}[1]`, min, 4)];
 }
 
+function interval(value: unknown, path: string, strict = false): [number, number] {
+  if (!Array.isArray(value) || value.length !== 2) throw new Error(`${path}: [최솟값, 최댓값] 형식이 필요합니다.`);
+  const min = number(value[0], `${path}[0]`, 0), max = number(value[1], `${path}[1]`, min);
+  if (strict && max === min) throw new Error(`${path}: 최댓값은 최솟값보다 커야 합니다.`);
+  return [min, max];
+}
+
 function playback(value: Record<string, unknown>, fallback: typeof defaults, path: string) {
   return {
     volume: number(value.volume ?? fallback.volume, `${path}.volume`, 0, 1),
     rateRange: range(value.rateRange ?? fallback.rateRange, `${path}.rateRange`),
+    cooldownMs: number(value.cooldownMs ?? fallback.cooldownMs, `${path}.cooldownMs`, 0),
     maxVoices: number(value.maxVoices ?? fallback.maxVoices, `${path}.maxVoices`, 1, 32, true),
     priority: number(value.priority ?? fallback.priority, `${path}.priority`, 0, 100, true),
   };
 }
 
-/** Events map directly to damage-system intensity. Legacy speed fields are ignored. */
+/** Collision audio uses post-solve speed independently of HP damage. */
 export function parseSoundConfig(input: unknown): SoundConfig {
   const root = object(input, "sounds");
   if (root.version !== 1) throw new Error("version: 지원하는 버전은 1입니다.");
@@ -70,12 +78,16 @@ export function parseSoundConfig(input: unknown): SoundConfig {
   const shared = playback(object(root.defaults ?? {}, "defaults"), defaults, "defaults");
   const definitions = object(root.events, "events"), events: Record<string, SoundEventConfig> = Object.create(null);
   for (const [name, inputEvent] of Object.entries(definitions)) {
-    if (name !== "death.burst" && !/^collision\.(?:(?:wall|floor)\.)?(?:light|medium|heavy)$/.test(name))
-      throw new Error(`events.${name}: collision.light/medium/heavy, collision.wall.light/medium/heavy, collision.floor.light/medium/heavy 또는 death.burst 이벤트가 필요합니다.`);
+    if (!["collision.normal", "collision.wall", "death.burst"].includes(name))
+      throw new Error(`events.${name}: collision.normal, collision.wall 또는 death.burst 이벤트가 필요합니다.`);
     const event = object(inputEvent, `events.${name}`);
     if (!Array.isArray(event.files) || !event.files.length) throw new Error(`events.${name}.files: 음원 목록이 필요합니다.`);
     events[name] = { ...playback(event, shared, `events.${name}`),
       files: [...new Set(event.files.map((file, index) => relativePath(file, `events.${name}.files[${index}]`)))],
+      ...(name.startsWith("collision.") ? {
+        speed: interval(event.speed, `events.${name}.speed`, true),
+        "sound-size": interval(event["sound-size"], `events.${name}.sound-size`),
+      } : {}),
     };
   }
   return {
@@ -87,12 +99,10 @@ export function parseSoundConfig(input: unknown): SoundConfig {
   };
 }
 
-export function collisionEvent(config: SoundConfig, intensity: DamageIntensity | null, target: CollisionSoundTarget = "body") {
-  if (!intensity) return undefined;
-  if (target !== "body") {
-    const specific = `collision.${target}.${intensity}`;
-    if (config.events[specific]) return specific;
-  }
-  const event = `collision.${intensity}`;
-  return config.events[event] ? event : undefined;
+/** Inclusive speed endpoints; silence outside, linear gain inside. */
+export function collisionGain(event: SoundEventConfig, speed: number): number {
+  if (!Number.isFinite(speed) || speed <= 0 || !event.speed || !event["sound-size"]) return 0;
+  const [min, max] = event.speed, [quiet, loud] = event["sound-size"];
+  if (speed < min || speed > max) return 0;
+  return quiet + (loud - quiet) * ((speed - min) / (max - min));
 }
