@@ -23,7 +23,7 @@
       "priority": 5,
       "cooldownMs": 10,
       "speed": [
-        300,
+        1000,
         2500
       ],
       "sound-size": [0.1,2]
@@ -55,7 +55,7 @@
       "priority": 1,
       "cooldownMs": 200,
       "speed": [
-        200,
+        1000,
         2400
       ],
       "sound-size": [

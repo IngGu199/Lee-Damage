@@ -9,14 +9,14 @@ import { PointerController } from "./PointerController";
 import { drawRoom } from "./draw";
 import { RagdollActor } from "./RagdollActor";
 import type { Ragdoll } from "./Ragdoll";
-import type { DamageHit } from "./DamageSystem";
+import { hitDamage, type DamageHit } from "./DamageSystem";
 import type { ContactMotion } from "./ImpactCollector";
 import { DAMAGE_RULES } from "./damageConfig";
 import { separateBodies } from "./SelfCollision";
 import { BODY_CONTACT_PHYSICS, DEBRIS_PHYSICS, limitBodyReaction, softenBodyContact } from "./DebrisPhysics";
 import type { AppliedPhoto } from "../photo/PhotoSession";
 import { WeaponSystem } from "../weapons/WeaponSystem";
-import type { ToolId } from "../weapons/WeaponConfig";
+import { damageLimit, type ToolId } from "../weapons/WeaponConfig";
 
 interface BodyContact {
   bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; restitution: number;
@@ -140,7 +140,7 @@ export class PhysicsScene extends Phaser.Scene {
   }
 
   setMaxDamage(value: number) {
-    if (Number.isFinite(value)) this.maxDamage = Math.max(0, value);
+    if (Number.isFinite(value) && (value === -1 || value >= 0)) this.maxDamage = value;
   }
 
   get room() { return { ...ROOM }; }
@@ -256,7 +256,8 @@ export class PhysicsScene extends Phaser.Scene {
     const actor = this.actors.find(actor => actor.id === hit.lifeId);
     if (this.paused || this.photoEditing || !actor?.lifecycle.interactive || hit.time > this.simulationTime + 0.000001) return null;
     if (hit.source !== "weapon" && actor.lifecycle.protected(this.simulationTime)) return null;
-    const result = actor.damage.apply(hit, this.maxDamage); if (!result) return null;
+    const result = actor.damage.apply(hit, damageLimit(this.weapons.config, hit, this.maxDamage)); if (!result) return null;
+    this.weapons.effects.showDamage(hit.position, result.lostHp, this.simulationTime);
     if (hit.source === "weapon") actor.interact();
     const part = actor.doll.parts[hit.part];
     for (let i = 0; i < result.injuries; i++) actor.injuries.add(actor.appearance.addInjury(hit, part.body), part);
@@ -429,7 +430,7 @@ export class PhysicsScene extends Phaser.Scene {
     const contacts = actors.map(actor => {
       actor.impacts.boundaries();
       if (actor.impacts.touchedFloor) actor.lifecycle.landed(this.simulationTime);
-      const damageHits = actor.impacts.flush();
+      const damageHits = actor.impacts.flush(hit => hitDamage(hit, damageLimit(this.weapons.config, hit, this.maxDamage)));
       return { actor, damageHits, sounds: actor.impacts.flushSounds() };
     });
     for (const { actor, damageHits, sounds } of contacts) {

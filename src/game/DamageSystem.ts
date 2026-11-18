@@ -7,6 +7,7 @@ export interface DamageHit {
   lifeId: number;
   hitId: number; // monotonically increasing per source, per life
   source: "room" | "body" | "weapon";
+  surface?: "left" | "right" | "ceiling" | "floor" | `body:${number}`;
   part: number;
   position: Point;
   local?: Point;
@@ -17,19 +18,23 @@ export interface DamageHit {
   debris?: boolean; // detached peer: soften damage without changing physical impulse
 }
 
-export function collisionDamage(speed: number, partScale = 1, surfaceScale = 1) {
+export function collisionDamage(speed: number, partScale = 1, surfaceScale = 1, maxDamage: number = DAMAGE_RULES.maxCollisionDamage) {
   if (![speed, partScale, surfaceScale].every(Number.isFinite) || speed <= DAMAGE_RULES.minSpeed ||
     partScale <= 0 || surfaceScale <= 0) return 0;
   const raw = DAMAGE_RULES.referenceDamage *
     ((speed - DAMAGE_RULES.minSpeed) * (speed + DAMAGE_RULES.minSpeed)) /
     (DAMAGE_RULES.referenceSpeed ** 2 - DAMAGE_RULES.minSpeed ** 2) * partScale * surfaceScale;
-  return Math.min(DAMAGE_RULES.maxCollisionDamage, Math.max(0, raw));
+  return Math.min(maxDamage < 0 ? Number.MAX_VALUE : maxDamage, Math.max(0, raw));
 }
 
-export function hitDamage(hit: DamageHit) {
-  const amount = hit.source === "weapon" ? hit.damage ?? 0 : collisionDamage(hit.strength);
-  return hit.source === "body" && hit.debris
-    ? Math.min(DAMAGE_RULES.maxDebrisDamage, amount * DAMAGE_RULES.debrisDamageScale) : amount;
+/** Calculate the whole formula before applying exactly one chosen cap. */
+export function hitDamage(hit: DamageHit, maxDamage?: number) {
+  const debris = hit.source === "body" && hit.debris;
+  const raw = hit.source === "weapon" ? hit.damage ?? 0
+    : collisionDamage(hit.strength, 1, debris ? DAMAGE_RULES.debrisDamageScale : 1, -1);
+  const limit = maxDamage ?? (hit.source === "weapon" ? Infinity
+    : debris ? DAMAGE_RULES.maxDebrisDamage : DAMAGE_RULES.maxCollisionDamage);
+  return Math.min(limit < 0 ? Number.MAX_VALUE : limit, raw);
 }
 
 export type DamageIntensity = "light" | "medium" | "heavy";
@@ -43,8 +48,8 @@ export function damageIntensity(damage: number): DamageIntensity | null {
   if (damage < DAMAGE_RULES.referenceDamage) return "light";
   return damage < DAMAGE_RULES.referenceDamage * 3 ? "medium" : "heavy";
 }
-export function damageFeedback(hit: DamageHit): DamageFeedback {
-  const damage = hitDamage(hit);
+export function damageFeedback(hit: DamageHit, maxDamage?: number): DamageFeedback {
+  const damage = hitDamage(hit, maxDamage);
   return { damage, intensity: damageIntensity(damage) };
 }
 
@@ -60,7 +65,7 @@ export class DamageSystem {
 
   invulnerable(time: number) { return time + 0.000001 < this.invulnerableUntil; }
 
-  apply(hit: DamageHit, maxDamage = Infinity) {
+  apply(hit: DamageHit, maxDamage?: number) {
     if (hit.lifeId !== this.lifeId || this.health.dead || !Number.isFinite(hit.time) ||
       hit.time < this.lastTime || !Number.isSafeInteger(hit.hitId) || hit.hitId < 0 ||
       hit.hitId <= (this.lastHit.get(hit.source) ?? -1) ||
@@ -72,7 +77,7 @@ export class DamageSystem {
     // Keep duplicate/stale-hit checks and per-hit damage caps for every source.
     const projectile = hit.source === "weapon" && hit.weaponId === "gun";
     if (!projectile && this.invulnerable(hit.time)) return null;
-    const impact = damageFeedback(hit), amount = Math.min(impact.damage, Math.max(0, maxDamage));
+    const impact = damageFeedback(hit, maxDamage), amount = impact.damage;
     if (!Number.isFinite(amount) || amount <= 0) return null;
     const lostHp = this.health.lose(amount);
     if (!lostHp) return null;

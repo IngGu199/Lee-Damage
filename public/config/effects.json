@@ -1,6 +1,18 @@
 {
   "version": 1,
   "maxActive": 96,
+  "damageNumbers": {
+    "enabled": true,
+    "maxActive": 96,
+    "durationMs": 1000,
+    "fadeDelayMs": 150,
+    "riseSpeed": 75,
+    "color": "#ffcf66",
+    "fontSize": 30,
+    "fontFamily": "\"Noto Sans KR Variable\", sans-serif",
+    "strokeColor": "#542b21",
+    "strokeThickness": 4
+  },
   "defaults": { "type": "sparks", "durationMs": 260, "size": 55, "count": 10, "color": "#f4c765", "lineWidth": 3, "cooldownMs": 0 },
   "events": {
     "weapon.bat.hit": { "type": "star", "color": "#f0ca6b" },

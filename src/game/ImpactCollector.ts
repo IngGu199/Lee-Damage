@@ -123,7 +123,7 @@ export class ImpactCollector {
     }
   }
 
-  flush() {
+  flush(damageFor: (hit: DamageHit) => number = hitDamage) {
     const impacts: ContactImpact[] = [];
     this.soundHits = [];
     for (const [key, hit] of this.pending) {
@@ -149,7 +149,7 @@ export class ImpactCollector {
     // Prioritize actual damage: a fast, softened fragment must not hide a harder wall hit.
     // Assign IDs after sorting to keep each source monotonic in application order.
     this.pending.clear(); this.contactBodies.clear();
-    return impacts.sort((a, b) => hitDamage(b) - hitDamage(a) || b.strength - a.strength)
+    return impacts.sort((a, b) => damageFor(b) - damageFor(a) || b.strength - a.strength)
       .map(hit => ({ ...hit, hitId: ++this.nextHit }));
   }
 

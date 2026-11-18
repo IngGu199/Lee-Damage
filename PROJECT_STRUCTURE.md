@@ -27,7 +27,7 @@ LeeDamageWeb/
 │   ├── main.ts                # 웹 UI 생성, 버튼·단축키, 설정 전달, Phaser 시작
 │   ├── style.css              # 페이지·도구·설정 패널·반응형 레이아웃
 │   ├── weapons/               # WeaponConfig·geometry·WeaponSystem·WeaponFinishers: 설정·연속 충돌·도구·탄알·사망 연출
-│   ├── effects/               # ImpactEffects: JSON 설정·도형 이펙트·게임 시간 수명·동시 표시 상한
+│   ├── effects/               # ImpactEffects: JSON 설정·도형 이펙트·실제 피해 숫자·게임 시간 수명·동시 표시 상한
 │   ├── photo/
 │   │   ├── PhotoSession.ts    # 파일 검증·방향 보정·메모리 사진 상태
 │   │   ├── PhotoEditor.ts     # 편집창·원형/직접 윤곽·점 수정·미리보기·비동기 취소
@@ -69,6 +69,7 @@ LeeDamageWeb/
 │   ├── physics.spec.ts        # 브라우저 조작·관절·경계·반복 재배치 검증
 │   ├── collision-cycle.spec.ts # 실험 1의 자기 충돌 전환·재잡기·기립 완료 검증
 │   ├── damage-rules.spec.ts   # 곡선·상처·접촉 회차·시간 단위·무적/소멸·탄알 무적 분리·데미지 상한·잔해 감쇠·회복 후 손상 누적 18개
+│   ├── damage-settings.spec.ts # 숫자 입력·화면/JSON 상한 우선순위·각 조건·피격 숫자·설정·이동/소멸·일시정지·리소스 정리
 │   ├── foundation.spec.ts     # 실제 HP·즉시 재등장·잔해 만료·100회 교체·기립·무적 9개
 │   ├── multi-ragdoll.spec.ts  # T키/10개 제한·개별 HP·잔해 조작·상호 충돌·자원 정리·폭주 방지·분리 운동 보존 14개
 │   ├── sound-rules.spec.ts    # 설정·속도/음량 보간·충돌 후 속도·두 소리·쿨다운·상한 13개

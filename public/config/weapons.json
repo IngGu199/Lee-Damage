@@ -1,5 +1,14 @@
 {
   "version": 1,
+  "collision": {
+    "room": { "maxDamage": 180 },
+    "left": { "maxDamage": 180 },
+    "right": { "maxDamage": 180 },
+    "ceiling": { "maxDamage": 180 },
+    "floor": { "maxDamage": 180 },
+    "body": { "maxDamage": 180 },
+    "debris": { "maxDamage": 12 }
+  },
   "defaults": {
     "handling": { "rotateStepDegrees": 15 },
     "shape": { "length": 190, "width": 24, "headWidth": 64, "headHeight": 108, "angle": -0.7, "color": "#a9794b", "headColor": "#8294a6" },

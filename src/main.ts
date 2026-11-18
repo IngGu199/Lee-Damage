@@ -22,8 +22,8 @@ app.innerHTML = `
         </div>
         <div class="toolbar-control damage-panel">
           <label for="damage-limit">최대 데미지</label>
-          <input id="damage-limit" type="range" min="0" max="${DAMAGE_RULES.maxCollisionDamage}" step="1" value="${DAMAGE_RULES.maxCollisionDamage}" aria-label="최대 데미지">
-          <output id="damage-limit-value" for="damage-limit">${DAMAGE_RULES.maxCollisionDamage}</output>
+          <input id="damage-limit" type="number" min="-1" step="1" value="${DAMAGE_RULES.maxCollisionDamage}" aria-label="최대 데미지" aria-describedby="damage-limit-value" title="0: 무적 · -1: JSON의 조건별 상한 사용 · 양수: 모든 타격에 우선 적용">
+          <output id="damage-limit-value" for="damage-limit">상한</output>
         </div>
       </div>
       <div class="play-actions">
@@ -119,12 +119,17 @@ element<HTMLInputElement>("sound-volume").addEventListener("input", event => {
 element<HTMLInputElement>("sound-muted").addEventListener("change", event => {
   if (ready) scene.audio.setMuted((event.target as HTMLInputElement).checked);
 });
-element<HTMLInputElement>("damage-limit").addEventListener("input", event => {
-  const value = Number((event.target as HTMLInputElement).value);
-  element("damage-limit-value").textContent = value === 0 ? "무적" : String(value);
-  element("damage-limit").setAttribute("aria-valuetext", value === 0 ? "무적" : `최대 ${value}`);
+const damageInput = element<HTMLInputElement>("damage-limit");
+const updateDamageLimit = () => {
+  const value = damageInput.valueAsNumber;
+  // Preserve the setting while typing an empty field, a minus, or an invalid value.
+  if (!damageInput.validity.valid || !Number.isFinite(value)) return;
   scene.setMaxDamage(value);
-});
+  element("damage-limit-value").textContent = value === -1 ? "JSON" : value === 0 ? "무적" : "상한";
+  damageInput.setAttribute("aria-valuetext", value === -1 ? "JSON의 조건별 상한 적용" : value === 0 ? "무적" : `최대 ${value}`);
+};
+damageInput.addEventListener("input", updateDamageLimit);
+damageInput.addEventListener("blur", () => { damageInput.value = String(scene.maxDamage); updateDamageLimit(); });
 window.addEventListener("keydown", event => {
   if (!ready || photoEditor.open || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
   const target = event.target as HTMLElement;

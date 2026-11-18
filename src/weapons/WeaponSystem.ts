@@ -334,7 +334,8 @@ export class WeaponSystem {
           // Pointer projection supplies the held bat's translation after the solver.
           if (weapon === "bat" && this.holding && this.body === body) Object.assign(relative, multiply(displacement, 1000 / delta));
           const speed = surface ? closingSpeed(relative, surface.normal) : Math.hypot(relative.x, relative.y);
-          const damage = meleeDamage(definition, speed, sample.tip);
+          // Keep raw damage here: the screen cap takes priority over the JSON cap.
+          const damage = meleeDamage(definition, speed, sample.tip, -1);
           if (damage <= 0 || (best && damage <= best.damage)) continue;
           best = { actor, part: index, position, direction: surface?.normal ?? unit(relative), speed, damage };
         }

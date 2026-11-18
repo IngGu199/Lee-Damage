@@ -197,8 +197,10 @@ for (const cap of [180, 50, 0]) {
     expect(await page.evaluate(() => window.__physicsLab.weapons.snapshot().projectiles.length)).toBe(3);
     await steps(page, 24);
     const result = await page.evaluate(() => ({ hp: window.__physicsLab.damage.health.hp,
-      shots: window.__physicsLab.weapons.snapshot().projectiles.length, immune: window.__physicsLab.damage.invulnerable(window.__physicsLab.snapshot().simulationTime) }));
-    expect(result).toEqual({ hp: 1000 - 3 * Math.min(120, cap), shots: 0, immune: false });
+      shots: window.__physicsLab.weapons.snapshot().projectiles.length, immune: window.__physicsLab.damage.invulnerable(window.__physicsLab.snapshot().simulationTime),
+      numbers: window.__physicsLab.weapons.effects.snapshot().damageNumbers.map(number => number.amount) }));
+    expect(result).toEqual({ hp: 1000 - 3 * Math.min(120, cap), shots: 0, immune: false,
+      numbers: cap ? Array(3).fill(Math.min(120, cap)) : [] });
     await steps(page, 24);
     expect(await page.evaluate(() => window.__physicsLab.damage.health.hp)).toBe(result.hp);
   });

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { DEFAULT_WEAPON_CONFIG, meleeDamage, parseWeaponConfig } from "../src/weapons/WeaponConfig";
+import { DEFAULT_WEAPON_CONFIG, damageLimit, meleeDamage, parseWeaponConfig } from "../src/weapons/WeaponConfig";
+import { collisionDamage, DamageSystem, type DamageHit } from "../src/game/DamageSystem";
 import { circleContact, closingSpeed, sweepCircle } from "../src/weapons/geometry";
 
 test("weapons inherit JSON defaults and per-weapon overrides with unique hit signals", () => {
@@ -34,6 +35,34 @@ test("bat damage increases with impact speed and distance from the grip and resp
   expect(meleeDamage(bat, 2000, 1)).toBeGreaterThan(meleeDamage(bat, 1000, 1));
   expect(meleeDamage(bat, 100000, 1)).toBe(bat.damage.maxDamage);
   expect(meleeDamage(bat, NaN, 1)).toBe(0);
+});
+
+test("screen caps override each source's JSON cap and -1 delegates without pre-clipping formulas", () => {
+  const config = parseWeaponConfig({ version: 1, collision: { floor: { maxDamage: 4 }, debris: { maxDamage: 2 } },
+    weapons: { bat: { damage: { maxDamage: 5 } }, hammer: { damage: { maxDamage: 6 } }, gun: { damage: { maxDamage: 7 } } } });
+  const base: DamageHit = { lifeId: 1, hitId: 1, source: "room", surface: "floor", part: 0,
+    position: { x: 100, y: 200 }, strength: 4000, time: 0 };
+  const hits: [Partial<DamageHit>, number][] = [[{}, 4], [{ source: "body", debris: true }, 2],
+    [{ source: "weapon", weaponId: "bat", damage: meleeDamage(config.weapons.bat, 4000, 1, -1) }, 5],
+    [{ source: "weapon", weaponId: "hammer", damage: meleeDamage(config.weapons.hammer, 4000, 1, -1) }, 6],
+    [{ source: "weapon", weaponId: "gun", damage: 120 }, 7]];
+  for (const [fields, cap] of hits) {
+    const hit = { ...base, ...fields };
+    expect(new DamageSystem().apply(hit, damageLimit(config, hit, -1))?.lostHp).toBe(cap);
+    expect(new DamageSystem().apply(hit, damageLimit(config, hit, 30))?.lostHp).toBe(30);
+    expect(new DamageSystem().apply(hit, damageLimit(config, hit, 0))).toBeNull();
+  }
+  expect(new DamageSystem().apply(base, damageLimit(config, base, 500))?.lostHp).toBeCloseTo(collisionDamage(4000, 1, 1, -1));
+  expect(new DamageSystem().apply({ ...base, source: "body", debris: true }, 100)?.lostHp)
+    .toBeCloseTo(collisionDamage(4000, 1, 0.15, -1));
+  const unlimited = parseWeaponConfig({ version: 1, collision: { floor: { maxDamage: -1 } }, defaults: { damage: { maxDamage: -1 } } });
+  expect(new DamageSystem().apply(base, damageLimit(unlimited, base, -1))?.lostHp).toBeCloseTo(collisionDamage(4000, 1, 1, -1));
+  expect(meleeDamage(unlimited.weapons.bat, 4000, 1)).toBeGreaterThan(350);
+  for (const value of [-2, -0.5, NaN, Infinity, "50", null]) {
+    expect(() => parseWeaponConfig({ version: 1, collision: { floor: { maxDamage: value } } })).toThrow();
+    expect(() => parseWeaponConfig({ version: 1, weapons: { gun: { damage: { maxDamage: value } } } })).toThrow();
+  }
+  expect(() => parseWeaponConfig({ version: 1, collision: { typo: { maxDamage: 10 } } })).toThrow();
 });
 
 test("hammer damage uses the closing component of relative contact velocity", () => {

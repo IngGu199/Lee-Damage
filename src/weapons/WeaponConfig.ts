@@ -1,3 +1,6 @@
+import type { DamageHit } from "../game/DamageSystem";
+import { DAMAGE_RULES } from "../game/damageConfig";
+
 export const WEAPON_IDS = ["bat", "hammer", "gun"] as const;
 export type WeaponId = typeof WEAPON_IDS[number];
 export type ToolId = "hand" | WeaponId;
@@ -13,7 +16,29 @@ export interface WeaponDefinition {
   finisher: { speed: number; upwardSpeed: number; flightMs: number; scatterSpeed: number; spin: number; pinDelayMs: number };
   signals: { hit: string; finish: string; fire: string; pin: string; burst: string };
 }
-export interface WeaponConfig { version: 1; defaults: WeaponDefinition; weapons: Record<WeaponId, WeaponDefinition> }
+type CollisionKind = "room" | "left" | "right" | "ceiling" | "floor" | "body" | "debris";
+const collisionLimits: Record<CollisionKind, { maxDamage: number }> = {
+  room: { maxDamage: DAMAGE_RULES.maxCollisionDamage },
+  left: { maxDamage: DAMAGE_RULES.maxCollisionDamage },
+  right: { maxDamage: DAMAGE_RULES.maxCollisionDamage },
+  ceiling: { maxDamage: DAMAGE_RULES.maxCollisionDamage },
+  floor: { maxDamage: DAMAGE_RULES.maxCollisionDamage },
+  body: { maxDamage: DAMAGE_RULES.maxCollisionDamage },
+  debris: { maxDamage: DAMAGE_RULES.maxDebrisDamage },
+};
+export interface WeaponConfig { version: 1; defaults: WeaponDefinition; weapons: Record<WeaponId, WeaponDefinition>;
+  collision: typeof collisionLimits }
+
+/** A nonnegative screen value overrides JSON; -1 delegates to the source's cap. */
+export function damageLimit(config: WeaponConfig, hit: DamageHit, screenLimit: number) {
+  if (screenLimit >= 0) return screenLimit;
+  if (hit.source === "weapon") return (hit.weaponId && Object.hasOwn(config.weapons, hit.weaponId)
+    ? config.weapons[hit.weaponId as WeaponId] : config.defaults).damage.maxDamage;
+  if (hit.source === "body") return config.collision[hit.debris ? "debris" : "body"].maxDamage;
+  const surface = hit.surface;
+  return config.collision[surface === "left" || surface === "right" || surface === "ceiling" || surface === "floor"
+    ? surface : "room"].maxDamage;
+}
 
 const common: WeaponDefinition = {
   label: "무기",
@@ -40,8 +65,9 @@ export function mergeSettings<T extends object>(base: T, input: unknown, path: s
     else if (typeof original === "number") {
       const signed = key === "angle";
       const limit = /color$/i.test(key) ? 0xffffff : 1e6;
-      if (typeof value !== "number" || !Number.isFinite(value) || (!signed && value < 0) || Math.abs(value) > limit)
-        throw new Error(`${field}: 유효한 ${signed ? "" : "0 이상 "}숫자가 필요합니다.`);
+      const unlimited = key === "maxDamage" && value === -1;
+      if (typeof value !== "number" || !Number.isFinite(value) || (!signed && value < 0 && !unlimited) || Math.abs(value) > limit)
+        throw new Error(`${field}: 유효한 ${key === "maxDamage" ? "-1 또는 0 이상 " : signed ? "" : "0 이상 "}숫자가 필요합니다.`);
       output[key] = value;
     } else if (key === "image") {
       if (value !== null && (typeof value !== "string" || !safeAssetPath(value))) throw new Error(`${field}: 상대 이미지 경로 또는 null이 필요합니다.`);
@@ -58,7 +84,7 @@ export function safeAssetPath(path: string) {
 }
 
 export function parseWeaponConfig(input: unknown): WeaponConfig {
-  const root = input as { version?: unknown; defaults?: unknown; weapons?: Record<string, unknown> };
+  const root = input as { version?: unknown; defaults?: unknown; weapons?: Record<string, unknown>; collision?: unknown };
   if (!root || root.version !== 1) throw new Error("weapons.version: 지원하는 버전은 1입니다.");
   const shared = mergeSettings(common, root.defaults, "weapons.defaults");
   if (root.weapons !== undefined && (!root.weapons || typeof root.weapons !== "object" || Array.isArray(root.weapons)))
@@ -82,7 +108,7 @@ export function parseWeaponConfig(input: unknown): WeaponConfig {
       throw new Error(`weapons.${id}: 크기·물리·시간·색상 값이 허용 범위를 벗어났습니다.`);
     return [id, definition];
   })) as Record<WeaponId, WeaponDefinition>;
-  return { version: 1, defaults: shared, weapons };
+  return { version: 1, defaults: shared, weapons, collision: mergeSettings(collisionLimits, root.collision, "weapons.collision") };
 }
 
 export const DEFAULT_WEAPON_CONFIG = parseWeaponConfig({ version: 1, weapons: {
@@ -104,9 +130,9 @@ export async function loadSettings<T>(path: string, fallback: T, parse: (value: 
   }
 }
 
-export function meleeDamage(definition: WeaponDefinition, speed: number, tipRatio: number) {
+export function meleeDamage(definition: WeaponDefinition, speed: number, tipRatio: number, maxDamage = definition.damage.maxDamage) {
   const d = definition.damage;
   if (!Number.isFinite(speed) || speed < d.minSpeed || speed <= 0) return 0;
   const weight = d.handleMultiplier + (d.tipMultiplier - d.handleMultiplier) * Math.max(0, Math.min(1, tipRatio));
-  return Math.min(d.maxDamage, d.amount * (speed / d.referenceSpeed) ** d.speedExponent * weight);
+  return Math.min(maxDamage < 0 ? Number.MAX_VALUE : maxDamage, d.amount * (speed / d.referenceSpeed) ** d.speedExponent * weight);
 }
