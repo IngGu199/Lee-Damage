@@ -235,3 +235,31 @@ test("range gaps and unavailable bands stay silent without consuming cooldown or
   f.mixer.collision(1, 2, 1500, "loaded", false, "wall"); f.mixer.flush();
   expect(f.plays.slice(-2).map(play => play.file)).toEqual(["high.ogg", "wall.ogg"]);
 });
+
+test("weapon signals accept fixed-volume sounds or speed bands and keep their own cooldowns", () => {
+  const f = fixture({ events: {
+    "weapon.bat.hit": [{ ...normal, speed: [100, 1000], cooldownMs: 100 },
+      { ...normal, files: ["strong.ogg"], speed: [1000, 2400], cooldownMs: 100 }],
+    "weapon.gun.fire": { files: ["fire.ogg"], volume: 0.7, cooldownMs: 0 },
+    "weapon.gun.finish": { files: ["finish.ogg"] },
+  } });
+  f.mixer.signal("weapon.bat.hit", 1, 0, 500); f.mixer.flush();
+  f.mixer.signal("weapon.bat.hit", 1, 1, 1500); f.mixer.flush();
+  f.mixer.signal("weapon.bat.hit", 1, 2, 500); f.mixer.flush();
+  f.mixer.signal("weapon.gun.fire", 1, 2, 99999); f.mixer.flush();
+  expect(f.plays.map(play => play.file)).toEqual(["body-a.ogg", "strong.ogg", "fire.ogg"]);
+  expect(f.plays.at(-1)?.volume).toBe(0.7);
+  expect(f.mixer.snapshot().recent.map(sound => sound.event)).toEqual(["weapon.bat.hit", "weapon.bat.hit", "weapon.gun.fire"]);
+});
+
+test("unconfigured weapon sounds reuse an existing buffer under a separate signal and cooldown", () => {
+  const f = fixture({ defaults: { cooldownMs: 100 } });
+  f.mixer.collision(1, 0, 550, "wall"); f.mixer.flush();
+  f.mixer.signal("weapon.bat.hit", 1, 1, 550, "collision.normal"); f.mixer.flush();
+  f.mixer.signal("weapon.bat.hit", 1, 2, 550, "collision.normal"); f.mixer.flush();
+  f.mixer.signal("weapon.hammer.hit", 1, 2, 550, "collision.normal"); f.mixer.flush();
+  expect(f.plays).toHaveLength(3);
+  expect(f.mixer.snapshot().recent.map(sound => sound.event)).toEqual(["collision.normal", "weapon.bat.hit", "weapon.hammer.hit"]);
+  f.mixer.signal("weapon.bat.hit", 1, 101, 10000, "collision.normal"); f.mixer.flush();
+  expect(f.plays).toHaveLength(4); expect(f.plays.at(-1)?.volume).toBe(0.5);
+});

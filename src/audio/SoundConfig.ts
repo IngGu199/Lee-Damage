@@ -83,9 +83,10 @@ export function parseSoundConfig(input: unknown): SoundConfig {
   const shared = playback(object(root.defaults ?? {}, "defaults"), defaults, "defaults");
   const definitions = object(root.events, "events"), events: Record<string, SoundEventDefinition> = Object.create(null);
   for (const [name, inputEvent] of Object.entries(definitions)) {
-    if (!["collision.normal", "collision.wall", "death.burst"].includes(name))
-      throw new Error(`events.${name}: collision.normal, collision.wall 또는 death.burst 이벤트가 필요합니다.`);
-    const collision = name.startsWith("collision."), multiple = collision && Array.isArray(inputEvent);
+    const weapon = /^weapon\.[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$/.test(name);
+    if (!["collision.normal", "collision.wall", "death.burst"].includes(name) && !weapon)
+      throw new Error(`events.${name}: 충돌·사망 또는 weapon.무기.신호 이벤트가 필요합니다.`);
+    const collision = name.startsWith("collision."), multiple = (collision || weapon) && Array.isArray(inputEvent);
     const inputs = multiple ? inputEvent : [inputEvent];
     if (!inputs.length) throw new Error(`events.${name}: 속도 구간 목록은 비어 있을 수 없습니다.`);
     const variants = inputs.map((input, index) => {
@@ -93,7 +94,7 @@ export function parseSoundConfig(input: unknown): SoundConfig {
       if (!Array.isArray(event.files) || !event.files.length) throw new Error(`${path}.files: 음원 목록이 필요합니다.`);
       return { ...playback(event, shared, path),
         files: [...new Set(event.files.map((file, index) => relativePath(file, `${path}.files[${index}]`)))],
-        ...(collision ? {
+        ...(collision || multiple || event.speed !== undefined || event["sound-size"] !== undefined ? {
           speed: interval(event.speed, `${path}.speed`, true),
           "sound-size": interval(event["sound-size"], `${path}.sound-size`),
         } : {}),

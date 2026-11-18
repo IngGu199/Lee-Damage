@@ -33,6 +33,12 @@ app.innerHTML = `
         <button id="pause" class="icon-button" aria-label="일시정지" disabled>Ⅱ</button>
         <button id="reset" disabled><span aria-hidden="true">↻</span> 재배치 <kbd>R</kbd></button>
       </div>
+      <div class="weapon-tools" role="toolbar" aria-label="무기 선택">
+        <button data-tool="hand" aria-pressed="true" disabled title="인형·잔해·바닥에 놓인 무기 잡기">손 <kbd>1</kbd></button>
+        <button data-tool="bat" aria-pressed="false" disabled title="방망이 꺼내기 · 원하는 지점을 클릭해 잡고 휘두르기 · 잡은 동안 각도 고정">야구방망이 <kbd>2</kbd></button>
+        <button data-tool="hammer" aria-pressed="false" disabled title="망치 꺼내기 · 원하는 지점을 클릭해 잡기 · 잡은 지점을 축으로 회전">망치 <kbd>3</kbd></button>
+        <button data-tool="gun" aria-pressed="false" disabled title="선택 직전 방 안의 마우스 위치에 고정 · 마우스로 조준하고 클릭 발사">총 <kbd>4</kbd></button>
+      </div>
     </header>
     <div class="canvas-wrap">
       <div id="game"></div>
@@ -54,7 +60,18 @@ const photoEditor = new PhotoEditor(photoSession, {
   previewSize: () => scene.game.canvas.getBoundingClientRect().width / ROOM.width * Math.max(PHOTO_BASE_SIZE, scene.face.displaySize),
 });
 let ready = false;
+scene.onToolState = () => {
+  for (const button of app.querySelectorAll<HTMLButtonElement>("[data-tool]")) {
+    button.disabled = !scene.weapons?.loaded || scene.paused;
+    button.setAttribute("aria-pressed", String(button.dataset.tool === scene.weapons?.mode));
+    if (button.dataset.tool !== "hand" && scene.weapons?.loaded) {
+      const label = scene.weapons.config.weapons[button.dataset.tool as "bat" | "hammer" | "gun"].label;
+      button.firstChild!.textContent = `${label} `;
+    }
+  }
+};
 scene.onStats = (stats: LabStats) => {
+  scene.onToolState();
   element<HTMLButtonElement>("spawn").disabled = stats.paused || stats.aliveCount >= stats.maxRagdolls;
   element<HTMLButtonElement>("force-burst").disabled = stats.paused || !scene.selectedActor?.lifecycle.interactive;
   element("photo-open").textContent = scene.face?.active ? "사진 편집" : "사진 추가";
@@ -90,6 +107,8 @@ element("force-burst").addEventListener("click", () => scene.forceBurst());
 element("pause").addEventListener("click", () => scene.setPaused(!scene.paused));
 element("resume").addEventListener("click", () => scene.setPaused(false));
 element("reset").addEventListener("click", () => scene.reset());
+for (const button of app.querySelectorAll<HTMLButtonElement>("[data-tool]"))
+  button.addEventListener("click", () => scene.selectTool(button.dataset.tool as "hand" | "bat" | "hammer" | "gun"));
 element<HTMLInputElement>("sound-volume").addEventListener("input", event => {
   if (ready) scene.audio.setVolume(Number((event.target as HTMLInputElement).value) / 100);
 });
@@ -105,6 +124,11 @@ element<HTMLInputElement>("damage-limit").addEventListener("input", event => {
 window.addEventListener("keydown", event => {
   if (!ready || photoEditor.open || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
   const target = event.target as HTMLElement;
+  if (!target.closest("input, select, textarea, [contenteditable]")) {
+    const tools = { Digit1: "hand", Digit2: "bat", Digit3: "hammer", Digit4: "gun" } as const;
+    const tool = tools[event.code as keyof typeof tools];
+    if (tool) { event.preventDefault(); scene.selectTool(tool); return; }
+  }
   if (event.code === "KeyT" && !target.closest("input, select, textarea, [contenteditable]")) {
     event.preventDefault(); scene.spawnRagdoll(); return;
   }

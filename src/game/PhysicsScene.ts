@@ -15,6 +15,8 @@ import { DAMAGE_RULES } from "./damageConfig";
 import { separateBodies } from "./SelfCollision";
 import { BODY_CONTACT_PHYSICS, DEBRIS_PHYSICS, limitBodyReaction, softenBodyContact } from "./DebrisPhysics";
 import type { AppliedPhoto } from "../photo/PhotoSession";
+import { WeaponSystem } from "../weapons/WeaponSystem";
+import type { ToolId } from "../weapons/WeaponConfig";
 
 interface BodyContact {
   bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; restitution: number;
@@ -27,6 +29,7 @@ export class PhysicsScene extends Phaser.Scene {
   readonly actors: RagdollActor[] = [];
   pointer!: PointerController;
   audio!: ImpactAudio;
+  weapons!: WeaponSystem;
   paused = false;
   recoveries = 0;
   maxDamage: number = DAMAGE_RULES.maxCollisionDamage;
@@ -49,6 +52,7 @@ export class PhysicsScene extends Phaser.Scene {
   onReady: () => void = () => {};
   onAudioState: () => void = () => {};
   onNotice: (message: string) => void = () => {};
+  onToolState: () => void = () => {};
 
   constructor() { super("PhysicsLab"); }
 
@@ -76,23 +80,26 @@ export class PhysicsScene extends Phaser.Scene {
     this.createActor(false, (ROOM.left + ROOM.right) / 2, true);
     const canvas = this.game.canvas;
     canvas.tabIndex = 0;
-    canvas.setAttribute("aria-label", "물리 실험실. 인형과 잔해를 잡고 던지세요. T 인형 추가, B 선택 인형 강제 폭파, R 전체 재배치, 스페이스 일시정지.");
+    canvas.setAttribute("aria-label", "물리 실험실. 1 손, 2 야구방망이, 3 망치, 4 총. T 인형 추가, B 선택 인형 강제 폭파, R 전체 재배치, 스페이스 일시정지.");
     this.pointer = new PointerController(canvas, this.matter.world, () => this.doll,
-      () => this.paused || this.photoEditing,
+      () => this.paused || this.photoEditing || this.weapons?.mode === "gun" || Boolean(this.weapons?.grip),
       doll => {
         const actor = this.actors.find(actor => actor.doll === doll);
         if (!actor) return;
         this.selectedId = actor.id;
         actor.interact();
       },
-      point => [...this.actors].reverse().find(actor => actor.doll.at(point))?.doll);
+      point => this.weapons?.pick(point) ? undefined
+        : [...this.actors].reverse().find(actor => actor.lifecycle.state !== "finishing" && actor.doll.at(point))?.doll);
     this.pointer.experiment = this.settings.experiment;
+    this.weapons = new WeaponSystem(this);
+    this.weapons.onChange = () => this.onToolState();
     Matter.Events.on(this.matter.world.engine, "beforeSolve", this.beforeSolve);
     Matter.Events.on(this.matter.world.engine, "collisionStart collisionActive", this.collisions);
     window.addEventListener("blur", this.blur, { signal: this.abort.signal });
     document.addEventListener("visibilitychange", this.visibility, { signal: this.abort.signal });
     this.events.once("shutdown", () => {
-      this.pointer.destroy(); this.audio.destroy();
+      this.weapons.destroy(); this.pointer.destroy(); this.audio.destroy();
       this.scale.off(Phaser.Scale.Events.RESIZE, this.resizeRoom, this);
       Matter.Events.off(this.matter.world.engine, "beforeSolve", this.beforeSolve);
       Matter.Events.off(this.matter.world.engine, "collisionStart collisionActive", this.collisions);
@@ -107,6 +114,7 @@ export class PhysicsScene extends Phaser.Scene {
     ROOM.width = Math.max(320, this.scale.width / Math.max(1, this.scale.height) * ROOM.height);
     ROOM.right = ROOM.width - 30;
     this.pointer?.cancel();
+    this.weapons?.resize(oldWidth);
     for (const actor of this.actors) actor.moveToX(Phaser.Math.Clamp(
       actor.doll.parts[1].body.position.x / oldWidth * ROOM.width, ROOM.left + 85, ROOM.right - 85));
     const layouts = [
@@ -121,7 +129,7 @@ export class PhysicsScene extends Phaser.Scene {
         Matter.Body.scale(wall, width / (wall.bounds.max.x - wall.bounds.min.x), height / (wall.bounds.max.y - wall.bounds.min.y));
         Matter.Body.setPosition(wall, { x, y });
       } else {
-        const body = Matter.Bodies.rectangle(x, y, width, height, { isStatic: true, restitution: 0, friction: 0.4, label: "room-wall" });
+        const body = Matter.Bodies.rectangle(x, y, width, height, { isStatic: true, restitution: 0, friction: 0.4, label: "room-wall", collisionFilter: { category: 2, mask: 0xffffffff, group: 0 } });
         this.walls.push(body); this.matter.world.add(body);
       }
     });
@@ -143,6 +151,7 @@ export class PhysicsScene extends Phaser.Scene {
   setPaused(value: boolean) {
     if (this.photoEditing && !value) return;
     this.pointer.cancel();
+    this.weapons.cancel();
     if (value) this.audio.stop();
     this.paused = value; this.accumulator = 0; this.publishStats();
   }
@@ -156,7 +165,7 @@ export class PhysicsScene extends Phaser.Scene {
   /** T adds a living actor; debris does not occupy a living actor slot. */
   spawnRagdoll() {
     if (this.paused || this.photoEditing) return null;
-    if (this.actors.filter(actor => actor.lifecycle.state !== "bursting").length >= DAMAGE_RULES.maxRagdolls) {
+    if (this.livingActors.length >= DAMAGE_RULES.maxRagdolls) {
       this.onNotice("인형은 최대 10개까지 만들 수 있어요."); return null;
     }
     const actor = this.createActor(true, this.spawnX(), !this.pointer.grip);
@@ -183,7 +192,8 @@ export class PhysicsScene extends Phaser.Scene {
     return candidates.reduce((best, x) => {
       const clearance = (position: number) => Math.min(...this.actors.map(actor =>
         Math.abs(actor.doll.parts[1].body.position.x - position)), ROOM.width);
-      return clearance(x) > clearance(best) ? x : best;
+      // Symmetric choices should not switch sides because of floating-point noise.
+      return clearance(x) > clearance(best) + 1e-6 ? x : best;
     }, candidates[0]);
   }
 
@@ -201,6 +211,7 @@ export class PhysicsScene extends Phaser.Scene {
   }
 
   private removeActor(actor: RagdollActor) {
+    this.weapons?.forget(actor);
     if (this.pointer?.owner === actor.doll) this.pointer.cancel();
     const bodies = new Set(actor.doll.bodies);
     for (const body of bodies) { this.owners.delete(body); this.motion.delete(body); }
@@ -257,12 +268,22 @@ export class PhysicsScene extends Phaser.Scene {
   reset() {
     const photo = { frames: this.photoFrames.length ? this.photoFrames : this.face?.preparedFrames ?? [],
       outline: this.photoFrames.length ? this.photoOutline : this.face?.customOutline ?? false };
-    this.pointer.cancel(); this.audio.reset();
+    this.pointer.cancel(); this.weapons.reset(); this.audio.reset();
     for (const actor of [...this.actors]) this.removeActor(actor);
     Matter.Engine.clear(this.matter.world.engine);
     this.createActor(false, (ROOM.left + ROOM.right) / 2, true, undefined, photo);
     this.accumulator = 0; this.publishStats();
   }
+
+  selectTool(tool: ToolId) { return this.weapons.select(tool); }
+
+  replaceAfterWeapon(actor: RagdollActor) {
+    this.createActor(true, this.spawnX(), this.selectedId === actor.id, undefined,
+      { frames: actor.face.preparedFrames, outline: actor.face.customOutline });
+    this.publishStats();
+  }
+
+  removeAfterWeapon(actor: RagdollActor) { this.removeActor(actor); }
 
   configure(settings: LabSettings) {
     if (this.settings.experiment !== settings.experiment) this.pointer.cancel();
@@ -283,6 +304,7 @@ export class PhysicsScene extends Phaser.Scene {
         angular: body.angularVelocity * factor, center: { ...body.position },
         debris: actor.lifecycle.state === "bursting" });
     }
+    this.weapons.beforeSolve(this.motion);
     for (const pair of this.matter.world.engine.pairs.list) this.softenContact(pair);
     for (const actor of this.actors) actor.impacts.beforeSolve();
   };
@@ -292,6 +314,8 @@ export class PhysicsScene extends Phaser.Scene {
     if (a?.lifecycle.state === "bursting" || b?.lifecycle.state === "bursting")
       softenBodyContact(pair, DEBRIS_PHYSICS.restitution);
     else if (a && b && a !== b) softenBodyContact(pair, BODY_CONTACT_PHYSICS.restitution);
+    else if ((a && this.weapons.owns(pair.bodyB)) || (b && this.weapons.owns(pair.bodyA)))
+      softenBodyContact(pair, BODY_CONTACT_PHYSICS.restitution);
   }
 
   private collisions = (event: { pairs: BodyContact[] }) => {
@@ -306,6 +330,14 @@ export class PhysicsScene extends Phaser.Scene {
         if (!actor) continue;
         const owned = contacts.get(actor);
         if (owned) owned.push(pair); else contacts.set(actor, [pair]);
+      }
+      const weaponTarget = a && this.weapons.owns(bodyB) ? a : b && this.weapons.owns(bodyA) ? b : undefined;
+      if (weaponTarget?.lifecycle.interactive) {
+        this.bodyContacts.add(weaponTarget);
+        if (weaponTarget.posture.controlsPose || weaponTarget.landing) {
+          weaponTarget.interact();
+          for (const body of weaponTarget.doll.bodies) woken.add(body);
+        }
       }
       if (!a || !b || a === b) continue;
       this.bodyContacts.add(a); this.bodyContacts.add(b);
@@ -324,7 +356,7 @@ export class PhysicsScene extends Phaser.Scene {
     // impulse many times when it wakes a light limb. Clear incompatible warm-start impulses.
     if (woken.size) for (const pair of this.matter.world.engine.pairs.list) {
       if (!woken.has(pair.bodyA) && !woken.has(pair.bodyB)) continue;
-      const a = pair.bodyA, b = pair.bodyB;
+      const a = pair.bodyA.parent ?? pair.bodyA, b = pair.bodyB.parent ?? pair.bodyB;
       pair.inverseMass = a.inverseMass + b.inverseMass;
       pair.restitution = Math.max(a.restitution, b.restitution);
       pair.friction = Math.min(a.friction, b.friction);
@@ -338,7 +370,7 @@ export class PhysicsScene extends Phaser.Scene {
   private interruptBlockedLanding(actor: RagdollActor) {
     if (!actor.landing) return;
     for (const other of this.actors) {
-      if (other === actor) continue;
+      if (other === actor || other.lifecycle.state === "finishing") continue;
       for (const a of actor.doll.bodies) for (const b of other.doll.bodies) {
         if (a.bounds.max.x < b.bounds.min.x || b.bounds.max.x < a.bounds.min.x ||
           a.bounds.max.y < b.bounds.min.y || b.bounds.max.y < a.bounds.min.y) continue;
@@ -381,6 +413,7 @@ export class PhysicsScene extends Phaser.Scene {
       actor.doll.limitAngularSpeed();
     }
     this.pointer.step(remainingSlices);
+    this.weapons.beforeStep(step, remainingSlices);
     const previous = new Map(actors.filter(actor => actor.lifecycle.interactive)
       .map(actor => [actor, actor.doll.capturePose()]));
     for (const actor of actors) actor.impacts.beginStep(actor.doll, true,
@@ -389,6 +422,7 @@ export class PhysicsScene extends Phaser.Scene {
     this.bodyContacts.clear();
     this.matter.world.step(step);
     this.pointer.afterStep();
+    this.weapons.afterStep(step, this.simulationTime);
     const contacts = actors.map(actor => {
       actor.impacts.boundaries();
       if (actor.impacts.touchedFloor) actor.lifecycle.landed(this.simulationTime);
@@ -426,9 +460,9 @@ export class PhysicsScene extends Phaser.Scene {
     if (!this.paused) {
       this.accumulator += Math.min(delta, 50);
       while (this.accumulator + 1e-6 >= FIXED_STEP) {
-        const speed = Math.max(...this.actors.map(actor => actor.doll.motionSpeed));
+        const speed = Math.max(this.weapons.motionSpeed, ...this.actors.map(actor => actor.doll.motionSpeed));
         const slices = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(Math.max(speed * FIXED_STEP / 1000,
-          this.pointer.travelDistance) / MAX_TRAVEL_PER_SUBSTEP)));
+          this.pointer.travelDistance, this.weapons.travelDistance) / MAX_TRAVEL_PER_SUBSTEP)));
         for (let slice = 0; slice < slices; slice++) this.physicsStep(FIXED_STEP / slices, slices - slice);
         this.accumulator = Math.max(0, this.accumulator - FIXED_STEP);
       }
@@ -443,6 +477,7 @@ export class PhysicsScene extends Phaser.Scene {
     }
     this.audio.flush();
     for (const actor of this.actors) actor.render(this.simulationTime, this.pointer, this.settings.debug, actor.id === this.selectedId);
+    this.weapons.render(this.simulationTime);
     this.statsElapsed += delta;
     if (this.statsElapsed >= 150) { this.publishStats(); this.statsElapsed = 0; }
   }

@@ -12,7 +12,8 @@
     "test:photo": "playwright test tests/photo.spec.ts",
     "test:foundation": "playwright test tests/damage-rules.spec.ts tests/foundation.spec.ts",
     "test:current": "playwright test tests/damage-rules.spec.ts tests/foundation.spec.ts tests/multi-ragdoll.spec.ts tests/photo.spec.ts",
-    "test:multi": "playwright test tests/multi-ragdoll.spec.ts"
+    "test:multi": "playwright test tests/multi-ragdoll.spec.ts",
+    "test:weapons": "playwright test tests/weapon-rules.spec.ts tests/weapons.spec.ts"
   },
   "dependencies": {
     "@fontsource-variable/noto-sans-kr": "5.3.1",

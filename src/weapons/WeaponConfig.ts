@@ -4,7 +4,8 @@ export type ToolId = "hand" | WeaponId;
 export interface WeaponDefinition {
   label: string;
   shape: { length: number; width: number; headWidth: number; headHeight: number; angle: number; color: number; headColor: number };
-  physics: { handleMass: number; headMass: number; frictionAir: number; maxAngularSpeed: number };
+  physics: { handleMass: number; headMass: number; frictionAir: number; maxAngularSpeed: number;
+    restitution: number; friction: number; frictionStatic: number };
   damage: { amount: number; minSpeed: number; referenceSpeed: number; speedExponent: number; maxDamage: number;
     handleMultiplier: number; tipMultiplier: number; hitCooldownMs: number; knockback: number; hitDebris: boolean };
   projectile: { speed: number; radius: number; damage: number; lifetimeMs: number; fireIntervalMs: number; maxCount: number; color: number; image: string | null };
@@ -16,7 +17,7 @@ export interface WeaponConfig { version: 1; defaults: WeaponDefinition; weapons:
 const common: WeaponDefinition = {
   label: "무기",
   shape: { length: 190, width: 24, headWidth: 64, headHeight: 108, angle: -0.7, color: 0xa9794b, headColor: 0x8294a6 },
-  physics: { handleMass: 1, headMass: 14, frictionAir: 0.006, maxAngularSpeed: 22 },
+  physics: { handleMass: 1, headMass: 14, frictionAir: 0.006, maxAngularSpeed: 22, restitution: 0.1, friction: 0.5, frictionStatic: 0.8 },
   damage: { amount: 100, minSpeed: 800, referenceSpeed: 1400, speedExponent: 1.5, maxDamage: 350,
     handleMultiplier: 0.25, tipMultiplier: 1.8, hitCooldownMs: 180, knockback: 500, hitDebris: true },
   projectile: { speed: 1100, radius: 7, damage: 120, lifetimeMs: 3500, fireIntervalMs: 180, maxCount: 32, color: 0xeab84f, image: null },
@@ -32,10 +33,12 @@ export function mergeSettings<T extends object>(base: T, input: unknown, path: s
   for (const [key, value] of Object.entries(values)) {
     if (!(key in base) || !Object.hasOwn(base, key)) throw new Error(`${path}.${key}: 지원하지 않는 항목입니다.`);
     const original = (base as Record<string, unknown>)[key], field = `${path}.${key}`;
-    if (original !== null && typeof original === "object") output[key] = mergeSettings(original, value, field);
+    if (/color$/i.test(key) && typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value)) output[key] = Number.parseInt(value.slice(1), 16);
+    else if (original !== null && typeof original === "object") output[key] = mergeSettings(original, value, field);
     else if (typeof original === "number") {
       const signed = key === "angle";
-      if (typeof value !== "number" || !Number.isFinite(value) || (!signed && value < 0) || Math.abs(value) > 1e6)
+      const limit = /color$/i.test(key) ? 0xffffff : 1e6;
+      if (typeof value !== "number" || !Number.isFinite(value) || (!signed && value < 0) || Math.abs(value) > limit)
         throw new Error(`${field}: 유효한 ${signed ? "" : "0 이상 "}숫자가 필요합니다.`);
       output[key] = value;
     } else if (key === "image") {
@@ -67,6 +70,7 @@ export function parseWeaponConfig(input: unknown): WeaponConfig {
     if (definition.shape.length < 20 || definition.shape.length > 400 || definition.shape.width < 4 || definition.shape.width > 100 ||
       definition.shape.headWidth < 10 || definition.shape.headWidth > 200 || definition.shape.headHeight < 10 || definition.shape.headHeight > 200 ||
       definition.physics.handleMass <= 0 || definition.physics.headMass <= 0 || definition.physics.frictionAir > 0.2 ||
+      definition.physics.restitution > 1 || definition.physics.friction > 1 || definition.physics.frictionStatic > 10 ||
       definition.physics.maxAngularSpeed > 60 || definition.damage.referenceSpeed <= 0 || definition.damage.speedExponent > 4 ||
       definition.projectile.radius < 1 || definition.projectile.radius > 40 || definition.projectile.speed <= 0 || definition.projectile.speed > 10000 ||
       !Number.isInteger(definition.projectile.maxCount) || definition.projectile.maxCount < 1 || definition.projectile.maxCount > 128 ||

@@ -1,8 +1,8 @@
 # 프로젝트 파일 구조
 
 - 작성: 2026-11-04
-- 최종 갱신: 2026-11-10
-- 적용 범위: 3단계 체력·충돌·분리 소멸·재등장 기반, 1단계 물리·2단계 사진 유지
+- 최종 갱신: 2026-11-18
+- 적용 범위: 3단계 기반·사운드·기본 도형 무기·JSON 이펙트, 1단계 물리·2단계 사진 유지
 - 현재 진행·검증 범위: [STAGE_3_FOUNDATION_REPORT.md](STAGE_3_FOUNDATION_REPORT.md), 사진 기록은 [STAGE_2_PROGRESS.md](STAGE_2_PROGRESS.md), 물리 기준은 [STAGE_1_PROGRESS.md](STAGE_1_PROGRESS.md)
 - 구성: HTML/CSS + TypeScript + Vite + Phaser 3.90 내장 Matter
 - 글꼴: `@fontsource-variable/noto-sans-kr`의 Noto Sans KR Variable을 의존성으로 포함해 로컬 제공
@@ -19,12 +19,15 @@ LeeDamageWeb/
 ├── .gitignore                 # 의존성·빌드·테스트 출력 제외
 ├── public/
 │   ├── models/                # Face Landmarker 모델과 출처·해시 설명
+│   ├── config/                # weapons.json·effects.json 공통 defaults/개별 설정
 │   └── assets/
 │       ├── audio/             # Kenney 음원·라이선스·설정 안내 (JSON은 사용자 작성)
 │       └── injuries/          # 투명 배경 멍·상처·반창고 SVG 검증 에셋
 ├── src/
 │   ├── main.ts                # 웹 UI 생성, 버튼·단축키, 설정 전달, Phaser 시작
 │   ├── style.css              # 페이지·도구·설정 패널·반응형 레이아웃
+│   ├── weapons/               # WeaponConfig·geometry·WeaponSystem·WeaponFinishers: 설정·연속 충돌·도구·탄알·사망 연출
+│   ├── effects/               # ImpactEffects: JSON 설정·도형 이펙트·게임 시간 수명·동시 표시 상한
 │   ├── photo/
 │   │   ├── PhotoSession.ts    # 파일 검증·방향 보정·메모리 사진 상태
 │   │   ├── PhotoEditor.ts     # 편집창·원형/직접 윤곽·점 수정·미리보기·비동기 취소
@@ -33,7 +36,7 @@ LeeDamageWeb/
 │   │   ├── PhotoTransform.ts  # 사진·특징점·윤곽의 정/역변환, 마스크 출력
 │   │   └── PhotoVariants.ts   # 입·각 눈의 중심 고정/양끝 처짐 변형 2장 생성
 │   ├── audio/
-│   │   ├── SoundConfig.ts      # 사용자 JSON 검증·기본 Kenney 설정·체력 데미지 등급 연결
+│   │   ├── SoundConfig.ts      # 사용자 JSON 검증·속도 구간·무기별 신호·기본 사운드 설정
 │   │   ├── SoundMixer.ts       # 접촉 합치기·동시 재생·우선순위·기존 소리 교체
 │   │   └── ImpactAudio.ts      # 기존 AudioContext·음원 로딩/디코딩·버퍼·음량·해제
 │   └── game/

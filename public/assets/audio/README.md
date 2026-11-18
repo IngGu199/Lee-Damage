@@ -22,7 +22,7 @@ JSON이 없거나 잘못되면 `src/audio/SoundConfig.ts` 기본값을 사용한
 | `masterVolume` | 전체 음량 배율 0~1, 기본 0.8 |
 | `maxConcurrentSounds` | 전체 동시 재생 수 1~32, 기본 8 |
 | `defaults` | 공통 `volume`, `rateRange`, `cooldownMs`, `maxVoices`, `priority`. 이벤트 값이 우선 |
-| `events` | `collision.normal`, `collision.wall`, `death.burst`만 사용한다. 충돌 이벤트는 단일 객체 또는 여러 속도 구간의 객체 배열. 정의하지 않은 이벤트는 무음 |
+| `events` | `collision.normal`, `collision.wall`, `death.burst`, `weapon.<무기ID>.<신호>`를 사용한다. 충돌·무기 이벤트는 단일 객체 또는 여러 속도 구간의 객체 배열 |
 | `events.*.files` | 비어 있지 않은 상대 파일 경로 목록. `basePath` 뒤에 붙인다 |
 | `events.collision.*.speed` | 각 설정에 필수인 `[최소 속도, 최대 속도]`, px/s. 유한한 0 이상의 값이며 최대 > 최소. 최솟값 포함·최댓값 제외. 같은 이벤트 안의 구간 중복은 오류, 빈 구간은 무음 |
 | `events.collision.*.sound-size` | 필수 `[최소 음량 배수, 최대 음량 배수]`. 유한한 0 이상의 값이며 최대 ≥ 최소. 1을 넘는 배수도 가능 |
@@ -33,7 +33,9 @@ JSON이 없거나 잘못되면 `src/audio/SoundConfig.ts` 기본값을 사용한
 | `priority` | 교체 우선순위 0~100, 기본 1. 큰 값이 우선 |
 | `debris.volumeScale` | 잔해를 포함한 충돌의 음량 배율 0~1, 기본 0.35. 분리음에는 적용하지 않는다 |
 
-`speed`와 `sound-size`는 충돌 이벤트에만 사용한다. `death.burst`는 기존 `volume`으로 재생한다. 예전 `collision.light/medium/heavy`, `collision.wall.light/medium/heavy`, `collision.floor.*` 키는 새 형식으로 바꿔야 한다.
+충돌 이벤트에는 `speed`와 `sound-size`가 필수다. `death.burst`는 기존 `volume`으로 재생한다. 예전 `collision.light/medium/heavy`, `collision.wall.light/medium/heavy`, `collision.floor.*` 키는 새 형식으로 바꿔야 한다.
+
+무기 신호 `weapon.bat.hit/finish`, `weapon.hammer.hit/finish`, `weapon.gun.fire/hit/finish/pin/burst`도 지원한다. 무기의 단일 설정에서 `speed`·`sound-size`를 함께 생략하면 고정 음량이고, 함께 지정하거나 배열로 작성하면 기존과 같은 속도별 음량/구간 선택을 사용한다. 전용 설정이 없으면 초기 시제품은 기존 일반음·벽음·분리음의 첫 설정에서 파일·기본 음량·쿨다운을 임시 재사용한다. 임시 연결에는 충돌 전용 속도 구간을 적용하지 않으며 재생 기록은 신호별로 분리한다. 자세한 신호와 연결은 [무기 안내](../../../WEAPONS_AND_EFFECTS.md)를 참고한다. 사용자 사운드 JSON에 자동으로 키를 추가하지 않는다.
 
 ## 여러 속도 구간
 
@@ -90,4 +92,4 @@ HP는 기존 충돌 전 접근 속도·800px/s 기준·300ms 무적·잔해 손�
 
 `npx playwright test tests/sound-rules.spec.ts tests/sound.spec.ts`
 
-규칙 17개·Chromium 15개를 검증한다. 단일 설정과 배열 구간·경계·중복 거부·빈 구간·구간별 쿨다운/재생 수·전체 음원 로딩/중복 제거·음량 보간·배수·설정 오류, 충돌 후 속도와 충돌 전 HP 속도의 분리, 상대 회전·하위 스텝 단위, 네 면의 실제 일반음/벽음 재생, HP 손상 없는 접촉·무적, 쿨다운 0/양수·초기화·개별 실패, 동시 재생 한도·잔해·음량 저장·수명주기를 포함한다. 브라우저 검사는 사용자 음원 변경과 독립적으로 실제 OGG 샘플을 테스트 응답으로 사용한다.
+규칙 19개·Chromium 15개를 검증한다. 무기 신호·임시 음원 재사용·독립 쿨다운, 단일 설정과 배열 구간·경계·중복 거부·빈 구간·구간별 재생 수·음원 로딩/중복 제거·음량 보간·배수·설정 오류, 충돌 후 속도와 충돌 전 HP 속도의 분리, 상대 회전·하위 스텝 단위, 네 면의 실제 일반음/벽음 재생, HP 손상 없는 접촉·무적, 쿨다운 0/양수·초기화·개별 실패, 동시 재생 한도·잔해·음량 저장·수명주기를 포함한다. 브라우저 검사는 사용자 음원 변경과 독립적으로 실제 OGG 샘플을 테스트 응답으로 사용한다.

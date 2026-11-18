@@ -5,7 +5,7 @@ export interface SoundBackend {
   available(file: string): boolean;
   play(file: string, volume: number, rate: number, ended: () => void): SoundVoice | null;
 }
-interface Request { events: string[]; owners: Set<number>; time: number; speed: number; debris: boolean }
+interface Request { events: string[]; owners: Set<number>; time: number; speed: number; debris: boolean; fallback?: string }
 interface Layer { name: string; key: string; event: SoundEventConfig }
 interface Playing { event: string; priority: number; voice: SoundVoice }
 
@@ -32,6 +32,10 @@ export class SoundMixer {
       events: ["death.burst"], owners: new Set([owner]), time, speed: Infinity, debris: false,
     });
   }
+  signal(name: string, owner: number, time: number, speed: number, fallback?: string) {
+    if (!this.config.events[name] && !(fallback && this.config.events[fallback])) return;
+    this.queue(`signal:${name}:${owner}:${time}`, { events: [name], owners: new Set([owner]), time, speed, debris: false, fallback });
+  }
   private queue(key: string, request: Request) {
     if (this.muted || !Number.isFinite(request.time)) return;
     const previous = this.pending.get(key);
@@ -45,13 +49,18 @@ export class SoundMixer {
 
   private layers(request: Request): Layer[] {
     return request.events.flatMap(name => {
-      const definition = this.config.events[name];
+      const definition = this.config.events[name] ?? (request.fallback ? this.config.events[request.fallback] : undefined);
       if (!definition) return [];
       const variants = soundVariants(definition);
-      const index = name.startsWith("collision.")
+      const fallback = !this.config.events[name] && Boolean(request.fallback);
+      const index = !fallback && variants.some(event => event.speed)
         ? variants.findIndex(event => event.speed && request.speed >= event.speed[0] && request.speed < event.speed[1]) : 0;
       if (index < 0) return [];
-      return [{ name, key: Array.isArray(definition) ? `${name}[${index}]` : name, event: variants[index] }];
+      // Missing weapon definitions borrow an existing clip at its base volume.
+      // Collision speed limits remain specific to collision events; explicit
+      // weapon definitions apply their own ranges normally.
+      const event = fallback ? { ...variants[index], speed: undefined, "sound-size": undefined } : variants[index];
+      return [{ name, key: Array.isArray(definition) ? `${name}[${index}]` : name, event }];
     });
   }
 
@@ -70,7 +79,7 @@ export class SoundMixer {
       for (const { name, key, event } of request.layers) {
         const last = this.lastPlayed.get(key);
         if (event.cooldownMs > 0 && last !== undefined && request.time - last < event.cooldownMs) continue;
-        const gain = name.startsWith("collision.") ? collisionGain(event, request.speed) : 1;
+        const gain = event.speed ? collisionGain(event, request.speed) : 1;
         const volume = event.volume * gain * (request.debris ? this.config.debris.volumeScale : 1);
         if (volume <= 0) continue;
         let files = event.files.filter(file => this.backend.available(file));

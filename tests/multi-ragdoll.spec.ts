@@ -269,7 +269,9 @@ test("waking a standing actor refreshes cached pair masses before the collision 
 });
 
 test("five simultaneous deaths among ten actors do not cause runaway steps or chain deaths", async ({ page }) => {
-  test.setTimeout(60000); await open(page);
+  test.setTimeout(60000);
+  // Keep the established dense-room benchmark's physical dimensions after adding a tool row.
+  await page.setViewportSize({ width: 1440, height: 1154 }); await open(page);
   const result = await page.evaluate(() => {
     const s = window.__physicsLab; s.reset();
     for (let i = 0; i < 9; i++) s.spawnRagdoll();
