@@ -6,7 +6,7 @@ import type { Ragdoll } from "./Ragdoll";
 
 const { Body, Vector } = Matter;
 
-/** Experiment 2: align the skeleton to the live torso without resetting its flight. */
+/** Align the skeleton to the live torso without resetting its flight. */
 export class TorsoAlignment {
   private elapsed = 0;
   private relativeAngles: number[] = [];

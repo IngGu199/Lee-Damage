@@ -1,10 +1,10 @@
 import Phaser from "phaser";
 import type { PhysicsScene } from "../game/PhysicsScene";
 import type { RagdollActor } from "../game/RagdollActor";
-import { Matter } from "../game/matter";
+import { Matter, forgetBodyContacts } from "../game/matter";
 import { ROOM, REFERENCE_STEP } from "../game/config";
 import { PointerVelocity } from "../game/PointerVelocity";
-import type { ContactMotion } from "../game/ImpactCollector";
+import { captureMotion, contactVelocity, type ContactMotion } from "../game/ContactMotion";
 import { ImpactEffects } from "../effects/ImpactEffects";
 import { DEFAULT_WEAPON_CONFIG, loadSettings, meleeDamage, parseWeaponConfig, type ToolId, type WeaponId } from "./WeaponConfig";
 import { WeaponFinishers, type AttachedBullet } from "./WeaponFinishers";
@@ -340,9 +340,7 @@ export class WeaponSystem {
   beforeSolve(targets: ReadonlyMap<MatterJS.BodyType, ContactMotion>) {
     this.targetMotion = targets;
     for (const item of this.items.values()) {
-      const factor = 1000 / item.body.deltaTime;
-      item.motion = { x: item.body.velocity.x * factor, y: item.body.velocity.y * factor,
-        angular: item.body.angularVelocity * factor, center: { ...item.body.position } };
+      item.motion = captureMotion(item.body, item.body.deltaTime);
     }
   }
   afterStep(delta: number, time: number) {
@@ -400,16 +398,16 @@ export class WeaponSystem {
           const point = add(sample.start, multiply(displacement, t)), source = item.motion, peer = this.targetMotion?.get(part.body);
           const surface = weapon === "hammer" ? circleContact(point, part.body.vertices!) : undefined;
           const position = surface?.position ?? point;
-          let velocity = source ? { x: source.x - source.angular * (position.y - source.center.y), y: source.y + source.angular * (position.x - source.center.x) }
+          let velocity = source ? contactVelocity(source, position)
             : multiply(displacement, 1000 / delta);
           if (weapon === "hammer" && this.holding && this.body === body) {
             // Grip constraints move the hammer after beforeSolve. Include that translation
             // and rotation instead of requiring a pre-existing angular velocity.
             const linear = multiply(subtract(body.position, previous.position), 1000 / delta);
             const angular = (body.angle - previous.angle) * 1000 / delta;
-            velocity = { x: linear.x - angular * (position.y - body.position.y), y: linear.y + angular * (position.x - body.position.x) };
+            velocity = contactVelocity({ ...linear, angular, center: body.position }, position);
           }
-          const relative = subtract(velocity, peer ? { x: peer.x - peer.angular * (position.y - peer.center.y), y: peer.y + peer.angular * (position.x - peer.center.x) }
+          const relative = subtract(velocity, peer ? contactVelocity(peer, position)
             : multiply(part.body.velocity, 1000 / REFERENCE_STEP));
           // Pointer projection supplies the held bat's translation after the solver.
           if (weapon === "bat" && this.holding && this.body === body) Object.assign(relative, multiply(displacement, 1000 / delta));
@@ -421,12 +419,9 @@ export class WeaponSystem {
         }
       });
       if (!best) continue;
-      const key = `${body.id}:${actor.id}`; contacts.add(key);
-      if (this.touching.has(key) || time - (this.lastHit.get(key) ?? -Infinity) < definition.damage.hitCooldownMs) continue;
-      this.lastHit.set(key, time); this.hit(weapon, best, time);
+      this.meleeContact(item, best, contacts, time);
     }
-    for (const key of this.touching) if (key.startsWith(`${body.id}:`)) this.touching.delete(key);
-    for (const key of contacts) this.touching.add(key);
+    this.updateContacts(body, contacts);
   }
   private meleeSkin(item: MeleeItem, skin: WeaponSkin, delta: number, time: number) {
     const { body, previous } = item, definition = this.config.weapons[item.id], shape = definition.shape;
@@ -459,10 +454,9 @@ export class WeaponSystem {
             const movement = multiply(subtract(body.position, previous!.position), 1000 / delta);
             const rotation = (body.angle - previous!.angle) * 1000 / delta;
             const velocity = this.holding && this.body === body || !source
-              ? { x: movement.x - rotation * (position.y - body.position.y), y: movement.y + rotation * (position.x - body.position.x) }
-              : { x: source.x - source.angular * (position.y - source.center.y), y: source.y + source.angular * (position.x - source.center.x) };
-            const relative = subtract(velocity, peer ? { x: peer.x - peer.angular * (position.y - peer.center.y),
-              y: peer.y + peer.angular * (position.x - peer.center.x) } : multiply(target.velocity, 1000 / REFERENCE_STEP));
+              ? contactVelocity({ ...movement, angular: rotation, center: body.position }, position)
+              : contactVelocity(source, position);
+            const relative = subtract(velocity, peer ? contactVelocity(peer, position) : multiply(target.velocity, 1000 / REFERENCE_STEP));
             const speed = item.id === "hammer" ? closingSpeed(relative, surface.normal) : Math.hypot(relative.x, relative.y);
             const local = subtract(rotate(subtract(position, body.position), -body.angle), item.originOffset);
             const damage = meleeDamage(definition, speed, local.x / shape.length, -1);
@@ -472,10 +466,18 @@ export class WeaponSystem {
         }
       }
       if (!best) continue;
-      const key = `${body.id}:${actor.id}`; contacts.add(key);
-      if (this.touching.has(key) || time - (this.lastHit.get(key) ?? -Infinity) < definition.damage.hitCooldownMs) continue;
-      this.lastHit.set(key, time); this.hit(item.id, best, time);
+      this.meleeContact(item, best, contacts, time);
     }
+    this.updateContacts(body, contacts);
+  }
+  private meleeContact(item: MeleeItem, contact: Contact, contacts: Set<string>, time: number) {
+    const key = `${item.body.id}:${contact.actor.id}`;
+    contacts.add(key);
+    if (this.touching.has(key) || time - (this.lastHit.get(key) ?? -Infinity) < this.config.weapons[item.id].damage.hitCooldownMs) return;
+    this.lastHit.set(key, time);
+    this.hit(item.id, contact, time);
+  }
+  private updateContacts(body: MatterJS.BodyType, contacts: Set<string>) {
     for (const key of this.touching) if (key.startsWith(`${body.id}:`)) this.touching.delete(key);
     for (const key of contacts) this.touching.add(key);
   }
@@ -615,11 +617,7 @@ export class WeaponSystem {
     for (const key of this.lastHit.keys()) if (key.startsWith(`${item.body.id}:`)) this.lastHit.delete(key);
     for (const key of this.touching) if (key.startsWith(`${item.body.id}:`)) this.touching.delete(key);
     // Compound weapons leave child-body pairs in Matter's cache until its next step.
-    const pairs = this.scene.matter.world.engine.pairs;
-    const keep = (pair: { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType }) =>
-      pair.bodyA.parent !== item.body && pair.bodyB.parent !== item.body && pair.bodyA !== item.body && pair.bodyB !== item.body;
-    for (const key of ["list", "collisionStart", "collisionActive", "collisionEnd"]) pairs[key] = pairs[key].filter(keep);
-    for (const [key, pair] of Object.entries(pairs.table)) if (!keep(pair as { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType })) delete pairs.table[key];
+    forgetBodyContacts(this.scene.matter.world, new Set([item.body]));
     if (this.activeItem === item) this.activeItem = undefined;
   }
   deleteHeld() {

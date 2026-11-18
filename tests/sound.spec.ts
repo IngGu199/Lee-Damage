@@ -17,10 +17,11 @@ test.beforeEach(async ({ page }) => {
   // Keep decoding tests independent of user audio pack changes.
   const clip = readFileSync(new URL("./fixtures/impact.ogg", import.meta.url));
   await page.route("**/assets/audio/sfx/kenney-impact/*.ogg", route => route.fulfill({ contentType: "audio/ogg", body: clip }));
+  await page.route("**/assets/audio/sfx/others/BOOM.mp3", route => route.fulfill({ contentType: "audio/ogg", body: clip }));
 });
 
 test("default clip paths load once with a real OGG fixture and native playback produces an audio signal", async ({ page }) => {
-  const requests: string[] = []; page.on("request", request => { if (/\.(ogg|m4a)$/.test(request.url())) requests.push(request.url()); });
+  const requests: string[] = []; page.on("request", request => { if (/\.(ogg|m4a|mp3)$/.test(request.url())) requests.push(request.url()); });
   await open(page);
   const result = await page.evaluate(async () => {
     const s = window.__physicsLab;
@@ -37,10 +38,10 @@ test("default clip paths load once with a real OGG fixture and native playback p
     const snapshot = s.audio.snapshot(); s.reset();
     return { peak, snapshot, reset: s.audio.snapshot() };
   });
-  expect(result.snapshot).toMatchObject({ state: "ready", source: "default", buffers: 8, errors: [], played: 1 });
+  expect(result.snapshot).toMatchObject({ state: "ready", source: "default", buffers: 7, errors: [], played: 1 });
   expect(result.peak).toBeGreaterThan(0.0001);
-  expect(new Set(requests).size).toBe(8); expect(requests).toHaveLength(8);
-  expect(result.reset).toMatchObject({ buffers: 8, active: 0, owners: 0, pending: 0 });
+  expect(new Set(requests).size).toBe(7); expect(requests).toHaveLength(7);
+  expect(result.reset).toMatchObject({ buffers: 7, active: 0, owners: 0, pending: 0 });
 });
 
 for (const surface of ["left", "right", "ceiling", "floor"] as const) {
@@ -219,14 +220,14 @@ test("volume and mute persist and paused/photo/reset scenes never replay queued 
   });
   expect(result.played).toBeGreaterThan(0);
   expect(result.paused).toMatchObject({ active: 0, pending: 0 }); expect(result.resumed.played).toBe(result.played);
-  expect(result.photo.active).toBe(0); expect(result.reset).toMatchObject({ active: 0, owners: 0, buffers: 8 });
+  expect(result.photo.active).toBe(0); expect(result.reset).toMatchObject({ active: 0, owners: 0, buffers: 7 });
 });
 
 test("bad JSON falls back safely and a missing clip leaves remaining configured audio usable", async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   await page.route("**/config/sounds.json", route => route.fulfill({ body: "{broken", contentType: "application/json" }));
   await open(page);
-  expect(await page.evaluate(() => window.__physicsLab.audio.snapshot())).toMatchObject({ source: "default", state: "partial", buffers: 8 });
+  expect(await page.evaluate(() => window.__physicsLab.audio.snapshot())).toMatchObject({ source: "default", state: "partial", buffers: 7 });
   await page.route("**/config/sounds.json", route => route.fulfill({ json: {
     version: 1, basePath: "assets/audio/", events: { "death.burst": {
       files: ["sfx/kenney-impact/impactSoft_heavy_000.ogg", "sfx/missing.ogg"],
@@ -253,7 +254,7 @@ test("a death storm respects voice caps and expiry/reset do not reload or duplic
   expect(result.first.recent.filter(sound => sound.event === "death.burst")).toHaveLength(5);
   expect(result.first.active).toBeLessThanOrEqual(8); expect(result.expired.active).toBeLessThanOrEqual(8);
   expect(result.expired.owners).toBeLessThanOrEqual(10);
-  expect(result.reset).toMatchObject({ active: 0, pending: 0, owners: 0, buffers: 8 });
+  expect(result.reset).toMatchObject({ active: 0, pending: 0, owners: 0, buffers: 7 });
   expect(result.stats).toMatchObject({ aliveCount: 1, debrisCount: 0, bodies: 14, joints: 9 });
 });
 
@@ -285,6 +286,7 @@ test("preview and controlled landings stay silent while a fragment-wall contact 
 test("unavailable audio leaves gameplay usable and scene shutdown releases every voice and buffer", async ({ page }) => {
   await page.route("**/*.ogg", route => route.fulfill({ status: 404, body: "" }));
   await page.route("**/*.m4a", route => route.fulfill({ status: 404, body: "" }));
+  await page.route("**/*.mp3", route => route.fulfill({ status: 404, body: "" }));
   await open(page);
   expect(await page.evaluate(() => window.__physicsLab.audio.snapshot())).toMatchObject({ state: "disabled", buffers: 0 });
   await page.locator("#game canvas").focus();

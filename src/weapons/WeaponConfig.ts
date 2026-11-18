@@ -1,4 +1,4 @@
-import type { DamageHit } from "../game/DamageSystem";
+import { capDamage, type DamageHit } from "../game/DamageSystem";
 import { DAMAGE_RULES } from "../game/damageConfig";
 
 export const WEAPON_IDS = ["bat", "hammer", "gun"] as const;
@@ -134,5 +134,5 @@ export function meleeDamage(definition: WeaponDefinition, speed: number, tipRati
   const d = definition.damage;
   if (!Number.isFinite(speed) || speed < d.minSpeed || speed <= 0) return 0;
   const weight = d.handleMultiplier + (d.tipMultiplier - d.handleMultiplier) * Math.max(0, Math.min(1, tipRatio));
-  return Math.min(maxDamage < 0 ? Number.MAX_VALUE : maxDamage, d.amount * (speed / d.referenceSpeed) ** d.speedExponent * weight);
+  return capDamage(d.amount * (speed / d.referenceSpeed) ** d.speedExponent * weight, maxDamage);
 }

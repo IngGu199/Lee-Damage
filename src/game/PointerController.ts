@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { Matter } from "./matter";
-import { DEFAULT_SETTINGS, ROOM, type PhysicsExperiment } from "./config";
+import { DEFAULT_SETTINGS, ROOM } from "./config";
 import { PointerVelocity } from "./PointerVelocity";
 import type { Ragdoll } from "./Ragdoll";
 
@@ -11,7 +11,6 @@ export class PointerController {
   grip: MatterJS.ConstraintType | null = null;
   grabbed: string | null = null;
   target = { x: 600, y: 300 };
-  experiment: PhysicsExperiment = DEFAULT_SETTINGS.experiment;
   throwScale = DEFAULT_SETTINGS.throwScale;
   private pointerId: number | null = null;
   private heldDoll?: Ragdoll;
@@ -200,7 +199,7 @@ export class PointerController {
     if (this.grip) this.world.removeConstraint(this.grip);
     if (this.heldBody && this.heldDoll) {
       const doll = this.heldDoll;
-      if (doll.joints.length) doll.setSelfCollision(this.experiment === 2);
+      if (doll.joints.length) doll.setSelfCollision(true);
       if (throwBody) {
         const velocity = Vector.mult(this.motion.at(time), this.throwScale);
         if (doll.joints.length) doll.launch(velocity, true);

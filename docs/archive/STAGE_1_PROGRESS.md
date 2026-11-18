@@ -1,5 +1,7 @@
 # 1단계 정리 — 기초 물리 엔진 설계 완료
 
+> 과거 개발 기록입니다. 당시 미구현·예정·비교 실험·검증 수치는 현재 상태를 뜻하지 않습니다. 2026-11-18 사용자 결정으로 3·4단계를 완료했으며, 현재 기준은 [개발 계획](../../DEV_PLAN.md)과 [계산 규칙](../PHYSICS_AND_DAMAGE.md)을 따릅니다. 비교용 실험 1 코드는 정리 과정에서 제거했습니다.
+
 - 작성일: 2026-11-08
 - 설계 완료일: 2026-11-08
 - 프로젝트: Lee Damage / 물리 실험실
@@ -147,24 +149,24 @@
 
 | 파일 | 역할 |
 | --- | --- |
-| [src/main.ts](src/main.ts) | 웹 UI, 실험 노트의 확정 수치·각운동 설명과 적용값, 디버그 전환, 단축키, 상태 표시 |
-| [src/style.css](src/style.css) | 화면·설정 패널·반응형 스타일 |
-| [src/game/config.ts](src/game/config.ts) | 채택 방식 2, 고정 수치, 각운동·기립 기준, 방 좌표, 물리·정렬 시간 상수 |
-| [src/game/PhysicsScene.ts](src/game/PhysicsScene.ts) | 물리 루프, 모드·설정 전달, 일시정지, 재배치, 진단 |
-| [src/game/Ragdoll.ts](src/game/Ragdoll.ts) | 신체·관절 구성, 연결 위치 계산, 운동·충돌 상태, 보정 캐시 |
-| [src/game/PointerController.ts](src/game/PointerController.ts) | 동적 클릭 지점 회전축·잡기·놓기·취소, 포인터 캡처, 던지기 배율 |
-| [src/game/PointerVelocity.ts](src/game/PointerVelocity.ts) | 이벤트 시각 기반의 마지막 이동 속도 벡터 |
-| [src/game/PostureController.ts](src/game/PostureController.ts) | 조작 후 N초, 정렬·자유 물리·대기·기립 상태 관리 |
-| [src/game/TorsoAlignment.ts](src/game/TorsoAlignment.ts) | 채택한 2번: 몸통 기준 전신 관절 정렬 및 보정 전 속도 복원 |
-| [src/game/JointRepair.ts](src/game/JointRepair.ts) | 1번의 자기 충돌 ON 상태에 남긴 이전 국소 복구 경로 |
-| [src/game/PoseRecovery.ts](src/game/PoseRecovery.ts) | 정지 후 기립을 위한 준비 정렬·일어서는 모션 |
-| [src/game/SelfCollision.ts](src/game/SelfCollision.ts) | 신체 침투·방 경계·접촉 방향 속도 보정 |
-| [src/game/draw.ts](src/game/draw.ts) | 방·도형 캐릭터·디버그 표시 |
-| [src/game/matter.ts](src/game/matter.ts) | Phaser 내장 Matter 접근과 타입 보완 |
-| [tests/physics.spec.ts](tests/physics.spec.ts) | 기존 물리·입력·멈춤·기립 회귀 시나리오 |
-| [tests/collision-cycle.spec.ts](tests/collision-cycle.spec.ts) | 1번의 자기 충돌 전환 시나리오 |
+| [src/main.ts](../../src/main.ts) | 웹 UI, 실험 노트의 확정 수치·각운동 설명과 적용값, 디버그 전환, 단축키, 상태 표시 |
+| [src/style.css](../../src/style.css) | 화면·설정 패널·반응형 스타일 |
+| [src/game/config.ts](../../src/game/config.ts) | 채택 방식 2, 고정 수치, 각운동·기립 기준, 방 좌표, 물리·정렬 시간 상수 |
+| [src/game/PhysicsScene.ts](../../src/game/PhysicsScene.ts) | 물리 루프, 모드·설정 전달, 일시정지, 재배치, 진단 |
+| [src/game/Ragdoll.ts](../../src/game/Ragdoll.ts) | 신체·관절 구성, 연결 위치 계산, 운동·충돌 상태, 보정 캐시 |
+| [src/game/PointerController.ts](../../src/game/PointerController.ts) | 동적 클릭 지점 회전축·잡기·놓기·취소, 포인터 캡처, 던지기 배율 |
+| [src/game/PointerVelocity.ts](../../src/game/PointerVelocity.ts) | 이벤트 시각 기반의 마지막 이동 속도 벡터 |
+| [src/game/PostureController.ts](../../src/game/PostureController.ts) | 조작 후 N초, 정렬·자유 물리·대기·기립 상태 관리 |
+| [src/game/TorsoAlignment.ts](../../src/game/TorsoAlignment.ts) | 채택한 2번: 몸통 기준 전신 관절 정렬 및 보정 전 속도 복원 |
+| `src/game/JointRepair.ts`(제거됨) | 1번의 자기 충돌 ON 상태에 남긴 이전 국소 복구 경로 |
+| [src/game/PoseRecovery.ts](../../src/game/PoseRecovery.ts) | 정지 후 기립을 위한 준비 정렬·일어서는 모션 |
+| [src/game/SelfCollision.ts](../../src/game/SelfCollision.ts) | 신체 침투·방 경계·접촉 방향 속도 보정 |
+| [src/game/draw.ts](../../src/game/draw.ts) | 방·도형 캐릭터·디버그 표시 |
+| [src/game/matter.ts](../../src/game/matter.ts) | Phaser 내장 Matter 접근과 타입 보완 |
+| [tests/physics.spec.ts](../../tests/physics.spec.ts) | 기존 물리·입력·멈춤·기립 회귀 시나리오 |
+| [tests/collision-cycle.spec.ts](../../tests/collision-cycle.spec.ts) | 1번의 자기 충돌 전환 시나리오 |
 
-전체 트리는 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md), 후속 계획은 [DEV_PLAN.md](DEV_PLAN.md), 게임 요구사항은 [GAME_PLAN.md](GAME_PLAN.md)를 참고한다. [PROTOTYPE_REPORT.md](PROTOTYPE_REPORT.md)의 본문은 실험 1 당시 결과 기록으로 보존한다.
+전체 트리는 [PROJECT_STRUCTURE.md](../../PROJECT_STRUCTURE.md), 후속 계획은 [DEV_PLAN.md](../../DEV_PLAN.md), 게임 요구사항은 [GAME_PLAN.md](GAME_PLAN.md)를 참고한다. [PROTOTYPE_REPORT.md](PROTOTYPE_REPORT.md)의 본문은 실험 1 당시 결과 기록으로 보존한다.
 
 ## 8. 검증 이력과 현재 확인 범위
 

@@ -2,13 +2,13 @@ import { REFERENCE_STEP, ROOM } from "./config";
 import type { Ragdoll } from "./Ragdoll";
 import { hitDamage, type DamageHit } from "./DamageSystem";
 import type { Point } from "../photo/PhotoTransform";
+import { captureMotion, relativeContactVelocity, type ContactMotion } from "./ContactMotion";
 
 export interface ContactImpact extends DamageHit { contactKey: string; surface: RoomSurface | `body:${number}` }
 export interface SoundContact extends ContactImpact { speed: number }
 
 export type RoomSurface = "left" | "right" | "ceiling" | "floor";
 interface Contact { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; collision: { supports: Point[]; normal?: Point } }
-export interface ContactMotion { x: number; y: number; angular: number; center: Point; debris?: boolean }
 const normals: Record<RoomSurface, Point> = {
   left: { x: 1, y: 0 }, right: { x: -1, y: 0 }, ceiling: { x: 0, y: 1 }, floor: { x: 0, y: -1 },
 };
@@ -43,9 +43,7 @@ export class ImpactCollector {
   beforeSolve = () => {
     if (!this.enabled || !this.doll) return;
     for (const { body } of this.doll.parts) {
-      const scale = 1000 / (body.deltaTime || this.delta);
-      this.motion.set(body, { x: body.velocity.x * scale, y: body.velocity.y * scale,
-        angular: body.angularVelocity * scale, center: { ...body.position } });
+      this.motion.set(body, captureMotion(body, body.deltaTime || this.delta));
     }
     this.boundaries();
   };
@@ -60,12 +58,9 @@ export class ImpactCollector {
     if (surface === "floor") this.touchedFloor = true;
     const velocity = this.motion.get(body);
     if (!velocity) return;
-    const vx = velocity.x - velocity.angular * (point.y - velocity.center.y) -
-      (peer ? peer.x - peer.angular * (point.y - peer.center.y) : 0);
-    const vy = velocity.y + velocity.angular * (point.x - velocity.center.x) -
-      (peer ? peer.y + peer.angular * (point.x - peer.center.x) : 0);
+    const relative = relativeContactVelocity(velocity, point, peer);
     const normal = peerNormal ?? normals[surface as RoomSurface];
-    const strength = Math.max(0, -(vx * normal.x + vy * normal.y));
+    const strength = Math.max(0, -(relative.x * normal.x + relative.y * normal.y));
     if (!Number.isFinite(strength) || strength <= (this.pending.get(key)?.strength ?? -1)) return;
     const dx = point.x - body.position.x, dy = point.y - body.position.y;
     const c = Math.cos(body.angle), s = Math.sin(body.angle);
@@ -166,14 +161,11 @@ export class ImpactCollector {
  * point speed now, before pose correction, damage reactions or debris limits.
  */
 export function postCollisionSpeed(hit: ContactImpact, body: MatterJS.BodyType, peer?: MatterJS.BodyType) {
-  const local = hit.local ?? { x: hit.position.x - body.position.x, y: hit.position.y - body.position.y };
   const c = Math.cos(body.angle), s = Math.sin(body.angle);
-  const offset = { x: local.x * c - local.y * s, y: local.x * s + local.y * c };
+  const offset = hit.local ? { x: hit.local.x * c - hit.local.y * s, y: hit.local.x * s + hit.local.y * c }
+    : { x: hit.position.x - body.position.x, y: hit.position.y - body.position.y };
   const point = { x: body.position.x + offset.x, y: body.position.y + offset.y };
-  const vx = body.velocity.x - body.angularVelocity * offset.y - (peer
-    ? peer.velocity.x - peer.angularVelocity * (point.y - peer.position.y) : 0);
-  const vy = body.velocity.y + body.angularVelocity * offset.x - (peer
-    ? peer.velocity.y + peer.angularVelocity * (point.x - peer.position.x) : 0);
-  const speed = Math.hypot(vx, vy) * 1000 / REFERENCE_STEP;
+  const velocity = relativeContactVelocity(captureMotion(body), point, peer ? captureMotion(peer) : undefined);
+  const speed = Math.hypot(velocity.x, velocity.y);
   return Number.isFinite(speed) ? speed : 0;
 }

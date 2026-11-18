@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { defineConfig } from "vite";
-import { photoLibrary } from "./tools/photoLibrary";
+import { photoLibrary } from "./tools/photoLibrary.ts";
 
 // Optional local extensions are absent from Git clones and production builds.
 export default defineConfig(async ({ command }) => {

@@ -128,7 +128,7 @@ test("photo follows final head rotation, while joints and physics settings are p
   expect(result.face.rotation).toBeCloseTo(result.head.angle, 6);
   expect(result.head.angle).toBeCloseTo(Math.PI / 3, 6);
   expect(result.stats.bodies).toBe(14); expect(result.stats.joints).toBe(9);
-  expect(result.settings).toMatchObject({ gravity: 2.5, throwScale: 0.5, bounce: 0.95, experiment: 2 });
+  expect(result.settings).toMatchObject({ gravity: 2.5, throwScale: 0.5, bounce: 0.95 });
 });
 
 test("editing preserves pause reasons, blocks game shortcuts and cancels changes", async ({ page }) => {

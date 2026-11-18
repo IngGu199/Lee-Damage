@@ -1,16 +1,15 @@
 import Phaser from "phaser";
 import { ImpactAudio } from "../audio/ImpactAudio";
-import { Matter, Collision } from "./matter";
+import { Matter, Collision, forgetBodyContacts } from "./matter";
 import {
   DEFAULT_SETTINGS, FIXED_SETTINGS, FIXED_STEP, MAX_TRAVEL_PER_SUBSTEP, MAX_SUBSTEPS,
-  REFERENCE_STEP, ROOM, type LabSettings, type LabStats,
+  ROOM, type LabSettings, type LabStats,
 } from "./config";
 import { PointerController } from "./PointerController";
 import { drawRoom } from "./draw";
 import { RagdollActor } from "./RagdollActor";
-import type { Ragdoll } from "./Ragdoll";
 import { hitDamage, type DamageHit } from "./DamageSystem";
-import type { ContactMotion } from "./ImpactCollector";
+import { captureMotion, type ContactMotion } from "./ContactMotion";
 import { DAMAGE_RULES } from "./damageConfig";
 import { separateBodies } from "./SelfCollision";
 import { BODY_CONTACT_PHYSICS, DEBRIS_PHYSICS, limitBodyReaction, softenBodyContact } from "./DebrisPhysics";
@@ -91,7 +90,6 @@ export class PhysicsScene extends Phaser.Scene {
       },
       point => this.weapons?.pick(point) ? undefined
         : [...this.actors].reverse().find(actor => actor.lifecycle.state !== "finishing" && actor.doll.at(point))?.doll);
-    this.pointer.experiment = this.settings.experiment;
     this.weapons = new WeaponSystem(this);
     this.weapons.onChange = () => this.onToolState();
     Matter.Events.on(this.matter.world.engine, "beforeSolve", this.beforeSolve);
@@ -219,11 +217,7 @@ export class PhysicsScene extends Phaser.Scene {
     actor.dispose();
     this.actors.splice(this.actors.indexOf(actor), 1);
     // Remove only this actor's cached pairs. Other actors keep their contacts and impulses.
-    const pairs = this.matter.world.engine.pairs;
-    const keep = (pair: { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType }) => !bodies.has(pair.bodyA) && !bodies.has(pair.bodyB);
-    for (const key of ["list", "collisionStart", "collisionActive", "collisionEnd"])
-      pairs[key] = pairs[key].filter(keep);
-    for (const [key, pair] of Object.entries(pairs.table)) if (!keep(pair as { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType })) delete pairs.table[key];
+    forgetBodyContacts(this.matter.world, bodies);
     if (this.selectedId === actor.id) this.selectedId = this.livingActors[0]?.id ?? this.actors[0]?.id ?? 0;
   }
 
@@ -287,23 +281,18 @@ export class PhysicsScene extends Phaser.Scene {
   removeAfterWeapon(actor: RagdollActor) { this.removeActor(actor); }
 
   configure(settings: LabSettings) {
-    if (this.settings.experiment !== settings.experiment) this.pointer.cancel();
     this.settings = { ...settings, ...FIXED_SETTINGS };
-    this.pointer.experiment = settings.experiment; this.pointer.throwScale = this.settings.throwScale;
+    this.pointer.throwScale = this.settings.throwScale;
     this.matter.world.setGravity(0, this.settings.gravity);
     for (const actor of this.actors) {
-      actor.posture.setExperiment(settings.experiment);
-      actor.doll.setBounce(this.settings.bounce); actor.doll.configureLag(this.settings.lag);
+      actor.doll.setBounce(this.settings.bounce);
     }
   }
 
   private beforeSolve = () => {
     this.motion.clear();
     for (const actor of this.actors) for (const { body } of actor.doll.parts) {
-      const factor = body.isStatic ? 0 : 1000 / body.deltaTime;
-      this.motion.set(body, { x: body.velocity.x * factor, y: body.velocity.y * factor,
-        angular: body.angularVelocity * factor, center: { ...body.position },
-        debris: actor.lifecycle.state === "bursting" });
+      this.motion.set(body, { ...captureMotion(body, body.deltaTime), debris: actor.lifecycle.state === "bursting" });
     }
     this.weapons.beforeSolve(this.motion);
     for (const pair of this.matter.world.engine.pairs.list) this.softenContact(pair);
@@ -496,7 +485,7 @@ export class PhysicsScene extends Phaser.Scene {
         maxHp: actor.damage.health.maxHp, state: actor.lifecycle.state })),
       lifeId: actor.id, lifeState: actor.lifecycle.state, hp: actor.damage.health.hp, maxHp: actor.damage.health.maxHp,
       lostHp: actor.damage.health.lostHp, simulationTime: this.simulationTime,
-      spawnProtected: actor.lifecycle.protected(this.simulationTime), experiment: this.settings.experiment,
+      spawnProtected: actor.lifecycle.protected(this.simulationTime),
       alignmentRemaining: actor.posture.alignmentRemaining(this.settings.repairSeconds), fps: Math.round(this.game.loop.actualFps),
       speed: Math.round(Math.max(...this.actors.map(actor => actor.doll.linearSpeed))),
       bodies: Matter.Composite.allBodies(world).length, joints: Matter.Composite.allConstraints(world).length,

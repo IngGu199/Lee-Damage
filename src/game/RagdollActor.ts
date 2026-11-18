@@ -39,7 +39,7 @@ export class RagdollActor {
     retained?: { damage: DamageSystem; appearance: ImpactAppearance }) {
     this.doll = new Ragdoll(world, settings.bounce);
     for (const { body } of this.doll.parts) Matter.Body.translate(body, { x: x - 600, y: 0 });
-    this.posture = new PostureController(this.doll, settings.experiment);
+    this.posture = new PostureController(this.doll);
     this.lifecycle = new RagdollLifecycle(id);
     this.lifecycle.spawn(time, airborne, id);
     this.damage = retained?.damage ?? new DamageSystem();

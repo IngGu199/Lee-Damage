@@ -15,6 +15,17 @@ export const Matter = (
   }
 ).Matter;
 
+/** Remove stale contacts for deleted bodies, including compound weapon children. */
+export function forgetBodyContacts(world: Phaser.Physics.Matter.World, bodies: ReadonlySet<MatterJS.BodyType>) {
+  const pairs = world.engine.pairs;
+  const keep = (pair: { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType }) =>
+    ![pair.bodyA, pair.bodyB].some(body => bodies.has(body) || bodies.has(body.parent));
+  for (const key of ["list", "collisionStart", "collisionActive", "collisionEnd"])
+    pairs[key] = pairs[key].filter(keep);
+  for (const [key, pair] of Object.entries(pairs.table))
+    if (!keep(pair as { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType })) delete pairs.table[key];
+}
+
 // Bundled Collision.collides is static at runtime; Phaser's declaration lists it as an instance method.
 export const Collision = Matter.Collision as unknown as {
   collides(

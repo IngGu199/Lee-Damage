@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { collisionDamage, damageFeedback, damageIntensity, DamageSystem, type DamageHit } from "../src/game/DamageSystem";
+import { capDamage, collisionDamage, damageFeedback, damageIntensity, DamageSystem, type DamageHit } from "../src/game/DamageSystem";
 import { HealthState } from "../src/game/HealthState";
 import { InjuryProgression, photoStage } from "../src/game/InjuryProgression";
 import { RagdollLifecycle } from "../src/game/RagdollLifecycle";
@@ -8,6 +8,16 @@ import type { Ragdoll } from "../src/game/Ragdoll";
 
 const hit = (overrides: Partial<DamageHit> = {}): DamageHit => ({
   lifeId: 1, hitId: 1, source: "room", part: 0, position: { x: 30, y: 300 }, time: 0, strength: 1400, ...overrides,
+});
+
+test("damage caps handle unlimited overflow, immunity and invalid amounts without producing negative HP loss", () => {
+  expect(capDamage(240, 50)).toBe(50);
+  expect(capDamage(240, 0)).toBe(0);
+  expect(capDamage(240, -1)).toBe(240);
+  expect(capDamage(Infinity, -1)).toBe(Number.MAX_VALUE);
+  expect(capDamage(-20, 50)).toBe(0);
+  expect(capDamage(NaN, 50)).toBe(0);
+  expect(capDamage(20, NaN)).toBe(0);
 });
 
 test("closing speed curve excludes weak, invalid and tangential motion and caps strong impacts", () => {

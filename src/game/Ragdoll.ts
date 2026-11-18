@@ -33,8 +33,6 @@ export class Ragdoll {
   readonly parts: Part[] = [];
   readonly joints: MatterJS.ConstraintType[] = [];
   readonly standingPose: { x: number; y: number; angle: number }[] = [];
-  private readonly inertia: number[] = [];
-  private readonly followAngles: number[] = [];
   private readonly anchors: { a: MatterJS.Vector; b: MatterJS.Vector }[] = [];
   private readonly nonCollidingGroup = Body.nextGroup(true);
   private selfCollision = true;
@@ -73,7 +71,6 @@ export class Ragdoll {
       Body.setMass(body, mass);
       // Respond more readily to pivot/contact torque while keeping the same mass.
       Body.setInertia(body, body.inertia * ANGULAR_INERTIA_SCALE);
-      this.inertia.push(body.inertia);
       this.standingPose.push({
         x: x - 600,
         y: y + STANDING_OFFSET_Y + ROOM.bottom - 650,
@@ -122,7 +119,6 @@ export class Ragdoll {
       });
       this.joints.push(link);
       this.anchors.push({ a: { ...pointA }, b: { ...pointB } });
-      this.followAngles.push(a.angle);
       Composite.add(this.composite, link);
     };
     joint(torso, head, 0, -53, 0, 36);
@@ -205,34 +201,6 @@ export class Ragdoll {
     }));
   }
 
-  get twistedJoints() {
-    // Ordinary bent elbows/knees are valid. Only a joint folded back beyond 120° qualifies.
-    return this.joints.flatMap((joint, index) =>
-      Math.abs(Phaser.Math.Angle.Wrap(joint.bodyB!.angle - joint.bodyA!.angle)) >
-      (Math.PI * 2) / 3
-        ? [index]
-        : [],
-    );
-  }
-
-  jointChildPosition(index: number, angle: number) {
-    const joint = this.joints[index],
-      parent = this.parts.findIndex((part) => part.body === joint.bodyA),
-      child = this.parts.findIndex((part) => part.body === joint.bodyB),
-      { a, b } = this.anchors[index];
-    const gap = Vector.sub(
-      Vector.add(this.standingPose[child], b),
-      Vector.add(this.standingPose[parent], a),
-    );
-    return Vector.sub(
-      Vector.add(
-        joint.bodyA!.position,
-        Vector.rotate(Vector.add(a, gap), joint.bodyA!.angle),
-      ),
-      Vector.rotate(b, angle),
-    );
-  }
-
   clearMotion() {
     for (const { body } of this.parts) {
       Body.setVelocity(body, { x: 0, y: 0 });
@@ -267,34 +235,6 @@ export class Ragdoll {
       Body.setStatic(body, !dynamic);
       if (dynamic) body.restitution = this.bounce;
     }
-    this.joints.forEach((joint, index) => {
-      this.followAngles[index] = joint.bodyA!.angle;
-    });
-  }
-
-  configureLag(lag: number) {
-    this.parts.forEach(({ body }, index) => {
-      // Keep lengths firm; extra rotational inertia produces follow-through instead of stretching.
-      if (!body.isStatic)
-        Body.setInertia(body, this.inertia[index] * (1 + lag * 1.8));
-    });
-  }
-
-  followThrough(delta: number, lag: number, strength: number) {
-    const alpha = 1 - Math.exp(-delta / (45 + lag * 180));
-    this.joints.forEach((joint, index) => {
-      const parent = joint.bodyA!,
-        child = joint.bodyB!;
-      const wrap = Phaser.Math.Angle.Wrap;
-      this.followAngles[index] +=
-        wrap(parent.angle - this.followAngles[index]) * alpha;
-      const difference = wrap(this.followAngles[index] - child.angle);
-      if (child.isStatic) return;
-      child.torque +=
-        strength *
-        child.inertia *
-        (difference * 0.000025 - child.angularVelocity * 0.00012);
-    });
   }
 
   capturePose() {
@@ -415,13 +355,6 @@ export class Ragdoll {
         body.position.y < ROOM.top - 80 ||
         body.position.y > ROOM.bottom + 80,
     );
-  }
-
-  /** Preserve connected geometry for an airborne life, then let Matter handle the fall. */
-  startAirborne(offsetY: number) {
-    for (const { body } of this.parts) Body.translate(body, { x: 0, y: offsetY });
-    this.setDynamic(true);
-    this.clearMotion();
   }
 
   /** Remove constraints without injecting an explosion impulse or replacing existing motion. */

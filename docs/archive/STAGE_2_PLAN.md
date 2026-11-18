@@ -1,8 +1,10 @@
 # 2단계 계획 — 사진 적용 및 충격에 따른 외형 변화 검증
 
+> 과거 개발 기록입니다. 당시 미구현·예정·비교 실험·검증 수치는 현재 상태를 뜻하지 않습니다. 2026-11-18 사용자 결정으로 3·4단계를 완료했으며, 현재 기준은 [개발 계획](../../DEV_PLAN.md)과 [계산 규칙](../PHYSICS_AND_DAMAGE.md)을 따릅니다. 비교용 실험 1 코드는 정리 과정에서 제거했습니다.
+
 - 작성일: 2026-11-08
 - 상태: 2026-11-09 외형값 확정·조절 바 제거 및 현재 사진 관련 24개 브라우저 검사 통과. 구현값·검증 범위·남은 확인은 [STAGE_2_PROGRESS.md](STAGE_2_PROGRESS.md)에 기록한다.
-- 상위 계획: [DEV_PLAN.md](DEV_PLAN.md)
+- 상위 계획: [DEV_PLAN.md](../../DEV_PLAN.md)
 - 게임 요구사항: [GAME_PLAN.md](GAME_PLAN.md)
 - 물리 기준: [STAGE_1_PROGRESS.md](STAGE_1_PROGRESS.md)의 채택한 2번 방식과 확정 수치를 유지한다.
 - 목적: 사용자가 정한 사진 적용 규칙을 구현 가능한 작업·데이터 흐름·완료 기준으로 정리한다.
@@ -164,7 +166,7 @@
 
 ## 8. 구현 모듈 구성안
 
-아래 표는 계획 작성 당시의 모듈 구성안이다. 현재 구현 파일과 추가한 충격 수집 모듈은 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)에서 확인한다.
+아래 표는 계획 작성 당시의 모듈 구성안이다. 현재 구현 파일과 추가한 충격 수집 모듈은 [PROJECT_STRUCTURE.md](../../PROJECT_STRUCTURE.md)에서 확인한다.
 
 | 파일·모듈 후보 | 역할 |
 | --- | --- |
@@ -179,7 +181,7 @@
 | `src/game/InjuryRenderer.ts` | 부위 로컬 좌표에 따른 상처 표시 |
 | `public/models/`, `public/assets/injuries/` | 모델·검증용/최종 투명 배경 에셋 후보 경로 |
 
-기존 `main.ts`는 UI 연결, `PhysicsScene.ts`는 일시정지·재배치·렌더링·충격 전달, `draw.ts`는 기본 얼굴과 레이어 조정에 집중한다. 실제 파일 추가 시 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)를 갱신한다.
+기존 `main.ts`는 UI 연결, `PhysicsScene.ts`는 일시정지·재배치·렌더링·충격 전달, `draw.ts`는 기본 얼굴과 레이어 조정에 집중한다. 실제 파일 추가 시 [PROJECT_STRUCTURE.md](../../PROJECT_STRUCTURE.md)를 갱신한다.
 
 ## 9. 작업 순서와 중간 결과물
 

@@ -19,7 +19,6 @@ export const TORSO_ALIGNMENT_MS = 600;
 export const ANGULAR_INERTIA_SCALE = 0.65;
 export const JOINT_DAMPING = 0.025;
 export const MAX_ANGULAR_SPEED = 0.7; // radians per 60Hz reference step
-export type PhysicsExperiment = 1 | 2;
 export type PostureState =
   | "standing"
   | "active"
@@ -27,14 +26,12 @@ export type PostureState =
   | "waiting"
   | "recovering";
 export interface LabSettings {
-  experiment: PhysicsExperiment;
   gravity: number;
   bounce: number;
   debug: boolean;
   idleSeconds: number;
   repairSeconds: number;
   throwScale: number;
-  lag: number;
 }
 export interface LabStats {
   aliveCount: number;
@@ -49,7 +46,6 @@ export interface LabStats {
   lostHp: number;
   simulationTime: number;
   spawnProtected: boolean;
-  experiment: PhysicsExperiment;
   alignmentRemaining: number | null;
   fps: number;
   speed: number;
@@ -70,11 +66,8 @@ export const FIXED_SETTINGS = Object.freeze({
   idleSeconds: 2,
   repairSeconds: 2,
   throwScale: 0.5,
-  lag: 0,
 });
 export const DEFAULT_SETTINGS: LabSettings = {
   ...FIXED_SETTINGS,
-  // Adopted stage 1 baseline; experiment 1 remains only for internal comparison.
-  experiment: 2,
   debug: false,
 };

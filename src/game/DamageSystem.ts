@@ -18,13 +18,19 @@ export interface DamageHit {
   debris?: boolean; // detached peer: soften damage without changing physical impulse
 }
 
+/** Apply a single selected cap after all source-specific scaling; -1 is unlimited. */
+export function capDamage(raw: number, limit: number) {
+  if (Number.isNaN(raw) || Number.isNaN(limit)) return 0;
+  return Math.min(limit < 0 ? Number.MAX_VALUE : limit, Math.max(0, raw));
+}
+
 export function collisionDamage(speed: number, partScale = 1, surfaceScale = 1, maxDamage: number = DAMAGE_RULES.maxCollisionDamage) {
   if (![speed, partScale, surfaceScale].every(Number.isFinite) || speed <= DAMAGE_RULES.minSpeed ||
     partScale <= 0 || surfaceScale <= 0) return 0;
   const raw = DAMAGE_RULES.referenceDamage *
     ((speed - DAMAGE_RULES.minSpeed) * (speed + DAMAGE_RULES.minSpeed)) /
     (DAMAGE_RULES.referenceSpeed ** 2 - DAMAGE_RULES.minSpeed ** 2) * partScale * surfaceScale;
-  return Math.min(maxDamage < 0 ? Number.MAX_VALUE : maxDamage, Math.max(0, raw));
+  return capDamage(raw, maxDamage);
 }
 
 /** Calculate the whole formula before applying exactly one chosen cap. */
@@ -34,7 +40,7 @@ export function hitDamage(hit: DamageHit, maxDamage?: number) {
     : collisionDamage(hit.strength, 1, debris ? DAMAGE_RULES.debrisDamageScale : 1, -1);
   const limit = maxDamage ?? (hit.source === "weapon" ? Infinity
     : debris ? DAMAGE_RULES.maxDebrisDamage : DAMAGE_RULES.maxCollisionDamage);
-  return Math.min(limit < 0 ? Number.MAX_VALUE : limit, raw);
+  return capDamage(raw, limit);
 }
 
 export type DamageIntensity = "light" | "medium" | "heavy";
