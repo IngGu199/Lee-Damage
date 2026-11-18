@@ -26,6 +26,16 @@ app.innerHTML = `
           <input id="damage-limit" type="number" min="-1" step="1" value="${DAMAGE_RULES.maxCollisionDamage}" aria-label="최대 데미지" aria-describedby="damage-limit-value" title="0: 무적 · -1: JSON의 조건별 상한 사용 · 양수: 모든 타격에 우선 적용">
           <output id="damage-limit-value" for="damage-limit">상한</output>
         </div>
+        <div class="toolbar-control weapon-size-panel">
+          <label id="weapon-size-label" for="weapon-size">무기 크기</label>
+          <input id="weapon-size" type="range" min="10" max="300" step="1" value="100" aria-label="선택한 무기 크기" title="선택한 무기의 크기를 조절합니다. 탄알 크기는 별도로 조절합니다." disabled>
+          <output id="weapon-size-value" for="weapon-size">100%</output>
+        </div>
+        <div id="bullet-size-panel" class="toolbar-control weapon-size-panel" hidden>
+          <label for="bullet-size">탄알 크기</label>
+          <input id="bullet-size" type="range" min="10" max="1000" step="1" value="100" aria-label="탄알 크기" title="총 크기와 별도로 탄알 크기를 최대 1000%까지 조절합니다." disabled>
+          <output id="bullet-size-value" for="bullet-size">100%</output>
+        </div>
       </div>
       <div class="play-actions">
         <button id="spawn" disabled>인형 추가 <kbd>T</kbd></button>
@@ -88,6 +98,31 @@ const updatePhotoTarget = () => {
 };
 scene.onToolState = () => {
   updatePhotoTarget();
+  const mode = scene.weapons?.mode, size = element<HTMLInputElement>("weapon-size");
+  const weaponSelected = scene.weapons?.loaded && mode && mode !== "hand";
+  size.disabled = !weaponSelected || scene.paused;
+  if (weaponSelected) {
+    const label = scene.weapons.config.weapons[mode].label, percent = scene.weapons.sizePercent(mode);
+    size.value = String(percent);
+    size.setAttribute("aria-label", `${label} 크기`);
+    size.setAttribute("aria-valuetext", `${percent}%`);
+    element("weapon-size-label").textContent = `${label} 크기`;
+    element("weapon-size-value").textContent = `${percent}%`;
+  } else {
+    element("weapon-size-label").textContent = "무기 크기";
+    element("weapon-size-value").textContent = "선택";
+    size.setAttribute("aria-label", "무기를 선택한 후 크기 조절");
+    size.removeAttribute("aria-valuetext");
+  }
+  const bulletSize = element<HTMLInputElement>("bullet-size"), gunSelected = mode === "gun" && scene.weapons.loaded;
+  element("bullet-size-panel").hidden = !gunSelected;
+  bulletSize.disabled = !gunSelected || scene.paused;
+  if (gunSelected) {
+    const percent = scene.weapons.sizePercent("bullet");
+    bulletSize.value = String(percent);
+    bulletSize.setAttribute("aria-valuetext", `${percent}%`);
+    element("bullet-size-value").textContent = `${percent}%`;
+  }
   for (const button of app.querySelectorAll<HTMLButtonElement>("[data-tool]")) {
     button.disabled = !scene.weapons?.loaded || scene.paused;
     button.setAttribute("aria-pressed", String(button.dataset.tool === scene.weapons?.mode));
@@ -150,6 +185,15 @@ element<HTMLInputElement>("sound-volume").addEventListener("input", event => {
 });
 element<HTMLInputElement>("sound-muted").addEventListener("change", event => {
   if (ready) scene.audio.setMuted((event.target as HTMLInputElement).checked);
+});
+element<HTMLInputElement>("weapon-size").addEventListener("input", event => {
+  const mode = scene.weapons?.mode;
+  if (!ready || !mode || mode === "hand") return;
+  scene.weapons.setSizePercent(mode, Number((event.target as HTMLInputElement).value));
+});
+element<HTMLInputElement>("bullet-size").addEventListener("input", event => {
+  if (!ready || scene.weapons?.mode !== "gun") return;
+  scene.weapons.setSizePercent("bullet", Number((event.target as HTMLInputElement).value));
 });
 const damageInput = element<HTMLInputElement>("damage-limit");
 const updateDamageLimit = () => {

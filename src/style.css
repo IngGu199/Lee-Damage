@@ -12,10 +12,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, canvas:focus-visible
 .brand-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: #e2edbc; background: #29352c; font-size: 18px; }
 .sliders { display: flex; flex-wrap: wrap; align-items: center; gap: 22px; flex: 1; }
 .toolbar-control { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.toolbar-control[hidden] { display: none; }
 .toolbar-control > label { white-space: nowrap; font-size: 11px; font-weight: 600; }
 .toolbar-control input[type="range"] { width: clamp(80px, 9vw, 160px); min-width: 60px; margin: 0; accent-color: #789747; cursor: pointer; }
 .toolbar-control input[type="number"] { width: 88px; min-width: 64px; padding: 5px 7px; border: 1px solid #cbd2c2; border-radius: 6px; background: #fff; color: inherit; font: 12px monospace; }
 .toolbar-control output { min-width: 35px; font: 11px monospace; color: #607640; text-align: right; }
+.weapon-size-panel > label { max-width: 105px; overflow: hidden; text-overflow: ellipsis; }
+.weapon-size-panel input:disabled { opacity: .45; cursor: default; }
 .sound-mute { display: flex; align-items: center; gap: 3px; font-size: 10px !important; font-weight: 400 !important; }
 .sound-mute input { accent-color: #789747; margin: 0; }
 .play-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }

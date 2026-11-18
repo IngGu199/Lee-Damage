@@ -65,6 +65,16 @@ export class WeaponSkins {
     const old = this.skins.get(id); if (old) this.scene.textures.remove(old.texture);
     if (next) this.skins.set(id, next); else this.skins.delete(id);
   }
+  /** Scale the existing outline and texture placement without re-uploading image pixels. */
+  resize(config: WeaponConfig, id: WeaponPhotoTarget) {
+    const skin = this.skins.get(id); if (!skin) return;
+    const frame = weaponFrame(config, id), ratio = frame.size / skin.size;
+    const pieces = skin.pieces.map(piece => piece.map(p => ({
+      x: frame.center.x + (p.x - skin.center.x) * ratio,
+      y: frame.center.y + (p.y - skin.center.y) * ratio,
+    })));
+    this.skins.set(id, { ...skin, ...frame, pieces, points: pieces.flat() });
+  }
   beginRender() { this.used.clear(); }
   draw(key: string, id: WeaponPhotoTarget, origin: Point, angle: number) {
     const skin = this.skins.get(id); if (!skin) return false;

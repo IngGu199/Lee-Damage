@@ -24,6 +24,8 @@ interface MeleeItem {
 /** Tool input is separate from ragdoll dragging. All gameplay advances on the shared physics clock. */
 export class WeaponSystem {
   config = DEFAULT_WEAPON_CONFIG;
+  private baseConfig = DEFAULT_WEAPON_CONFIG;
+  private readonly sizePercents: Record<WeaponPhotoTarget, number> = { bat: 100, hammer: 100, gun: 100, bullet: 100 };
   mode: ToolId = "hand";
   loaded = false;
   readonly ready: Promise<void>;
@@ -85,7 +87,8 @@ export class WeaponSystem {
       this.effects.load(this.abort.signal),
     ]);
     if (this.abort.signal.aborted) return;
-    this.config = config;
+    this.baseConfig = config;
+    this.config = structuredClone(config);
     const image = config.weapons.gun.projectile.image;
     if (image) {
       try {
@@ -223,11 +226,13 @@ export class WeaponSystem {
       const skin = this.skins.get(mode);
       if (skin) {
         const edge = length - headWidth / 2;
+        const minX = Math.min(edge, ...skin.points.map(p => p.x)) - 1, maxX = Math.max(edge, ...skin.points.map(p => p.x)) + 1;
+        const minY = Math.min(...skin.points.map(p => p.y)) - 1, maxY = Math.max(...skin.points.map(p => p.y)) + 1;
         // Split across the head boundary so a triangle spanning handle and head
         // cannot accidentally give the heavy head the handle's density.
         const pieces = mode === "hammer" ? skin.pieces.flatMap(piece => [
-          clipPolygon(piece, [{ x: -1000, y: -1000 }, { x: edge, y: -1000 }, { x: edge, y: 1000 }, { x: -1000, y: 1000 }]),
-          clipPolygon(piece, [{ x: edge, y: -1000 }, { x: 1000, y: -1000 }, { x: 1000, y: 1000 }, { x: edge, y: 1000 }]),
+          clipPolygon(piece, [{ x: minX, y: minY }, { x: edge, y: minY }, { x: edge, y: maxY }, { x: minX, y: maxY }]),
+          clipPolygon(piece, [{ x: edge, y: minY }, { x: maxX, y: minY }, { x: maxX, y: maxY }, { x: edge, y: maxY }]),
         ]).filter(piece => Math.abs(polygonArea(piece)) > 0.0001) : skin.pieces;
         const parts = pieces.map(piece => {
           const centroid = Matter.Vertices.centre(piece as MatterJS.Vector[]);
@@ -263,6 +268,39 @@ export class WeaponSystem {
   applyPhoto(id: WeaponPhotoTarget, photo: AppliedPhoto | null) {
     this.skins.apply(this.config, id, photo);
     this.cancel();
+    this.rebuildMelee(id);
+    this.render(this.scene.snapshot().simulationTime); this.onChange();
+  }
+  sizePercent(id: WeaponPhotoTarget) { return this.sizePercents[id]; }
+  setSizePercent(id: WeaponPhotoTarget, percent: number) {
+    if (!this.loaded || this.scene.paused || !Object.hasOwn(this.sizePercents, id) || !Number.isFinite(percent)) return false;
+    const next = Phaser.Math.Clamp(Math.round(percent), 10, id === "bullet" ? 1000 : 300);
+    if (next === this.sizePercents[id]) return false;
+    if (this.activeItem?.id === id) this.cancel();
+    const scale = next / 100;
+    // Always scale from the loaded JSON, so returning to 100% restores its dimensions.
+    if (id === "bullet") {
+      const current = this.config.weapons.gun;
+      this.config.weapons.gun = { ...current, projectile: { ...current.projectile,
+        radius: this.baseConfig.weapons.gun.projectile.radius * scale } };
+      this.skins.resize(this.config, "bullet");
+      const radius = this.config.weapons.gun.projectile.radius;
+      for (const bullet of [...this.projectiles, ...this.finishers.bullets()]) bullet.radius = radius;
+    } else {
+      const base = this.baseConfig.weapons[id], current = this.config.weapons[id];
+      this.config.weapons[id] = { ...current, shape: { ...current.shape,
+        length: base.shape.length * scale, width: base.shape.width * scale,
+        headWidth: base.shape.headWidth * scale, headHeight: base.shape.headHeight * scale,
+      } };
+      this.skins.resize(this.config, id);
+      if (id !== "gun") this.rebuildMelee(id);
+    }
+    this.sizePercents[id] = next;
+    this.render(this.scene.snapshot().simulationTime); this.onChange();
+    return true;
+  }
+  /** Replace collision bodies together with their displayed dimensions. */
+  private rebuildMelee(id: WeaponPhotoTarget) {
     for (const old of [...this.items.values()]) {
       if (old.id !== id) continue;
       const anchor = add(old.body.position, rotate(old.originOffset, old.body.angle));
@@ -272,7 +310,6 @@ export class WeaponSystem {
       Matter.Body.setVelocity(item.body, velocity); Matter.Body.setAngularVelocity(item.body, angularVelocity);
       if (active) this.activeItem = item;
     }
-    this.render(this.scene.snapshot().simulationTime); this.onChange();
   }
   get travelDistance() {
     if (!this.holding || !this.body) return 0;
@@ -560,6 +597,7 @@ export class WeaponSystem {
     this.effects.render(time);
   }
   snapshot() { return { mode: this.mode, loaded: this.loaded, holding: this.holding, gunOrigin: { ...this.gunOrigin },
+    sizePercents: { ...this.sizePercents },
     heldBodyId: this.heldBody?.id ?? null,
     guns: this.guns.map(gun => ({ id: gun.id, position: { ...gun.position } })),
     items: [...this.items.values()].map(item => ({ id: item.id, bodyId: item.body.id, position: { ...item.body.position }, angle: item.body.angle })),
