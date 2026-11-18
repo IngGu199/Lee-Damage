@@ -3,6 +3,7 @@ import { canvasOf, type PhotoTransform, type Point, type PhotoMask } from "./Pho
 export interface PhotoDraft {
   source: HTMLCanvasElement;
   name: string;
+  libraryPath?: string;
   faces: Point[][];
   faceIndex: number;
   edit: PhotoTransform;

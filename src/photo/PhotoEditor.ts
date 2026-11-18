@@ -8,6 +8,7 @@ import {
 import { faceBendControls, makeVariants } from "./PhotoVariants";
 import { FIXED_APPEARANCE } from "../game/appearanceConfig";
 import { contourProblem, simplifyStroke } from "./PhotoContour";
+import { PhotoLibrary } from "./PhotoLibrary";
 
 interface EditorActions {
   begin(): void;
@@ -21,6 +22,7 @@ interface PhotoAsset { id: string; label: string; mask(): PhotoMask }
 export class PhotoEditor {
   private readonly dialog: HTMLDialogElement;
   private readonly analyzer = new FaceAnalyzer();
+  private readonly library: PhotoLibrary;
   private draft: PhotoDraft | null = null;
   private generation = 0;
   private edited = false;
@@ -45,7 +47,8 @@ export class PhotoEditor {
           <span id="photo-empty" class="photo-empty">얼굴이 잘 보이는 사진을 골라 주세요</span>
         </div><p class="photo-hint" id="photo-hint">드래그로 이동 · 방향키로 세밀하게 조절</p></div>
         <div class="photo-controls">
-          <label class="photo-file-button">사진 선택<input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp"></label>
+          <section class="photo-library" aria-label="저장된 사진 선택"></section>
+          <label class="photo-file-button">내 기기에서 새 사진 추가<input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp"></label>
           <p id="photo-filename" class="photo-filename">JPEG · PNG · WebP / 최대 20MB</p>
           <p id="photo-status" class="photo-status" role="status" aria-live="polite">사진은 이 브라우저에서만 처리해요.</p>
           <button id="photo-manual" hidden>분석을 기다리지 않고 직접 맞추기</button>
@@ -86,10 +89,13 @@ export class PhotoEditor {
     this.el("photo-contour-tools").classList.add("photo-contour-tools");
     this.dialog.dataset.photoTarget = asset?.id ?? "face";
     document.body.append(this.dialog);
+    this.library = new PhotoLibrary(this.dialog.querySelector(".photo-library")!, asset?.id ?? "face",
+      (file, entry) => this.load(file, entry.path));
     window.addEventListener("resize", () => { if (this.open) this.draw(); }, { signal: this.abort.signal });
     const listen = (id: string, event: string, listener: EventListener) =>
       this.el(id).addEventListener(event, listener, { signal: this.abort.signal });
     listen("photo-file", "change", () => {
+      this.library.clearSelection();
       const file = this.el<HTMLInputElement>("photo-file").files?.[0];
       if (file) void this.load(file);
       this.el<HTMLInputElement>("photo-file").value = "";
@@ -361,18 +367,20 @@ export class PhotoEditor {
     this.busy = false; this.analysisPending = false;
     this.renderFaces(); this.draw();
     this.dialog.showModal();
+    this.library.open(current?.libraryPath);
   }
 
   private close() {
     if (!this.open) return;
     this.generation++; this.drag = null; this.draft = null; this.busy = false; this.analysisPending = false;
+    this.library.close();
     this.contourHistory.length = 0; this.selectedPoint = -1;
     this.dialog.close(); this.actions.end();
     this.el<HTMLCanvasElement>("photo-canvas").getContext("2d")!.clearRect(0, 0, PHOTO_SIZE, PHOTO_SIZE);
     this.el<HTMLCanvasElement>("photo-small").getContext("2d")!.clearRect(0, 0, 144, 144);
   }
 
-  private async load(file: File) {
+  private async load(file: File, libraryPath?: string) {
     const id = ++this.generation;
     this.el("photo-error").textContent = "";
     this.el("photo-status").textContent = "사진을 준비하고 있어요…";
@@ -380,7 +388,7 @@ export class PhotoEditor {
     try {
       const source = await PhotoSession.decode(file);
       if (id !== this.generation || !this.open) return;
-      this.draft = { source, name: file.name, faces: [], faceIndex: -1,
+      this.draft = { source, name: file.name, libraryPath, faces: [], faceIndex: -1,
         edit: this.initialTransform(source), mask: this.asset?.mask() ?? defaultMask() };
       this.contourHistory.length = 0; this.selectedPoint = -1; this.contourTool = "draw";
       this.edited = false; this.analysisPending = true; this.renderFaces(); this.draw();
@@ -580,6 +588,6 @@ export class PhotoEditor {
   refreshPreview() { if (this.open) this.draw(); }
 
   destroy() {
-    this.close(); this.analyzer.destroy(); this.abort.abort(); this.dialog.remove(); this.session.clear();
+    this.close(); this.library.destroy(); this.analyzer.destroy(); this.abort.abort(); this.dialog.remove(); this.session.clear();
   }
 }

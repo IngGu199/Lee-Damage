@@ -41,9 +41,9 @@ app.innerHTML = `
         <button data-tool="gun" aria-pressed="false" disabled title="누를 때마다 마우스 위치에 총 생성 · 좌클릭으로 모든 총 발사 · 다른 도구를 선택하면 총 일괄 삭제">총 <kbd>4</kbd></button>
         <button id="clear-weapons" disabled title="방 안의 무기와 비행 중인 탄알을 모두 삭제 · 잡은 물건만 삭제하려면 X">무기 모두 삭제 <kbd>C</kbd></button>
         <div class="weapon-photo-controls">
-          <label class="sr-only" for="weapon-photo-target">사진을 적용할 무기</label>
-          <select id="weapon-photo-target"><option value="bat">야구방망이</option><option value="hammer">망치</option><option value="gun">총</option><option value="bullet">탄알</option></select>
-          <button id="weapon-photo-open" disabled>무기 사진</button>
+          <label class="sr-only" for="weapon-photo-target">사진을 적용할 대상</label>
+          <select id="weapon-photo-target"><option value="face">랙돌 얼굴</option><option value="bat">야구방망이</option><option value="hammer">망치</option><option value="gun">총</option><option value="bullet">탄알</option></select>
+          <button id="weapon-photo-open" disabled>사진 편집</button>
         </div>
       </div>
     </header>
@@ -82,8 +82,12 @@ const weaponPhotoEditor = (id: WeaponPhotoTarget) => {
   return editor;
 };
 let ready = false;
+const updatePhotoTarget = () => {
+  const face = element<HTMLSelectElement>("weapon-photo-target").value === "face";
+  element<HTMLButtonElement>("weapon-photo-open").disabled = face ? !ready : !scene.weapons?.loaded;
+};
 scene.onToolState = () => {
-  element<HTMLButtonElement>("weapon-photo-open").disabled = !scene.weapons?.loaded;
+  updatePhotoTarget();
   for (const button of app.querySelectorAll<HTMLButtonElement>("[data-tool]")) {
     button.disabled = !scene.weapons?.loaded || scene.paused;
     button.setAttribute("aria-pressed", String(button.dataset.tool === scene.weapons?.mode));
@@ -128,8 +132,11 @@ scene.onReady = () => {
 };
 element("photo-open").addEventListener("click", () => photoEditor.show());
 element("weapon-photo-open").addEventListener("click", () => {
-  if (scene.weapons.loaded) weaponPhotoEditor(element<HTMLSelectElement>("weapon-photo-target").value as WeaponPhotoTarget).show();
+  const target = element<HTMLSelectElement>("weapon-photo-target").value;
+  if (target === "face") { if (ready) photoEditor.show(); }
+  else if (scene.weapons.loaded) weaponPhotoEditor(target as WeaponPhotoTarget).show();
 });
+element("weapon-photo-target").addEventListener("change", updatePhotoTarget);
 element("spawn").addEventListener("click", () => scene.spawnRagdoll());
 element("force-burst").addEventListener("click", () => scene.forceBurst());
 element("pause").addEventListener("click", () => scene.setPaused(!scene.paused));

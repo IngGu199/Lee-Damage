@@ -15,13 +15,14 @@ async function open(page: Page) {
   await page.evaluate(() => { const s = window.__physicsLab; s.game.loop.sleep(); s.matter.world.setGravity(0, 0); });
 }
 async function upload(page: Page, target: string) {
+  const prefix = target === "face" ? "photo" : `${target}-photo`;
   const data = await page.evaluate(() => {
     const canvas = document.createElement("canvas"); canvas.width = canvas.height = 512;
     const ctx = canvas.getContext("2d")!; ctx.fillStyle = "#e31bdb"; ctx.fillRect(0, 0, 512, 512);
     return canvas.toDataURL().split(",")[1];
   });
-  await page.locator(`#${target}-photo-file`).setInputFiles({ name: "weapon.png", mimeType: "image/png", buffer: Buffer.from(data, "base64") });
-  await expect(page.locator(`#${target}-photo-apply`)).toBeEnabled();
+  await page.locator(`#${prefix}-file`).setInputFiles({ name: "weapon.png", mimeType: "image/png", buffer: Buffer.from(data, "base64") });
+  await expect(page.locator(`#${prefix}-apply`)).toBeEnabled();
 }
 async function edit(page: Page, target: string) {
   await page.locator("#weapon-photo-target").selectOption(target);
@@ -51,6 +52,31 @@ test("concave masks keep empty regions empty in collision pieces and continuous 
   expect(islands.some(piece => inside({ x: 380, y: 130 }, piece))).toBe(true);
   expect(islands.some(piece => inside({ x: 150, y: 360 }, piece))).toBe(true);
   expect(islands.some(piece => inside({ x: 256, y: 256 }, piece))).toBe(false);
+});
+
+test("the shared photo selector adds ragdoll faces through the existing editor and preserves them for new dolls", async ({ page }) => {
+  await open(page);
+  await expect(page.locator("#weapon-photo-target")).toHaveValue("face");
+  await page.evaluate(async () => {
+    const path = performance.getEntriesByType("resource")
+      .find(entry => new URL(entry.name).pathname === "/src/photo/FaceAnalyzer.ts")?.name ?? "/src/photo/FaceAnalyzer.ts";
+    const { FaceAnalyzer } = await import(path); FaceAnalyzer.prototype.detect = async () => [];
+  });
+  await page.locator("#weapon-photo-open").click();
+  await expect(page.locator("dialog[open]")).toHaveAttribute("data-photo-target", "face");
+  await upload(page, "face");
+  await expect(page.locator("#photo-mask-circle")).toBeEnabled();
+  await expect(page.locator("#photo-mask-contour")).toBeEnabled();
+  await page.locator("#photo-apply").click();
+  const applied = await page.evaluate(() => {
+    const s = window.__physicsLab; s.spawnRagdoll();
+    return { faces: s.actors.map(actor => actor.face.active), skins: s.weapons.skins.snapshot().kinds };
+  });
+  expect(applied).toEqual({ faces: [true, true], skins: [] });
+  await page.locator("#photo-open").click();
+  await expect(page.locator("#photo-filename")).toHaveText("weapon.png");
+  await page.locator("#photo-cancel").click(); await page.locator("#reset").click();
+  expect(await page.evaluate(() => window.__physicsLab.face.active)).toBe(true);
 });
 
 test("weapon photos replace all existing and new instances, survive R and restore their original geometry", async ({ page }) => {

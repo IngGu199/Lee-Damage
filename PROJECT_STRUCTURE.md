@@ -17,6 +17,7 @@ LeeDamageWeb/
 ├── tsconfig.json              # 앱·브라우저 테스트 TypeScript 설정
 ├── playwright.config.ts       # Chromium 테스트 및 개발 서버 설정
 ├── vite.config.ts             # 없어도 동작하는 로컬 전용 확장의 선택적 로더
+├── tools/photoLibrary.ts      # public/images 읽기 전용 목록·특수문자 경로·정적 빌드용 catalog.json 생성
 ├── .local/image-save/         # Git 제외: 로컬 사진 저장 버튼·PNG 저장 API·검증 도구
 ├── .gitignore                 # 의존성·빌드·테스트 출력 제외
 ├── public/
@@ -33,6 +34,7 @@ LeeDamageWeb/
 │   ├── effects/               # ImpactEffects: JSON 설정·도형 이펙트·실제 피해 숫자·게임 시간 수명·동시 표시 상한
 │   ├── photo/
 │   │   ├── PhotoSession.ts    # 파일 검증·방향 보정·메모리 사진 상태
+│   │   ├── PhotoLibrary.ts    # 저장 사진 썸네일 목록·직접 선택·갱신·다운로드 취소
 │   │   ├── PhotoEditor.ts     # 편집창·원형/직접 윤곽·점 수정·미리보기·비동기 취소
 │   │   ├── PhotoContour.ts    # 자유 곡선 샘플 정리·닫힌 윤곽의 교차/면적 검증
 │   │   ├── PhotoGeometry.ts   # 사진 마스크의 충돌 윤곽·이미지 영역 자르기·오목 다각형 분해
