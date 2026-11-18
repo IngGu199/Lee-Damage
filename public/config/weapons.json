@@ -1,6 +1,7 @@
 {
   "version": 1,
   "defaults": {
+    "handling": { "rotateStepDegrees": 15 },
     "shape": { "length": 190, "width": 24, "headWidth": 64, "headHeight": 108, "angle": -0.7, "color": "#a9794b", "headColor": "#8294a6" },
     "physics": { "handleMass": 1, "headMass": 14, "frictionAir": 0.006, "maxAngularSpeed": 22, "restitution": 0.1, "friction": 0.5, "frictionStatic": 0.8 },
     "damage": {
@@ -13,12 +14,14 @@
   "weapons": {
     "bat": {
       "label": "야구방망이",
+      "damage": { "knockback": 2200 },
       "signals": { "hit": "weapon.bat.hit", "finish": "weapon.bat.finish", "fire": "weapon.bat.fire", "pin": "weapon.bat.pin", "burst": "weapon.bat.burst" }
     },
     "hammer": {
       "label": "망치",
       "shape": { "length": 145, "width": 18, "angle": 0 },
-      "damage": { "amount": 150, "handleMultiplier": 1, "tipMultiplier": 1 },
+      "physics": { "restitution": 0.02, "friction": 0.15, "frictionStatic": 0.3 },
+      "damage": { "amount": 150, "handleMultiplier": 1, "tipMultiplier": 1, "knockback": 60 },
       "signals": { "hit": "weapon.hammer.hit", "finish": "weapon.hammer.finish", "fire": "weapon.hammer.fire", "pin": "weapon.hammer.pin", "burst": "weapon.hammer.burst" }
     },
     "gun": {

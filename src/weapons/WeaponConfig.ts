@@ -3,6 +3,7 @@ export type WeaponId = typeof WEAPON_IDS[number];
 export type ToolId = "hand" | WeaponId;
 export interface WeaponDefinition {
   label: string;
+  handling: { rotateStepDegrees: number };
   shape: { length: number; width: number; headWidth: number; headHeight: number; angle: number; color: number; headColor: number };
   physics: { handleMass: number; headMass: number; frictionAir: number; maxAngularSpeed: number;
     restitution: number; friction: number; frictionStatic: number };
@@ -16,6 +17,7 @@ export interface WeaponConfig { version: 1; defaults: WeaponDefinition; weapons:
 
 const common: WeaponDefinition = {
   label: "무기",
+  handling: { rotateStepDegrees: 15 },
   shape: { length: 190, width: 24, headWidth: 64, headHeight: 108, angle: -0.7, color: 0xa9794b, headColor: 0x8294a6 },
   physics: { handleMass: 1, headMass: 14, frictionAir: 0.006, maxAngularSpeed: 22, restitution: 0.1, friction: 0.5, frictionStatic: 0.8 },
   damage: { amount: 100, minSpeed: 800, referenceSpeed: 1400, speedExponent: 1.5, maxDamage: 350,
@@ -67,7 +69,8 @@ export function parseWeaponConfig(input: unknown): WeaponConfig {
     const definition = mergeSettings({ ...structuredClone(shared), label: { bat: "야구방망이", hammer: "망치", gun: "총" }[id], signals }, root.weapons?.[id], `weapons.${id}`);
     for (const [key, value] of Object.entries(definition.signals))
       if (!/^weapon\.[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$/.test(value)) throw new Error(`weapons.${id}.signals.${key}: weapon.무기.신호 형식이 필요합니다.`);
-    if (definition.shape.length < 20 || definition.shape.length > 400 || definition.shape.width < 4 || definition.shape.width > 100 ||
+    if (definition.handling.rotateStepDegrees <= 0 || definition.handling.rotateStepDegrees > 180 ||
+      definition.shape.length < 20 || definition.shape.length > 400 || definition.shape.width < 4 || definition.shape.width > 100 ||
       definition.shape.headWidth < 10 || definition.shape.headWidth > 200 || definition.shape.headHeight < 10 || definition.shape.headHeight > 200 ||
       definition.physics.handleMass <= 0 || definition.physics.headMass <= 0 || definition.physics.frictionAir > 0.2 ||
       definition.physics.restitution > 1 || definition.physics.friction > 1 || definition.physics.frictionStatic > 10 ||
@@ -83,7 +86,9 @@ export function parseWeaponConfig(input: unknown): WeaponConfig {
 }
 
 export const DEFAULT_WEAPON_CONFIG = parseWeaponConfig({ version: 1, weapons: {
-  hammer: { shape: { length: 145, width: 18, angle: 0 }, damage: { amount: 150, handleMultiplier: 1, tipMultiplier: 1 } },
+  bat: { damage: { knockback: 2200 } },
+  hammer: { shape: { length: 145, width: 18, angle: 0 }, physics: { restitution: 0.02, friction: 0.15, frictionStatic: 0.3 },
+    damage: { amount: 150, handleMultiplier: 1, tipMultiplier: 1, knockback: 60 } },
   gun: { shape: { length: 64, width: 22, angle: 0, color: 0x556274 }, damage: { amount: 0 } },
 } });
 

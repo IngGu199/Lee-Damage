@@ -14,6 +14,28 @@ export function inside(point: Point, vertices: Point[]) {
   return result;
 }
 
+/** Closest polygon surface and normal pointing from the striking circle into the target. */
+export function circleContact(point: Point, vertices: Point[]) {
+  let distance2 = Infinity, position = vertices[0], inward = { x: 1, y: 0 };
+  const center = multiply(vertices.reduce(add, { x: 0, y: 0 }), 1 / vertices.length);
+  for (let i = 0; i < vertices.length; i++) {
+    const a = vertices[i], b = vertices[(i + 1) % vertices.length], edge = subtract(b, a), length2 = dot(edge, edge);
+    if (!length2) continue;
+    const closest = add(a, multiply(edge, Math.max(0, Math.min(1, dot(subtract(point, a), edge) / length2))));
+    const offset = subtract(closest, point), candidate = dot(offset, offset);
+    if (candidate >= distance2) continue;
+    distance2 = candidate; position = closest;
+    const normal = unit({ x: -edge.y, y: edge.x });
+    inward = multiply(normal, dot(normal, subtract(center, a)) >= 0 ? 1 : -1);
+  }
+  const normal = distance2 > 1e-12
+    ? unit(multiply(subtract(position, point), inside(point, vertices) ? -1 : 1)) : inward;
+  return { position, normal };
+}
+
+/** Tangential motion and separating contacts cannot supply impact damage. */
+export const closingSpeed = (relative: Point, normal: Point) => Math.max(0, dot(relative, normal));
+
 /** Continuous circle/convex-polygon contact; catches fast bullets between physics ticks. */
 export function sweepCircle(start: Point, end: Point, radius: number, vertices: Point[]): number | null {
   if (inside(start, vertices)) return 0;

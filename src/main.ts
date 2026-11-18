@@ -35,9 +35,10 @@ app.innerHTML = `
       </div>
       <div class="weapon-tools" role="toolbar" aria-label="무기 선택">
         <button data-tool="hand" aria-pressed="true" disabled title="인형·잔해·바닥에 놓인 무기 잡기">손 <kbd>1</kbd></button>
-        <button data-tool="bat" aria-pressed="false" disabled title="방망이 꺼내기 · 원하는 지점을 클릭해 잡고 휘두르기 · 잡은 동안 각도 고정">야구방망이 <kbd>2</kbd></button>
-        <button data-tool="hammer" aria-pressed="false" disabled title="망치 꺼내기 · 원하는 지점을 클릭해 잡기 · 잡은 지점을 축으로 회전">망치 <kbd>3</kbd></button>
-        <button data-tool="gun" aria-pressed="false" disabled title="선택 직전 방 안의 마우스 위치에 고정 · 마우스로 조준하고 클릭 발사">총 <kbd>4</kbd></button>
+        <button data-tool="bat" aria-pressed="false" disabled title="누를 때마다 방망이 생성 · 좌클릭을 누른 채 잡기 · 우클릭마다 15° 회전 · 잡은 무기 삭제 X">야구방망이 <kbd>2</kbd></button>
+        <button data-tool="hammer" aria-pressed="false" disabled title="누를 때마다 망치 생성 · 원하는 지점을 클릭해 잡기 · 잡은 무기 삭제 X">망치 <kbd>3</kbd></button>
+        <button data-tool="gun" aria-pressed="false" disabled title="누를 때마다 마우스 위치에 총 생성 · 좌클릭으로 모든 총 발사 · 다른 도구를 선택하면 총 일괄 삭제">총 <kbd>4</kbd></button>
+        <button id="clear-weapons" disabled title="방 안의 무기와 비행 중인 탄알을 모두 삭제 · 잡은 물건만 삭제하려면 X">무기 모두 삭제 <kbd>C</kbd></button>
       </div>
     </header>
     <div class="canvas-wrap">
@@ -67,8 +68,10 @@ scene.onToolState = () => {
     if (button.dataset.tool !== "hand" && scene.weapons?.loaded) {
       const label = scene.weapons.config.weapons[button.dataset.tool as "bat" | "hammer" | "gun"].label;
       button.firstChild!.textContent = `${label} `;
+      if (button.dataset.tool === "bat") button.title = `누를 때마다 방망이 생성 · 좌클릭을 누른 채 잡기 · 우클릭마다 ${scene.weapons.config.weapons.bat.handling.rotateStepDegrees}° 회전 · 잡은 무기 삭제 X`;
     }
   }
+  element<HTMLButtonElement>("clear-weapons").disabled = !scene.weapons?.loaded || scene.paused || !scene.weapons.hasWeapons;
 };
 scene.onStats = (stats: LabStats) => {
   scene.onToolState();
@@ -107,6 +110,7 @@ element("force-burst").addEventListener("click", () => scene.forceBurst());
 element("pause").addEventListener("click", () => scene.setPaused(!scene.paused));
 element("resume").addEventListener("click", () => scene.setPaused(false));
 element("reset").addEventListener("click", () => scene.reset());
+element("clear-weapons").addEventListener("click", () => scene.weapons.clearWeapons());
 for (const button of app.querySelectorAll<HTMLButtonElement>("[data-tool]"))
   button.addEventListener("click", () => scene.selectTool(button.dataset.tool as "hand" | "bat" | "hammer" | "gun"));
 element<HTMLInputElement>("sound-volume").addEventListener("input", event => {
@@ -128,6 +132,8 @@ window.addEventListener("keydown", event => {
     const tools = { Digit1: "hand", Digit2: "bat", Digit3: "hammer", Digit4: "gun" } as const;
     const tool = tools[event.code as keyof typeof tools];
     if (tool) { event.preventDefault(); scene.selectTool(tool); return; }
+    if (event.code === "KeyX") { event.preventDefault(); scene.weapons.deleteHeld(); return; }
+    if (event.code === "KeyC") { event.preventDefault(); scene.weapons.clearWeapons(); return; }
   }
   if (event.code === "KeyT" && !target.closest("input, select, textarea, [contenteditable]")) {
     event.preventDefault(); scene.spawnRagdoll(); return;

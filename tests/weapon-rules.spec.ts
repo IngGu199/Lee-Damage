@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { DEFAULT_WEAPON_CONFIG, meleeDamage, parseWeaponConfig } from "../src/weapons/WeaponConfig";
-import { sweepCircle } from "../src/weapons/geometry";
+import { circleContact, closingSpeed, sweepCircle } from "../src/weapons/geometry";
 
 test("weapons inherit JSON defaults and per-weapon overrides with unique hit signals", () => {
   const config = parseWeaponConfig({ version: 1, defaults: { damage: { amount: 40 }, projectile: { speed: 600, color: "#abcdef" } },
@@ -23,6 +23,7 @@ test("invalid numeric, signal, projectile, asset path and unknown weapon setting
     { gun: { projectile: { image: "https://example.com/bullet.png" } } },
     { gun: { finisher: { pinDelayMs: -1 } } }, { bat: { signals: { hit: "collision.normal" } } },
     { bat: { damage: { typo: 100 } } }, { unknown: {} },
+    { bat: { handling: { rotateStepDegrees: 0 } } }, { bat: { handling: { rotateStepDegrees: 181 } } },
   ]) expect(() => parseWeaponConfig({ version: 1, weapons })).toThrow();
 });
 
@@ -33,6 +34,27 @@ test("bat damage increases with impact speed and distance from the grip and resp
   expect(meleeDamage(bat, 2000, 1)).toBeGreaterThan(meleeDamage(bat, 1000, 1));
   expect(meleeDamage(bat, 100000, 1)).toBe(bat.damage.maxDamage);
   expect(meleeDamage(bat, NaN, 1)).toBe(0);
+});
+
+test("hammer damage uses the closing component of relative contact velocity", () => {
+  const box = [{ x: 100, y: -100 }, { x: 200, y: -100 }, { x: 200, y: 100 }, { x: 100, y: 100 }];
+  const hammer = DEFAULT_WEAPON_CONFIG.weapons.hammer;
+  for (const vertices of [box, [...box].reverse()]) {
+    const contact = circleContact({ x: 68, y: 0 }, vertices);
+    expect(contact.position).toEqual({ x: 100, y: 0 }); expect(contact.normal).toEqual({ x: 1, y: 0 });
+    expect(closingSpeed({ x: 1400, y: 3000 }, contact.normal)).toBe(1400);
+    expect(meleeDamage(hammer, closingSpeed({ x: 1400, y: 0 }, contact.normal), 1)).toBe(150);
+    expect(meleeDamage(hammer, closingSpeed({ x: 799, y: 3000 }, contact.normal), 1)).toBe(0);
+    expect(closingSpeed({ x: 0, y: 3000 }, contact.normal)).toBe(0);
+    expect(closingSpeed({ x: -1400, y: 0 }, contact.normal)).toBe(0);
+    const overlapping = circleContact({ x: 105, y: 0 }, vertices).normal;
+    expect(overlapping.x).toBeCloseTo(1); expect(overlapping.y).toBeCloseTo(0);
+    expect(closingSpeed({ x: 1400, y: 0 }, circleContact({ x: 100, y: 0 }, vertices).normal)).toBe(1400);
+    expect(closingSpeed({ x: -1400, y: 0 }, circleContact({ x: 232, y: 0 }, vertices).normal)).toBe(1400);
+  }
+  expect(DEFAULT_WEAPON_CONFIG.weapons.bat.damage.knockback).toBe(2200);
+  expect(hammer.damage.knockback).toBe(60);
+  expect(hammer.physics.restitution).toBe(0.02);
 });
 
 test("continuous circle hits do not tunnel through thin or rotated targets and choose the first surface", () => {

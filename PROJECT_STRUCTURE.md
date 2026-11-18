@@ -73,6 +73,9 @@ LeeDamageWeb/
 │   ├── multi-ragdoll.spec.ts  # T키/10개 제한·개별 HP·잔해 조작·상호 충돌·자원 정리·폭주 방지·분리 운동 보존 14개
 │   ├── sound-rules.spec.ts    # 설정·속도/음량 보간·충돌 후 속도·두 소리·쿨다운·상한 13개
 │   ├── sound.spec.ts          # 실제 음원 신호·네 방향 충돌·JSON 읽기·무적 중 연속 충돌·설정 쿨다운·조작/실패/정리 14개
+│   ├── weapon-rules.spec.ts   # 무기 설정·피해식·접촉 방향·연속 충돌 규칙
+│   ├── weapons.spec.ts        # 무기 조작·타격·물리 반응·탄알·사망 연출·정리
+│   ├── weapon-instances.spec.ts # 다중 생성·우클릭 회전·X/C 삭제·총별 동시 발사/상한/간격·접촉 기록 정리
 │   └── photo.spec.ts          # 현재 사진 편집·변형·상처·수명주기 검증 24개
 ├── README.md                  # 설치·실행·조작·검증 방법
 ├── STAGE_1_PROGRESS.md        # 1단계 누적 진행·2번 채택·현재 동작·검증 범위

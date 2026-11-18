@@ -80,7 +80,7 @@ export class PhysicsScene extends Phaser.Scene {
     this.createActor(false, (ROOM.left + ROOM.right) / 2, true);
     const canvas = this.game.canvas;
     canvas.tabIndex = 0;
-    canvas.setAttribute("aria-label", "물리 실험실. 1 손, 2 야구방망이, 3 망치, 4 총. T 인형 추가, B 선택 인형 강제 폭파, R 전체 재배치, 스페이스 일시정지.");
+    canvas.setAttribute("aria-label", "물리 실험실. 1 손, 2 방망이 추가, 3 망치 추가, 4 총 추가. 잡은 방망이는 우클릭마다 회전. X 잡은 무기 삭제, C 무기 모두 삭제. T 인형 추가, B 강제 폭파, R 재배치, 스페이스 일시정지.");
     this.pointer = new PointerController(canvas, this.matter.world, () => this.doll,
       () => this.paused || this.photoEditing || this.weapons?.mode === "gun" || Boolean(this.weapons?.grip),
       doll => {
@@ -311,6 +311,9 @@ export class PhysicsScene extends Phaser.Scene {
 
   private softenContact(pair: BodyContact) {
     const a = this.owners.get(pair.bodyA), b = this.owners.get(pair.bodyB);
+    const weapon = a ? pair.bodyB : b ? pair.bodyA : undefined;
+    const restitution = weapon && this.weapons.collisionRestitution(weapon);
+    if (restitution !== undefined) softenBodyContact(pair, restitution);
     if (a?.lifecycle.state === "bursting" || b?.lifecycle.state === "bursting")
       softenBodyContact(pair, DEBRIS_PHYSICS.restitution);
     else if (a && b && a !== b) softenBodyContact(pair, BODY_CONTACT_PHYSICS.restitution);
@@ -464,6 +467,7 @@ export class PhysicsScene extends Phaser.Scene {
         const slices = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(Math.max(speed * FIXED_STEP / 1000,
           this.pointer.travelDistance, this.weapons.travelDistance) / MAX_TRAVEL_PER_SUBSTEP)));
         for (let slice = 0; slice < slices; slice++) this.physicsStep(FIXED_STEP / slices, slices - slice);
+        this.weapons.flushKnockback();
         this.accumulator = Math.max(0, this.accumulator - FIXED_STEP);
       }
       for (const actor of [...this.livingActors]) if (actor.doll.unstable) {

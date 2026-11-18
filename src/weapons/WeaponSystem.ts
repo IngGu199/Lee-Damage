@@ -8,10 +8,11 @@ import type { ContactMotion } from "../game/ImpactCollector";
 import { ImpactEffects } from "../effects/ImpactEffects";
 import { DEFAULT_WEAPON_CONFIG, loadSettings, meleeDamage, parseWeaponConfig, type ToolId, type WeaponId } from "./WeaponConfig";
 import { WeaponFinishers, type AttachedBullet } from "./WeaponFinishers";
-import { add, multiply, rotate, subtract, sweepCircle, unit, type Point } from "./geometry";
+import { add, circleContact, closingSpeed, multiply, rotate, subtract, sweepCircle, unit, type Point } from "./geometry";
 
 interface Pose { position: Point; angle: number }
-interface Projectile extends AttachedBullet { id: number; direction: Point; since: number }
+interface Projectile extends AttachedBullet { id: number; gunId: number; direction: Point; since: number }
+interface GunItem { id: number; position: Point; lastShot: number }
 interface Contact { actor: RagdollActor; part: number; position: Point; direction: Point; speed: number; damage: number }
 interface MeleeItem {
   id: "bat" | "hammer"; body: MatterJS.BodyType; originOffset: Point; previous?: Pose; motion?: ContactMotion;
@@ -25,13 +26,18 @@ export class WeaponSystem {
   readonly ready: Promise<void>;
   readonly effects: ImpactEffects;
   readonly finishers: WeaponFinishers;
-  private readonly items = new Map<"bat" | "hammer", MeleeItem>();
-  get body() { return this.mode === "bat" || this.mode === "hammer" ? this.items.get(this.mode)?.body : undefined; }
+  private readonly items = new Map<number, MeleeItem>();
+  private activeItem?: MeleeItem;
+  private readonly guns: GunItem[] = [];
+  get body() { return this.activeItem?.body; }
+  get heldBody() { return this.holding ? this.body : undefined; }
+  get hasWeapons() { return this.items.size > 0 || this.guns.length > 0 || this.projectiles.length > 0; }
   grip?: MatterJS.ConstraintType;
   target: Point = { x: ROOM.width / 2, y: ROOM.height / 2 };
-  gunOrigin: Point = { ...this.target };
+  get gunOrigin(): Point { return this.guns.at(-1)?.position ?? this.target; }
   private holding = false;
   private pointerId: number | null = null;
+  private rightPressed = false;
   private gripOffset: Point = { x: 0, y: 0 };
   private freeInertia?: number;
   private heldAngle = 0;
@@ -43,8 +49,9 @@ export class WeaponSystem {
   private touching = new Set<string>();
   private nextHit = 0;
   private nextBullet = 0;
-  private lastShot = -Infinity;
+  private nextGun = 0;
   private readonly projectiles: Projectile[] = [];
+  private readonly batKnockbacks: { actor: RagdollActor; bodies: MatterJS.BodyType[]; impulse: Point; interactive: boolean }[] = [];
   private readonly textures = new Set<string>();
   private bulletTexture?: string;
   private bulletImages: Phaser.GameObjects.Image[] = [];
@@ -59,6 +66,9 @@ export class WeaponSystem {
     });
     const canvas = scene.game.canvas, options = { signal: this.abort.signal };
     canvas.addEventListener("pointerdown", this.down, options);
+    canvas.addEventListener("contextmenu", event => {
+      if (this.holding && this.activeItem?.id === "bat") event.preventDefault();
+    }, options);
     window.addEventListener("pointermove", this.move, options);
     for (const name of ["pointerup", "pointercancel", "lostpointercapture"])
       window.addEventListener(name, this.up as EventListener, options);
@@ -97,7 +107,7 @@ export class WeaponSystem {
     const item = this.pick(this.target);
     if (!item) return;
     event.preventDefault(); this.scene.game.canvas.focus({ preventScroll: true });
-    this.mode = item.id;
+    this.mode = item.id; this.activeItem = item;
     this.scene.pointer.cancel();
     this.holding = true; this.pointerId = event.pointerId;
     this.scene.game.canvas.setPointerCapture(event.pointerId);
@@ -106,7 +116,7 @@ export class WeaponSystem {
     this.gripOffset = rotate(subtract(this.target, body.position), -body.angle);
     this.heldAngle = body.angle; this.freeInertia = body.inertia;
     Matter.Body.setInertia(body, item.id === "bat" ? Infinity
-      : this.freeInertia + body.mass * (this.gripOffset.x ** 2 + this.gripOffset.y ** 2));
+      : this.freeInertia + body.mass * (this.gripOffset.x ** 2 + this.gripOffset.y ** 2)/10);
     if (item.id === "bat") Matter.Body.setAngularVelocity(body, 0);
     this.grip = Matter.Constraint.create({ pointA: { ...this.target }, bodyB: body,
       pointB: rotate(this.gripOffset, body.angle), length: 0, stiffness: 1, damping: 0,
@@ -122,10 +132,16 @@ export class WeaponSystem {
     for (const item of this.items.values()) if (item.body === body || item.body === body.parent) return true;
     return false;
   }
+  collisionRestitution(body: MatterJS.BodyType) {
+    for (const item of this.items.values()) if (item.body === body || item.body === body.parent)
+      return this.config.weapons[item.id].physics.restitution;
+    return undefined;
+  }
   resize(oldWidth: number) {
     this.cancel();
     const ratio = ROOM.width / oldWidth;
-    this.target.x *= ratio; this.gunOrigin.x *= ratio;
+    this.target.x *= ratio;
+    for (const gun of this.guns) gun.position.x *= ratio;
     for (const item of this.items.values()) {
       this.keepInside(item.body, { x: item.body.position.x * ratio, y: item.body.position.y });
       item.previous = undefined; item.motion = undefined;
@@ -135,6 +151,12 @@ export class WeaponSystem {
   }
   private move = (event: PointerEvent) => {
     if (this.scene.paused) return;
+    // The second button changes pointermove.buttons rather than firing pointerdown.
+    // Pickup prevents compatibility mouse events, so detect the right-button edge here.
+    const right = Boolean(event.buttons & 2);
+    if (right && !this.rightPressed) this.rotateClick(event);
+    this.rightPressed = right;
+    if (this.holding && event.pointerId === this.pointerId && !(event.buttons & 1)) { this.up(event); return; }
     const rect = this.scene.game.canvas.getBoundingClientRect();
     if (!this.holding && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) return;
     this.target = this.point(event);
@@ -142,7 +164,8 @@ export class WeaponSystem {
   };
   private up = (event: PointerEvent) => {
     if (event.pointerId !== this.pointerId) return;
-    if (event.type === "pointerup" && this.body) {
+    if (event.type === "pointerup" && event.buttons & 1) return;
+    if ((event.type === "pointerup" || event.type === "pointermove") && this.body) {
       const point = this.point(event);
       if (Math.hypot(point.x - this.target.x, point.y - this.target.y) > 0.001) this.pointerMotion.record(point, event.timeStamp);
       const velocity = this.pointerMotion.at(event.timeStamp), offset = rotate(this.gripOffset, this.body.angle);
@@ -151,26 +174,44 @@ export class WeaponSystem {
     }
     this.cancel();
   };
+  private rotateClick = (event: MouseEvent) => {
+    if (this.scene.paused || !this.holding || this.activeItem?.id !== "bat" || !this.grip) return;
+    event.preventDefault();
+    const body = this.activeItem.body, angle = this.heldAngle + Phaser.Math.DegToRad(this.config.weapons.bat.handling.rotateStepDegrees);
+    const center = subtract(this.grip.pointA, rotate(this.gripOffset, angle));
+    const vertices = body.vertices!.map(vertex => add(center, rotate(subtract(vertex, body.position), angle - body.angle)));
+    // Turning near a wall must not move the clicked pivot through the room bounds.
+    if (vertices.some(vertex => vertex.x < ROOM.left || vertex.x > ROOM.right || vertex.y < ROOM.top || vertex.y > ROOM.bottom)) return;
+    this.heldAngle = angle;
+    Matter.Body.setAngle(body, angle); Matter.Body.setPosition(body, center); Matter.Body.setAngularVelocity(body, 0);
+    this.grip.pointB = rotate(this.gripOffset, angle); this.grip.angleB = angle;
+    this.onChange();
+  };
   cancel() {
     const pointerId = this.pointerId; this.pointerId = null; this.holding = false;
+    this.rightPressed = false;
     if (this.grip) { this.scene.matter.world.removeConstraint(this.grip); this.grip = undefined; }
     if (this.body && this.freeInertia !== undefined) Matter.Body.setInertia(this.body, this.freeInertia);
     this.freeInertia = undefined;
     this.pointerMotion.clear();
     if (pointerId !== null && this.scene.game.canvas.hasPointerCapture(pointerId)) this.scene.game.canvas.releasePointerCapture(pointerId);
+    this.onChange();
   }
   select(mode: ToolId) {
     if (!this.loaded || this.scene.paused || !["hand", "bat", "hammer", "gun"].includes(mode)) return false;
     this.scene.pointer.cancel(); this.cancel();
-    this.mode = mode; this.lastShot = -Infinity;
+    this.mode = mode; this.activeItem = undefined;
+    if (mode !== "gun") this.clearGuns();
     const anchor = { x: Phaser.Math.Clamp(this.target.x, ROOM.left + 30, ROOM.right - 30), y: Phaser.Math.Clamp(this.target.y, ROOM.top + 30, ROOM.bottom - 30) };
-    if (mode === "gun") this.gunOrigin = anchor;
-    else if (mode !== "hand" && !this.items.has(mode)) {
+    if (mode === "gun") this.guns.push({ id: ++this.nextGun, position: anchor, lastShot: -Infinity });
+    else if (mode !== "hand") {
       const d = this.config.weapons[mode], { length, width, headWidth, headHeight, angle } = d.shape;
       let body: MatterJS.BodyType;
       let originOffset: Point;
       const material = { restitution: d.physics.restitution, friction: d.physics.friction, frictionStatic: d.physics.frictionStatic,
-        frictionAir: d.physics.frictionAir, collisionFilter: { mask: 7, category: 4, group: 0 } };
+        // Zero knockback must also suppress Matter's impulse/position transfer to dolls.
+        // Head/body sweeps still detect hits; walls and other weapons remain solid.
+        frictionAir: d.physics.frictionAir, collisionFilter: { mask: d.damage.knockback === 0 ? 6 : 7, category: 4, group: 0 } };
       if (mode === "bat") {
         body = Matter.Bodies.rectangle(length / 2, 0, length, width, material);
         Matter.Body.setMass(body, d.physics.handleMass);
@@ -186,7 +227,8 @@ export class WeaponSystem {
       Matter.Body.setAngle(body, angle);
       Matter.Body.setPosition(body, subtract(anchor, rotate(originOffset, angle)));
       this.keepInside(body);
-      this.items.set(mode, { id: mode, body, originOffset });
+      this.activeItem = { id: mode, body, originOffset };
+      this.items.set(body.id, this.activeItem);
       this.scene.matter.world.add(body);
     }
     this.onChange(); return true;
@@ -276,25 +318,33 @@ export class WeaponSystem {
           if (t === null) continue;
           const displacement = subtract(sample.end, sample.start);
           const point = add(sample.start, multiply(displacement, t)), source = item.motion, peer = this.targetMotion?.get(part.body);
-          const velocity = source ? { x: source.x - source.angular * (point.y - source.center.y), y: source.y + source.angular * (point.x - source.center.x) }
+          const surface = weapon === "hammer" ? circleContact(point, part.body.vertices!) : undefined;
+          const position = surface?.position ?? point;
+          let velocity = source ? { x: source.x - source.angular * (position.y - source.center.y), y: source.y + source.angular * (position.x - source.center.x) }
             : multiply(displacement, 1000 / delta);
-          const relative = subtract(velocity, peer ? { x: peer.x - peer.angular * (point.y - peer.center.y), y: peer.y + peer.angular * (point.x - peer.center.x) }
+          if (weapon === "hammer" && this.holding && this.body === body) {
+            // Grip constraints move the hammer after beforeSolve. Include that translation
+            // and rotation instead of requiring a pre-existing angular velocity.
+            const linear = multiply(subtract(body.position, previous.position), 1000 / delta);
+            const angular = (body.angle - previous.angle) * 1000 / delta;
+            velocity = { x: linear.x - angular * (position.y - body.position.y), y: linear.y + angular * (position.x - body.position.x) };
+          }
+          const relative = subtract(velocity, peer ? { x: peer.x - peer.angular * (position.y - peer.center.y), y: peer.y + peer.angular * (position.x - peer.center.x) }
             : multiply(part.body.velocity, 1000 / REFERENCE_STEP));
           // Pointer projection supplies the held bat's translation after the solver.
           if (weapon === "bat" && this.holding && this.body === body) Object.assign(relative, multiply(displacement, 1000 / delta));
-          const lever = this.holding && this.body === body ? Math.hypot(point.x - this.grip!.pointA.x, point.y - this.grip!.pointA.y) : shape.length;
-          const speed = weapon === "hammer" ? Math.abs(source?.angular ?? body.angularVelocity * 1000 / REFERENCE_STEP) * lever : Math.hypot(relative.x, relative.y);
+          const speed = surface ? closingSpeed(relative, surface.normal) : Math.hypot(relative.x, relative.y);
           const damage = meleeDamage(definition, speed, sample.tip);
           if (damage <= 0 || (best && damage <= best.damage)) continue;
-          best = { actor, part: index, position: add(sample.start, multiply(displacement, t)), direction: unit(relative), speed, damage };
+          best = { actor, part: index, position, direction: surface?.normal ?? unit(relative), speed, damage };
         }
       });
       if (!best) continue;
-      const key = `${weapon}:${actor.id}`; contacts.add(key);
+      const key = `${body.id}:${actor.id}`; contacts.add(key);
       if (this.touching.has(key) || time - (this.lastHit.get(key) ?? -Infinity) < definition.damage.hitCooldownMs) continue;
       this.lastHit.set(key, time); this.hit(weapon, best, time);
     }
-    for (const key of this.touching) if (key.startsWith(`${weapon}:`)) this.touching.delete(key);
+    for (const key of this.touching) if (key.startsWith(`${body.id}:`)) this.touching.delete(key);
     for (const key of contacts) this.touching.add(key);
   }
   private hit(weapon: WeaponId, contact: Contact, time: number, bullet?: AttachedBullet) {
@@ -306,9 +356,23 @@ export class WeaponSystem {
         part: contact.part, position: contact.position, strength: contact.speed, damage: contact.damage, time });
       if (result?.lethal) { this.finishers.start(actor, weapon, definition, contact.direction, time, bullet); return; }
     }
+    if (definition.damage.knockback === 0) return;
     const impulse = multiply(contact.direction, definition.damage.knockback * REFERENCE_STEP / 1000);
     const bodies = actor.lifecycle.interactive ? actor.doll.bodies : [actor.doll.parts[contact.part].body];
+    if (weapon === "bat") {
+      this.batKnockbacks.push({ actor, bodies, impulse, interactive: actor.lifecycle.interactive }); return;
+    }
     for (const body of bodies) Matter.Body.setVelocity(body, add(body.velocity, impulse));
+  }
+  /** Apply the bat's launch once after all adaptive slices, so later slices of the
+   * same pointer swing cannot immediately cancel the configured kick. */
+  flushKnockback() {
+    for (const hit of this.batKnockbacks) {
+      // A later hit in this tick may have started a finisher or removed the target.
+      if (!this.scene.actors.includes(hit.actor) || hit.actor.lifecycle.interactive !== hit.interactive) continue;
+      for (const body of hit.bodies) if (!body.isStatic) Matter.Body.setVelocity(body, add(body.velocity, hit.impulse));
+    }
+    this.batKnockbacks.length = 0;
   }
   signal(name: string, owner: number, position: Point, direction: Point, time: number, speed: number, fallback: string) {
     this.effects.emit(name, position, direction, time);
@@ -317,11 +381,17 @@ export class WeaponSystem {
   fire() {
     if (this.mode !== "gun" || this.scene.paused || !this.loaded) return false;
     const definition = this.config.weapons.gun, p = definition.projectile, time = this.scene.snapshot().simulationTime;
-    if (time - this.lastShot + 1e-6 < p.fireIntervalMs || this.projectiles.length >= p.maxCount) return false;
-    this.lastShot = time;
-    const direction = unit(subtract(this.target, this.gunOrigin)), position = add(this.gunOrigin, multiply(direction, definition.shape.length / 2 + p.radius));
-    this.projectiles.push({ id: ++this.nextBullet, position, direction, since: time, radius: p.radius, color: p.color, texture: this.bulletTexture });
-    this.signal(definition.signals.fire, 0, position, direction, time, p.speed, "collision.wall"); return true;
+    const counts = new Map<number, number>();
+    for (const bullet of this.projectiles) counts.set(bullet.gunId, (counts.get(bullet.gunId) ?? 0) + 1);
+    let fired = false;
+    for (const gun of this.guns) {
+      if (time - gun.lastShot + 1e-6 < p.fireIntervalMs || (counts.get(gun.id) ?? 0) >= p.maxCount) continue;
+      gun.lastShot = time;
+      const direction = unit(subtract(this.target, gun.position)), position = add(gun.position, multiply(direction, definition.shape.length / 2 + p.radius));
+      this.projectiles.push({ id: ++this.nextBullet, gunId: gun.id, position, direction, since: time, radius: p.radius, color: p.color, texture: this.bulletTexture });
+      this.signal(definition.signals.fire, -gun.id, position, direction, time, p.speed, "collision.wall"); fired = true;
+    }
+    return fired;
   }
   private stepProjectiles(delta: number, time: number) {
     const definition = this.config.weapons.gun, settings = definition.projectile;
@@ -361,10 +431,10 @@ export class WeaponSystem {
       const point = add(this.body.position, rotate(this.gripOffset, this.body.angle));
       g.lineStyle(2, 0xffffff).strokeCircle(point.x, point.y, 7);
     }
-    if (this.mode === "gun") {
-      const d = this.config.weapons.gun, angle = Math.atan2(this.target.y - this.gunOrigin.y, this.target.x - this.gunOrigin.x);
+    for (const gun of this.guns) {
+      const d = this.config.weapons.gun, angle = Math.atan2(this.target.y - gun.position.y, this.target.x - gun.position.x);
       const rect = (x: number, y: number, width: number, height: number) => {
-        const points = [{ x, y }, { x: x + width, y }, { x: x + width, y: y + height }, { x, y: y + height }].map(p => add(this.gunOrigin, rotate(p, angle)));
+        const points = [{ x, y }, { x: x + width, y }, { x: x + width, y: y + height }, { x, y: y + height }].map(p => add(gun.position, rotate(p, angle)));
         g.fillStyle(d.shape.color).fillPoints(points, true);
       };
       rect(-d.shape.length / 2, -d.shape.width / 2, d.shape.length, d.shape.width);
@@ -383,24 +453,57 @@ export class WeaponSystem {
     this.effects.render(time);
   }
   snapshot() { return { mode: this.mode, loaded: this.loaded, holding: this.holding, gunOrigin: { ...this.gunOrigin },
+    heldBodyId: this.heldBody?.id ?? null,
+    guns: this.guns.map(gun => ({ id: gun.id, position: { ...gun.position } })),
     items: [...this.items.values()].map(item => ({ id: item.id, bodyId: item.body.id, position: { ...item.body.position }, angle: item.body.angle })),
     trackedTargets: this.lastHit.size,
     trackedTargetIds: [...new Set([...this.lastHit.keys()].map(key => Number(key.split(":")[1])))],
-    projectiles: this.projectiles.map(bullet => ({ id: bullet.id, position: { ...bullet.position }, direction: { ...bullet.direction } })),
+    projectiles: this.projectiles.map(bullet => ({ id: bullet.id, gunId: bullet.gunId, position: { ...bullet.position }, direction: { ...bullet.direction } })),
     finishers: this.finishers.snapshot(), effects: this.effects.snapshot() }; }
   forget(actor: RagdollActor) {
-    for (const id of ["bat", "hammer"]) { this.lastHit.delete(`${id}:${actor.id}`); this.touching.delete(`${id}:${actor.id}`); }
+    for (const key of this.lastHit.keys()) if (key.endsWith(`:${actor.id}`)) this.lastHit.delete(key);
+    for (const key of this.touching) if (key.endsWith(`:${actor.id}`)) this.touching.delete(key);
     this.finishers.forget(actor);
   }
-  private removeBody() { for (const item of this.items.values()) this.scene.matter.world.remove(item.body, true); this.items.clear(); }
+  private removeItem(item: MeleeItem) {
+    this.scene.matter.world.remove(item.body, true); this.items.delete(item.body.id);
+    for (const key of this.lastHit.keys()) if (key.startsWith(`${item.body.id}:`)) this.lastHit.delete(key);
+    for (const key of this.touching) if (key.startsWith(`${item.body.id}:`)) this.touching.delete(key);
+    // Compound weapons leave child-body pairs in Matter's cache until its next step.
+    const pairs = this.scene.matter.world.engine.pairs;
+    const keep = (pair: { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType }) =>
+      pair.bodyA.parent !== item.body && pair.bodyB.parent !== item.body && pair.bodyA !== item.body && pair.bodyB !== item.body;
+    for (const key of ["list", "collisionStart", "collisionActive", "collisionEnd"]) pairs[key] = pairs[key].filter(keep);
+    for (const [key, pair] of Object.entries(pairs.table)) if (!keep(pair as { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType })) delete pairs.table[key];
+    if (this.activeItem === item) this.activeItem = undefined;
+  }
+  deleteHeld() {
+    if (this.scene.paused || !this.holding || !this.activeItem) return false;
+    const item = this.activeItem; this.cancel(); this.removeItem(item); this.onChange(); return true;
+  }
+  private clearGuns() {
+    for (const gun of this.guns) this.scene.audio.forget(-gun.id);
+    this.guns.length = 0;
+  }
+  clearWeapons() {
+    if (this.scene.paused || !this.loaded) return false;
+    this.cancel(); this.removeBody(); this.clearGuns(); this.projectiles.length = 0;
+    this.bulletImages.forEach(image => image.setVisible(false));
+    this.batKnockbacks.length = 0; this.mode = "hand"; this.onChange(); return true;
+  }
+  private removeBody() { for (const item of this.items.values()) this.removeItem(item); this.activeItem = undefined; }
   reset() {
     this.cancel(); this.removeBody(); this.projectiles.length = 0; this.finishers.reset(); this.effects.reset();
-    this.lastHit.clear(); this.touching.clear(); this.lastShot = -Infinity; this.graphics.clear();
+    this.clearGuns();
+    this.batKnockbacks.length = 0;
+    this.lastHit.clear(); this.touching.clear(); this.graphics.clear();
     for (const image of this.bulletImages) image.destroy(); this.bulletImages = [];
     this.mode = "hand"; this.onChange();
   }
   destroy() {
     this.abort.abort(); this.cancel(); this.removeBody(); this.projectiles.length = 0; this.finishers.reset();
+    this.clearGuns();
+    this.batKnockbacks.length = 0;
     this.lastHit.clear(); this.touching.clear();
     this.bulletImages.forEach(image => image.destroy()); this.effects.destroy(); this.graphics.destroy();
     for (const key of this.textures) this.scene.textures.remove(key);

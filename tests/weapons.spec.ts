@@ -1,9 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 
-async function open(page: Page, weapons: Record<string, unknown> = {}) {
+async function open(page: Page, weapons: Record<string, unknown> = {}, hammerKnockback = 60) {
   await page.route("**/config/weapons.json", route => route.fulfill({ json: { version: 1, weapons: {
     bat: { shape: { length: 180, width: 24, angle: 0 } },
-    hammer: { shape: { length: 145, width: 18, angle: 0 }, damage: { amount: 150, handleMultiplier: 1, tipMultiplier: 1 } },
+    hammer: { shape: { length: 145, width: 18, angle: 0 }, physics: { restitution: 0.02, friction: 0.15, frictionStatic: 0.3 },
+      damage: { amount: 150, handleMultiplier: 1, tipMultiplier: 1, knockback: hammerKnockback } },
     gun: { shape: { length: 64, width: 22, angle: 0 }, damage: { amount: 0, knockback: 0 } }, ...weapons,
   } } }));
   await page.goto("/?diagnostics");
@@ -31,8 +32,8 @@ async function hammerHit(page: Page, lethal = false) {
     const s = window.__physicsLab; s.selectTool("hammer");
     const actor = s.selectedActor; if (lethal) actor.damage.health.lose(999);
     const body = s.weapons.body!, head = body.parts[2], target = actor.doll.parts[0].body.position;
-    s.matter.body.translate(body, { x: target.x - head.position.x, y: target.y - head.position.y });
-    s.matter.body.setAngularVelocity(body, 0.25);
+    s.matter.body.translate(body, { x: target.x - 80 - head.position.x, y: target.y - head.position.y });
+    s.matter.body.setVelocity(body, { x: 30, y: 0 });
     s.update(0, 1000 / 120);
     return { id: actor.id, hp: actor.damage.health.hp, state: actor.lifecycle.state, joints: actor.doll.joints.length,
       alive: s.livingActors.length, velocities: actor.doll.bodies.map(part => ({ ...part.velocity })),
@@ -81,9 +82,106 @@ test("hammer's weighted head falls around the held handle and sideways motion pr
   await page.mouse.up();
 });
 
-test("hammer head rotation deals damage and emits its own hit signal", async ({ page }) => {
+test("a translating hammer head deals damage without rotation and emits its own hit signal", async ({ page }) => {
   await open(page); const result = await hammerHit(page);
   expect(result.hp).toBeLessThan(1000); expect(result.events).toContain("weapon.hammer.hit");
+});
+
+test("hammer JSON knockback zero disables impulse and positional push to a living doll", async ({ page }) => {
+  await open(page, {}, 0);
+  const before = await page.evaluate(() => window.__physicsLab.doll.bodies.map(body => ({ ...body.position })));
+  const hit = await hammerHit(page);
+  expect(hit.hp).toBeLessThan(1000);
+  const result = await page.evaluate(() => {
+    const s = window.__physicsLab;
+    return { positions: s.doll.bodies.map(body => ({ ...body.position })),
+      velocities: s.doll.bodies.map(body => ({ ...body.velocity })), mask: s.weapons.body!.collisionFilter.mask };
+  });
+  expect(result.mask & 1).toBe(0); expect(result.mask & 6).toBe(6);
+  for (let i = 0; i < before.length; i++) {
+    expect(result.positions[i].x).toBeCloseTo(before[i].x, 4);
+    expect(result.positions[i].y).toBeCloseTo(before[i].y, 4);
+    expect(Math.hypot(result.velocities[i].x, result.velocities[i].y)).toBeLessThan(1e-6);
+  }
+});
+
+test("dragging a hammer straight into a doll deals damage without pushing it", async ({ page }) => {
+  await open(page, {}, 0);
+  const start = await page.evaluate(() => {
+    const s = window.__physicsLab, target = { ...s.doll.parts[0].body.position };
+    s.weapons.target = { x: target.x - 260, y: target.y }; s.selectTool("hammer");
+    const body = s.weapons.body!, head = body.parts[2];
+    s.matter.body.translate(body, { x: target.x - 170 - head.position.x, y: target.y - head.position.y });
+    return { grip: { ...head.position }, target };
+  });
+  await move(page, start.grip); await page.mouse.down();
+  await move(page, { x: start.grip.x + 130, y: start.grip.y }); await steps(page, 1);
+  const hit = await page.evaluate(() => ({ hp: window.__physicsLab.damage.health.hp,
+    head: { ...window.__physicsLab.doll.parts[0].body.position }, events: window.__physicsLab.weapons.effects.snapshot().events }));
+  expect(hit.hp).toBeLessThan(1000); expect(hit.events).toContain("weapon.hammer.hit");
+  expect(hit.head.x).toBeCloseTo(start.target.x, 4); expect(hit.head.y).toBeCloseTo(start.target.y, 4);
+  await page.mouse.up();
+});
+
+for (const scenario of ["slow", "separating", "moving-together"] as const) {
+  test(`hammer ${scenario} contact does not cause impact damage`, async ({ page }) => {
+    await open(page);
+    const hp = await page.evaluate(scenario => {
+      const s = window.__physicsLab; s.selectTool("hammer");
+      const actor = s.selectedActor, target = { ...actor.doll.parts[0].body.position }, body = s.weapons.body!, head = body.parts[2];
+      s.matter.body.translate(body, { x: target.x - 69 - head.position.x, y: target.y - head.position.y });
+      if (scenario === "moving-together") {
+        actor.interact(); for (const part of actor.doll.bodies) s.matter.body.setVelocity(part, { x: 30, y: 0 });
+      }
+      s.matter.body.setVelocity(body, { x: scenario === "slow" ? 799 / 60 : scenario === "separating" ? -30 : 30, y: 0 });
+      s.update(0, 1000 / 120); return actor.damage.health.hp;
+    }, scenario);
+    expect(hp).toBe(1000);
+  });
+}
+
+test("bat JSON knockback increases the doll's launch speed after physical response", async ({ page }) => {
+  const speeds: number[] = [];
+  for (const knockback of [600, 2200]) {
+    await open(page, { bat: { shape: { length: 180, width: 24, angle: 0 }, damage: { knockback } } });
+    await batSwing(page);
+    const hit = await page.evaluate(() => {
+      const s = window.__physicsLab;
+      return { hp: s.damage.health.hp, speed: s.doll.bodies.reduce((sum, body) => sum + body.velocity.x * 60, 0) / s.doll.bodies.length };
+    });
+    expect(hit.hp).toBeLessThan(1000);
+    speeds.push(hit.speed);
+  }
+  // Subsequent contact/joint solving can dissipate the added velocity; measure the
+  // actual launch rather than requiring the initial kick to survive unchanged.
+  expect(speeds[0]).toBeGreaterThan(400);
+  expect(speeds[1]).toBeGreaterThan(1000); expect(speeds[1]).toBeGreaterThan(speeds[0] * 1.8);
+});
+
+test("shipped JSON sets strong bat knockback and gentle hammer knockback", async ({ page }) => {
+  await page.goto("/?diagnostics");
+  await page.waitForFunction(() => window.__physicsLab?.weapons?.loaded);
+  expect(await page.evaluate(() => {
+    const s = window.__physicsLab; s.game.loop.sleep();
+    return { bat: s.weapons.config.weapons.bat.damage.knockback, hammer: s.weapons.config.weapons.hammer.damage.knockback };
+  })).toEqual({ bat: 2200, hammer: 60 });
+});
+
+test("hammer retains physical collisions with a configurable low restitution cap", async ({ page }) => {
+  await open(page);
+  const hit = await hammerHit(page); expect(hit.hp).toBeLessThan(1000);
+  const result = await page.evaluate(() => {
+    const s = window.__physicsLab, body = s.weapons.body!;
+    const pairs = s.matter.world.engine.pairs.list as { bodyA: MatterJS.BodyType; bodyB: MatterJS.BodyType; restitution: number }[];
+    return { mask: body.collisionFilter.mask, knockback: s.weapons.config.weapons.hammer.damage.knockback,
+      pairs: pairs.filter(pair =>
+        (pair.bodyA.parent === body && s.doll.bodies.includes(pair.bodyB)) ||
+        (pair.bodyB.parent === body && s.doll.bodies.includes(pair.bodyA))).map(pair => pair.restitution),
+      speed: Math.max(...s.doll.bodies.map(part => Math.hypot(part.velocity.x, part.velocity.y))) };
+  });
+  expect(result.mask & 1).toBe(1); expect(result.knockback).toBe(60);
+  expect(result.pairs.length).toBeGreaterThan(0); expect(Math.max(...result.pairs)).toBeLessThanOrEqual(0.02);
+  expect(result.speed).toBeGreaterThan(0);
 });
 
 test("gun stays at its selection point and visible bullets apply fixed damage", async ({ page }) => {
@@ -182,7 +280,7 @@ test("JSON projectile skin and high speed do not tunnel, and the configured pin 
   expect(await page.evaluate(id => window.__physicsLab.actors.find(actor => actor.id === id)!.lifecycle.state, target.id)).toBe("bursting");
 });
 
-test("hammer handle alone has no damage, repeated tool switches leave no extra bodies, and editing blocks selection", async ({ page }) => {
+test("hammer handle alone has no damage, each selection spawns another weapon, and editing blocks selection", async ({ page }) => {
   await open(page);
   const result = await page.evaluate(() => {
     const s = window.__physicsLab; s.selectTool("hammer");
@@ -194,14 +292,16 @@ test("hammer handle alone has no damage, repeated tool switches leave no extra b
     for (let i = 0; i < 15; i++) { s.selectTool("bat"); s.selectTool("hammer"); s.selectTool("gun"); s.selectTool("hand"); }
     return { hp, bodies: s.snapshot().bodies, joints: s.snapshot().joints };
   });
-  expect(result).toEqual({ hp: 1000, bodies: 16, joints: 9 });
+  expect(result).toEqual({ hp: 1000, bodies: 45, joints: 9 });
+  await page.locator("#clear-weapons").click();
+  expect(await page.evaluate(() => window.__physicsLab.snapshot().bodies)).toBe(14);
   await page.locator("#photo-open").click(); await page.keyboard.press("Digit3");
   expect(await page.evaluate(() => window.__physicsLab.weapons.mode)).toBe("hand");
   await page.locator("#photo-close").click(); await page.locator("#game canvas").focus(); await page.keyboard.press("Digit3");
   expect(await page.evaluate(() => window.__physicsLab.weapons.mode)).toBe("hammer");
 });
 
-test("both melee weapons fall, rest on the ground, persist across tool switches and are reused", async ({ page }) => {
+test("both melee weapons fall, rest on the ground and persist across tool switches", async ({ page }) => {
   await open(page);
   const before = await page.evaluate(() => {
     const s = window.__physicsLab, w = s.weapons;
@@ -213,9 +313,9 @@ test("both melee weapons fall, rest on the ground, persist across tool switches 
   await steps(page, 240);
   const result = await page.evaluate(() => {
     const s = window.__physicsLab, w = s.weapons;
-    const floor = ["bat", "hammer"].map(id => {
-      s.selectTool(id as "bat" | "hammer"); const body = w.body!;
-      return { id, bodyId: body.id, dynamic: !body.isStatic && !body.isSensor, bottom: Math.max(...body.vertices!.map(v => v.y)), position: { ...body.position } };
+    const floor = w.snapshot().items.map(item => {
+      const body = s.matter.world.getAllBodies().find(body => body.id === item.bodyId)!;
+      return { id: item.id, bodyId: body.id, dynamic: !body.isStatic && !body.isSensor, bottom: Math.max(...body.vertices!.map(v => v.y)), position: { ...body.position } };
     });
     const bodies = s.snapshot().bodies; s.selectTool("hand");
     return { floor, bodies, items: w.snapshot().items, bottom: s.room.bottom, holding: w.snapshot().holding };
