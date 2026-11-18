@@ -7,6 +7,7 @@ import { PhotoEditor } from "./photo/PhotoEditor";
 import { PHOTO_BASE_SIZE } from "./game/appearanceConfig";
 import { DAMAGE_RULES } from "./game/damageConfig";
 import { DEFAULT_SETTINGS, ROOM, type LabStats } from "./game/config";
+import { weaponFrame, type WeaponPhotoTarget } from "./weapons/WeaponSkins";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
@@ -39,6 +40,11 @@ app.innerHTML = `
         <button data-tool="hammer" aria-pressed="false" disabled title="누를 때마다 망치 생성 · 원하는 지점을 클릭해 잡기 · 잡은 무기 삭제 X">망치 <kbd>3</kbd></button>
         <button data-tool="gun" aria-pressed="false" disabled title="누를 때마다 마우스 위치에 총 생성 · 좌클릭으로 모든 총 발사 · 다른 도구를 선택하면 총 일괄 삭제">총 <kbd>4</kbd></button>
         <button id="clear-weapons" disabled title="방 안의 무기와 비행 중인 탄알을 모두 삭제 · 잡은 물건만 삭제하려면 X">무기 모두 삭제 <kbd>C</kbd></button>
+        <div class="weapon-photo-controls">
+          <label class="sr-only" for="weapon-photo-target">사진을 적용할 무기</label>
+          <select id="weapon-photo-target"><option value="bat">야구방망이</option><option value="hammer">망치</option><option value="gun">총</option><option value="bullet">탄알</option></select>
+          <button id="weapon-photo-open" disabled>무기 사진</button>
+        </div>
       </div>
     </header>
     <div class="canvas-wrap">
@@ -60,8 +66,24 @@ const photoEditor = new PhotoEditor(photoSession, {
   clear: () => { photoSession.clear(); scene.clearPhoto(); },
   previewSize: () => scene.game.canvas.getBoundingClientRect().width / ROOM.width * Math.max(PHOTO_BASE_SIZE, scene.face.displaySize),
 });
+const weaponEditors = new Map<WeaponPhotoTarget, PhotoEditor>();
+const weaponPhotoEditor = (id: WeaponPhotoTarget) => {
+  let editor = weaponEditors.get(id);
+  if (!editor) {
+    const session = new PhotoSession(), label = id === "bullet" ? "탄알" : scene.weapons.config.weapons[id].label;
+    editor = new PhotoEditor(session, {
+      begin: () => scene.beginPhotoEdit(), end: () => scene.endPhotoEdit(),
+      apply: photo => { scene.weapons.applyPhoto(id, photo); scene.onNotice(`${label} 사진과 충돌 윤곽을 적용했어요.`); },
+      clear: () => { scene.weapons.applyPhoto(id, null); scene.onNotice(`${label}을 기본 도형으로 되돌렸어요.`); },
+      previewSize: () => Math.min(190, weaponFrame(scene.weapons.config, id).size * scene.game.canvas.getBoundingClientRect().width / ROOM.width),
+    }, { id, label, mask: () => scene.weapons.skins.mask(scene.weapons.config, id) });
+    weaponEditors.set(id, editor);
+  }
+  return editor;
+};
 let ready = false;
 scene.onToolState = () => {
+  element<HTMLButtonElement>("weapon-photo-open").disabled = !scene.weapons?.loaded;
   for (const button of app.querySelectorAll<HTMLButtonElement>("[data-tool]")) {
     button.disabled = !scene.weapons?.loaded || scene.paused;
     button.setAttribute("aria-pressed", String(button.dataset.tool === scene.weapons?.mode));
@@ -105,6 +127,9 @@ scene.onReady = () => {
   scene.configure({ ...DEFAULT_SETTINGS }); scene.onAudioState();
 };
 element("photo-open").addEventListener("click", () => photoEditor.show());
+element("weapon-photo-open").addEventListener("click", () => {
+  if (scene.weapons.loaded) weaponPhotoEditor(element<HTMLSelectElement>("weapon-photo-target").value as WeaponPhotoTarget).show();
+});
 element("spawn").addEventListener("click", () => scene.spawnRagdoll());
 element("force-burst").addEventListener("click", () => scene.forceBurst());
 element("pause").addEventListener("click", () => scene.setPaused(!scene.paused));
@@ -131,7 +156,7 @@ const updateDamageLimit = () => {
 damageInput.addEventListener("input", updateDamageLimit);
 damageInput.addEventListener("blur", () => { damageInput.value = String(scene.maxDamage); updateDamageLimit(); });
 window.addEventListener("keydown", event => {
-  if (!ready || photoEditor.open || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (!ready || photoEditor.open || [...weaponEditors.values()].some(editor => editor.open) || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
   const target = event.target as HTMLElement;
   if (!target.closest("input, select, textarea, [contenteditable]")) {
     const tools = { Digit1: "hand", Digit2: "bat", Digit3: "hammer", Digit4: "gun" } as const;
@@ -196,9 +221,13 @@ const observer = new ResizeObserver(entries => {
   if (width > 0 && height > 0 && (game.scale.width !== Math.round(width) || game.scale.height !== Math.round(height)))
     game.scale.resize(Math.round(width), Math.round(height));
   photoEditor.refreshPreview();
+  for (const editor of weaponEditors.values()) editor.refreshPreview();
 });
 observer.observe(element("game"));
 window.addEventListener("pagehide", event => {
-  if (!(event as PageTransitionEvent).persisted) { photoEditor.destroy(); observer.disconnect(); clearTimeout(noticeTimer); }
+  if (!(event as PageTransitionEvent).persisted) {
+    photoEditor.destroy(); for (const editor of weaponEditors.values()) editor.destroy();
+    observer.disconnect(); clearTimeout(noticeTimer);
+  }
 });
 if (new URLSearchParams(location.search).has("diagnostics")) Object.assign(window, { __physicsLab: scene });

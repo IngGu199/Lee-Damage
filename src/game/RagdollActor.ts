@@ -97,7 +97,7 @@ export class RagdollActor {
   }
 
   render(time: number, pointer: PointerController, debug: boolean, selected = false) {
-    drawDoll(this.graphics, this.doll, pointer, debug, this.face.active, this.overlay, this.face.customOutline);
+    drawDoll(this.graphics, this.doll, pointer, debug, this.face.active, this.overlay, this.face.active);
     const alpha = this.lifecycle.alpha(time);
     this.graphics.setAlpha(alpha); this.overlay.setAlpha(alpha);
     this.face.update(this.doll.parts[0]); this.face.setAlpha(alpha);

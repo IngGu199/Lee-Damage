@@ -36,6 +36,31 @@ export function circleContact(point: Point, vertices: Point[]) {
 /** Tangential motion and separating contacts cannot supply impact damage. */
 export const closingSpeed = (relative: Point, normal: Point) => Math.max(0, dot(relative, normal));
 
+/** Continuous SAT for a translating convex polygon; concave skins pass each convex piece. */
+export function sweepConvex(vertices: Point[], travel: Point, target: Point[]): number | null {
+  // Reject distant parts before projecting every edge of a detailed photo outline.
+  const bounds = (points: Point[]) => {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of points) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); }
+    return { minX, maxX, minY, maxY };
+  };
+  const a = bounds(vertices), b = bounds(target);
+  if (a.maxX + Math.max(0, travel.x) < b.minX || a.minX + Math.min(0, travel.x) > b.maxX ||
+    a.maxY + Math.max(0, travel.y) < b.minY || a.minY + Math.min(0, travel.y) > b.maxY) return null;
+  let entry = 0, exit = 1;
+  for (const polygon of [vertices, target]) for (let i = 0; i < polygon.length; i++) {
+    const a = polygon[i], b = polygon[(i + 1) % polygon.length], axis = unit({ x: a.y - b.y, y: b.x - a.x });
+    const moving = vertices.map(point => dot(point, axis)), fixed = target.map(point => dot(point, axis));
+    const minA = Math.min(...moving), maxA = Math.max(...moving), minB = Math.min(...fixed), maxB = Math.max(...fixed);
+    const speed = dot(travel, axis);
+    if (Math.abs(speed) < 1e-9) { if (maxA < minB || maxB < minA) return null; continue; }
+    const low = (minB - maxA) / speed, high = (maxB - minA) / speed;
+    entry = Math.max(entry, Math.min(low, high)); exit = Math.min(exit, Math.max(low, high));
+    if (entry > exit) return null;
+  }
+  return entry >= 0 && entry <= 1 ? entry : null;
+}
+
 /** Continuous circle/convex-polygon contact; catches fast bullets between physics ticks. */
 export function sweepCircle(start: Point, end: Point, radius: number, vertices: Point[]): number | null {
   if (inside(start, vertices)) return 0;

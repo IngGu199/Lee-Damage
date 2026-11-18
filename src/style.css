@@ -27,6 +27,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, canvas:focus-visible
 .weapon-tools button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #d8dfcd; border-radius: 6px; padding: 6px 12px; background: #f7f8f1; font-size: 11px; }
 .weapon-tools button[aria-pressed="true"] { background: #dbe9b8; border-color: #9cb46c; color: #354d27; }
 .weapon-tools button:hover { background: #e8efda; }
+.weapon-photo-controls { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.weapon-photo-controls select { max-width: 120px; padding: 6px; font-size: 11px; border: 1px solid #d8dfcd; border-radius: 6px; background: #fffef9; }
 kbd { font: 9px monospace; padding: 2px 4px; border-radius: 3px; border: 1px solid #d8dece; color: #8b957f; }
 .canvas-wrap { position: relative; min-height: 0; min-width: 0; }
 #game { width: 100%; height: 100%; }
@@ -54,11 +56,12 @@ button.photo-primary { background: #c4dc77; border-color: #aac660; color: #293b2
 .photo-heading h2 { font-size: 27px; margin: 0; letter-spacing: -1px; }
 .photo-heading .eyebrow { margin-bottom: 8px; font-size: 9px; }
 .photo-dialog .photo-close { border: 0; background: transparent; font-size: 30px; padding: 0 8px; }
+.photo-dialog [hidden] { display: none !important; }
 .photo-copy { color: #75816c; font-size: 12px; line-height: 1.8; margin: 14px 0 22px; }
 .photo-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 28px; }
 .photo-canvas-wrap { position: relative; overflow: hidden; border-radius: 12px; background-color: #a7afa0; background-image: linear-gradient(45deg, #bec5b9 25%, transparent 25%), linear-gradient(-45deg, #bec5b9 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #bec5b9 75%), linear-gradient(-45deg, transparent 75%, #bec5b9 75%); background-size: 28px 28px; background-position: 0 0, 0 14px, 14px -14px, -14px 0; }
-#photo-canvas { display: block; width: 100%; height: auto; aspect-ratio: 1; cursor: move; touch-action: none; }
-#photo-empty { position: absolute; top: 48%; left: 10%; right: 10%; text-align: center; color: white; font-size: 12px; pointer-events: none; }
+.photo-editor-canvas { display: block; width: 100%; height: auto; aspect-ratio: 1; cursor: move; touch-action: none; }
+.photo-empty { position: absolute; top: 48%; left: 10%; right: 10%; text-align: center; color: white; font-size: 12px; pointer-events: none; }
 .photo-hint { text-align: center; font-size: 10px; color: #7e8976; }
 .photo-file-button { display: block; position: relative; background: #283b2d; color: #fff; text-align: center; cursor: pointer; border: 0; padding: 13px; font-weight: 600; overflow: hidden; }
 .photo-file-button:focus-within { outline: 3px solid #6c8e35; outline-offset: 3px; }
@@ -69,11 +72,11 @@ button.photo-primary { background: #c4dc77; border-color: #aac660; color: #293b2
 .photo-faces:not(:empty) { margin-bottom: 12px; }
 .photo-mask-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 12px 0; }
 .photo-mask-modes button { padding: 9px 6px; font-size: 11px; }
-#photo-contour-tools { margin: 0 0 14px; padding: 12px; border: 1px solid #d5dacb; border-radius: 9px; background: #eef1e6; }
+.photo-contour-tools { margin: 0 0 14px; padding: 12px; border: 1px solid #d5dacb; border-radius: 9px; background: #eef1e6; }
 .photo-contour-tool-row, .photo-contour-actions { display: flex; flex-wrap: wrap; gap: 5px; }
 .photo-contour-tool-row button, .photo-contour-actions button { padding: 7px 8px; font-size: 10px; }
 .photo-contour-status { font-size: 10px; color: #5c6c4b; line-height: 1.8; margin: 10px 0; }
-#photo-contour-tools .photo-landmark-toggle { margin-top: 10px; font-size: 10px; }
+.photo-contour-tools .photo-landmark-toggle { margin-top: 10px; font-size: 10px; }
 .photo-dialog [aria-pressed="true"] { background: #d4e5a8; border-color: #7e9b45; }
 .photo-sliders { display: grid; gap: 7px; }
 .photo-sliders label { display: flex; justify-content: space-between; color: #59684e; font-size: 11px; margin-top: 4px; }
@@ -83,7 +86,7 @@ button.photo-primary { background: #c4dc77; border-color: #aac660; color: #293b2
 .photo-landmark-toggle { display: flex; align-items: center; gap: 6px; margin-top: 15px; font-size: 11px; color: #6b785f; }
 .photo-landmark-toggle input { accent-color: #758f45; }
 .photo-actual { display: flex; align-items: center; gap: 14px; margin-top: 17px; }
-#photo-small { width: 72px; height: 72px; flex-shrink: 0; }
+.photo-small { width: 72px; height: 72px; flex-shrink: 0; }
 .photo-actual span { font-size: 11px; color: #566549; }
 .photo-actual small { display: block; font-size: 9px; color: #859079; margin-top: 5px; }
 .photo-error { color: #9f4a3c; font-size: 12px; margin: 15px 0; }

@@ -32,6 +32,8 @@ npm test              # 전체 테스트. 과거 물리 시나리오는 현재 �
 
 ## 조작
 
+무기 이미지 추가·직접 윤곽과 `public/images` 로컬 저장 방법은 [무기 사진 안내](WEAPON_PHOTOS.md)를 참고합니다. 무기 줄 오른쪽의 대상 선택과 **무기 사진** 버튼으로 편집합니다.
+
 무기·탄알 속도·이펙트·사운드 JSON의 필드와 수정 예시는 [config 설정 설명서](public/config/README.md)에 정리했습니다. 총알 속도는 `public/config/weapons.json`의 `defaults.projectile.speed`를 따르며, `weapons.gun.projectile.speed`로 별도 지정할 수 있습니다.
 
 상단 조작바와 방이 창 안을 채웁니다. 모서리 드래그로 화면 크기를 바꿀 수 있습니다. 크기 기준·해상도 조사·회복 규칙은 [화면과 체력 조절 보고서](PLAYGROUND_LAYOUT_REPORT.md)에 정리했습니다.

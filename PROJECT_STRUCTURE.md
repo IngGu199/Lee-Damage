@@ -16,9 +16,12 @@ LeeDamageWeb/
 ├── package-lock.json          # 설치 버전 재현을 위한 npm 잠금 파일
 ├── tsconfig.json              # 앱·브라우저 테스트 TypeScript 설정
 ├── playwright.config.ts       # Chromium 테스트 및 개발 서버 설정
+├── vite.config.ts             # 없어도 동작하는 로컬 전용 확장의 선택적 로더
+├── .local/image-save/         # Git 제외: 로컬 사진 저장 버튼·PNG 저장 API·검증 도구
 ├── .gitignore                 # 의존성·빌드·테스트 출력 제외
 ├── public/
 │   ├── models/                # Face Landmarker 모델과 출처·해시 설명
+│   ├── images/                # 로컬 저장 PNG. Git 제외 대상 아님
 │   ├── config/                # weapons.json·effects.json·sounds.json, README.md·SOUNDS.md 설정 설명서
 │   └── assets/
 │       ├── audio/             # Kenney·사용자 음원과 라이선스 (설정 JSON·안내는 config/)
@@ -26,12 +29,13 @@ LeeDamageWeb/
 ├── src/
 │   ├── main.ts                # 웹 UI 생성, 버튼·단축키, 설정 전달, Phaser 시작
 │   ├── style.css              # 페이지·도구·설정 패널·반응형 레이아웃
-│   ├── weapons/               # WeaponConfig·geometry·WeaponSystem·WeaponFinishers: 설정·연속 충돌·도구·탄알·사망 연출
+│   ├── weapons/               # WeaponConfig·geometry·WeaponSystem·WeaponFinishers·WeaponSkins: 설정·도구·사진·윤곽 충돌·탄알·사망 연출
 │   ├── effects/               # ImpactEffects: JSON 설정·도형 이펙트·실제 피해 숫자·게임 시간 수명·동시 표시 상한
 │   ├── photo/
 │   │   ├── PhotoSession.ts    # 파일 검증·방향 보정·메모리 사진 상태
 │   │   ├── PhotoEditor.ts     # 편집창·원형/직접 윤곽·점 수정·미리보기·비동기 취소
 │   │   ├── PhotoContour.ts    # 자유 곡선 샘플 정리·닫힌 윤곽의 교차/면적 검증
+│   │   ├── PhotoGeometry.ts   # 사진 마스크의 충돌 윤곽·이미지 영역 자르기·오목 다각형 분해
 │   │   ├── FaceAnalyzer.ts    # 로컬 모델·WASM 준비와 특징점 검출
 │   │   ├── PhotoTransform.ts  # 사진·특징점·윤곽의 정/역변환, 마스크 출력
 │   │   └── PhotoVariants.ts   # 입·각 눈의 중심 고정/양끝 처짐 변형 2장 생성

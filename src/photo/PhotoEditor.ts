@@ -16,6 +16,7 @@ interface EditorActions {
   clear(): void;
   previewSize(): number;
 }
+interface PhotoAsset { id: string; label: string; mask(): PhotoMask }
 
 export class PhotoEditor {
   private readonly dialog: HTMLDialogElement;
@@ -31,7 +32,7 @@ export class PhotoEditor {
   private readonly contourHistory: { mask: PhotoMask; edit: PhotoTransform }[] = [];
   private readonly abort = new AbortController();
 
-  constructor(private readonly session: PhotoSession, private readonly actions: EditorActions) {
+  constructor(private readonly session: PhotoSession, private readonly actions: EditorActions, private readonly asset?: PhotoAsset) {
     this.dialog = document.createElement("dialog");
     this.dialog.className = "photo-dialog";
     this.dialog.setAttribute("aria-labelledby", "photo-title");
@@ -40,8 +41,8 @@ export class PhotoEditor {
       <p class="photo-copy" id="photo-copy">하얀 원에 맞추거나, 얼굴 테두리를 직접 그려 잘라낼 수 있어요.</p>
       <div class="photo-layout">
         <div class="photo-preview-area"><div class="photo-canvas-wrap">
-          <canvas id="photo-canvas" width="512" height="512" tabindex="0" aria-label="사진 위치 편집. 드래그 또는 방향키로 이동"></canvas>
-          <span id="photo-empty">얼굴이 잘 보이는 사진을 골라 주세요</span>
+          <canvas id="photo-canvas" class="photo-editor-canvas" width="512" height="512" tabindex="0" aria-label="사진 위치 편집. 드래그 또는 방향키로 이동"></canvas>
+          <span id="photo-empty" class="photo-empty">얼굴이 잘 보이는 사진을 골라 주세요</span>
         </div><p class="photo-hint" id="photo-hint">드래그로 이동 · 방향키로 세밀하게 조절</p></div>
         <div class="photo-controls">
           <label class="photo-file-button">사진 선택<input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp"></label>
@@ -64,11 +65,26 @@ export class PhotoEditor {
           </div>
           <div class="photo-adjust-buttons"><button id="photo-align">얼굴에 맞추기</button><button id="photo-flip" aria-pressed="false">좌우 반전</button><button id="photo-reset">편집 초기화</button></div>
           <label class="photo-landmark-toggle"><input id="photo-landmarks" type="checkbox" checked> 얼굴 기준점 보기</label>
-          <div class="photo-actual"><canvas id="photo-small" width="144" height="144" aria-label="게임 속 얼굴 크기 미리보기"></canvas><span>게임 속 크기<small>얼굴이 잘 보이는지 확인해 주세요</small></span></div>
+          <div class="photo-actual"><canvas id="photo-small" class="photo-small" width="144" height="144" aria-label="게임 속 크기 미리보기"></canvas><span>게임 속 크기<small>사진이 잘 보이는지 확인해 주세요</small></span></div>
         </div>
       </div>
       <p id="photo-error" role="alert" class="photo-error"></p>
       <div class="photo-bottom"><button id="photo-clear" class="photo-clear">기본 얼굴로</button><span>재배치해도 유지 · 새로고침하면 해제</span><button id="photo-cancel">취소</button><button id="photo-apply" class="photo-primary" disabled>얼굴 적용하기 →</button></div>`;
+    if (asset) {
+      this.dialog.innerHTML = this.dialog.innerHTML.replace(/(id|for|aria-labelledby)="photo-([^"]*)"/g,
+        (_, attribute, suffix) => `${attribute}="${asset.id}-photo-${suffix}"`);
+      this.dialog.setAttribute("aria-labelledby", `${asset.id}-photo-title`);
+      this.el("photo-title").textContent = `${asset.label} 사진`;
+      this.dialog.querySelector(".eyebrow")!.textContent = "무기 이미지";
+      this.el("photo-copy").textContent = "기본 모형에 맞춰 자르거나, 사진의 윤곽을 직접 그려 주세요. 윤곽 밖은 충돌하지 않아요.";
+      this.el("photo-mask-circle").textContent = "모형으로 자르기";
+      this.el("photo-apply").textContent = `${asset.label}에 적용하기 →`;
+      this.el("photo-clear").textContent = "기본 도형으로";
+      this.el("photo-empty").textContent = "무기로 사용할 사진을 골라 주세요";
+      this.el("photo-landmarks").closest("label")!.hidden = true;
+    }
+    this.el("photo-contour-tools").classList.add("photo-contour-tools");
+    this.dialog.dataset.photoTarget = asset?.id ?? "face";
     document.body.append(this.dialog);
     window.addEventListener("resize", () => { if (this.open) this.draw(); }, { signal: this.abort.signal });
     const listen = (id: string, event: string, listener: EventListener) =>
@@ -93,7 +109,7 @@ export class PhotoEditor {
     });
     listen("photo-reset", "click", () => {
       if (!this.draft) return;
-      this.draft.edit = defaultTransform(this.draft.source.width, this.draft.source.height);
+      this.draft.edit = this.initialTransform(this.draft.source);
       this.edited = true; this.draw();
     });
     listen("photo-align", "click", () => this.align());
@@ -103,7 +119,9 @@ export class PhotoEditor {
     listen("photo-landmarks", "change", () => this.draw());
     for (const kind of ["circle", "contour"] as const) listen(`photo-mask-${kind}`, "click", () => {
       if (!this.draft || this.busy) return;
-      this.saveContour(); this.draft.mask.kind = kind;
+      this.saveContour();
+      if (kind === "circle" && this.asset) this.draft.mask = { ...this.draft.mask, ...this.asset.mask(), points: this.draft.mask.points };
+      else this.draft.mask.kind = kind;
       this.contourTool = this.draft.mask.closed ? "points" : "draw";
       this.selectedPoint = -1; this.edited = true; this.draw();
     });
@@ -248,7 +266,14 @@ export class PhotoEditor {
     });
   }
 
-  private el<T extends HTMLElement = HTMLElement>(id: string) { return this.dialog.querySelector<T>(`#${id}`)!; }
+  private el<T extends HTMLElement = HTMLElement>(id: string) {
+    return this.dialog.querySelector<T>(`#${this.asset ? `${this.asset.id}-${id}` : id}`)!;
+  }
+  private initialTransform(source: HTMLCanvasElement) {
+    const edit = defaultTransform(source.width, source.height);
+    if (this.asset) edit.scale = PHOTO_SIZE * 0.94 / Math.max(source.width, source.height);
+    return edit;
+  }
   get open() { return this.dialog.open; }
 
   private sourceSize() { return { x: this.draft!.source.width, y: this.draft!.source.height }; }
@@ -356,10 +381,15 @@ export class PhotoEditor {
       const source = await PhotoSession.decode(file);
       if (id !== this.generation || !this.open) return;
       this.draft = { source, name: file.name, faces: [], faceIndex: -1,
-        edit: defaultTransform(source.width, source.height), mask: defaultMask() };
+        edit: this.initialTransform(source), mask: this.asset?.mask() ?? defaultMask() };
       this.contourHistory.length = 0; this.selectedPoint = -1; this.contourTool = "draw";
       this.edited = false; this.analysisPending = true; this.renderFaces(); this.draw();
       this.el("photo-filename").textContent = file.name;
+      if (this.asset) {
+        this.analysisPending = false;
+        this.el("photo-status").textContent = "사진을 모형에 맞추거나 윤곽을 직접 그려 적용해 주세요.";
+        return;
+      }
       this.el("photo-status").textContent = "얼굴 기준점을 찾고 있어요. 처음에는 모델 준비에 시간이 걸릴 수 있어요.";
       try {
         const faces = await this.analyzer.detect(source, () => id !== this.generation || !this.open);
@@ -386,6 +416,9 @@ export class PhotoEditor {
   }
 
   private align() {
+    if (this.asset && this.draft && this.draft.mask.kind !== "contour") {
+      this.draft.edit = this.initialTransform(this.draft.source); this.edited = true; this.draw(); return;
+    }
     if (this.draft?.mask.kind === "contour" && this.draft.mask.closed) {
       this.saveContour(); this.draft.edit = fitContour(this.draft.mask, this.sourceSize(), this.draft.edit);
       this.draw(); return;
@@ -417,7 +450,7 @@ export class PhotoEditor {
     for (const kind of ["circle", "contour"]) {
       const button = this.el<HTMLButtonElement>(`photo-mask-${kind}`);
       button.disabled = !this.draft || this.busy;
-      button.setAttribute("aria-pressed", String(mask.kind === kind));
+      button.setAttribute("aria-pressed", String(mask.kind === kind || (kind === "circle" && mask.kind === "shape")));
     }
     for (const tool of ["draw", "points", "move"]) {
       const button = this.el<HTMLButtonElement>(`photo-contour-${tool}`);
@@ -433,7 +466,7 @@ export class PhotoEditor {
     this.el("photo-contour-status").textContent = mask.points.length >= 3 && problem ? problem
       : mask.closed ? `윤곽 완성 · 점 ${mask.points.length}개. 점을 끌어 위치를 수정할 수 있어요.`
       : mask.points.length >= 256 ? "점은 최대 256개예요. 시작점을 누르거나 ‘윤곽 완성’으로 마무리해 주세요."
-      : `얼굴을 따라 클릭하거나 드래그해 주세요. 점 ${mask.points.length}개 · 시작점을 누르거나 ‘윤곽 완성’으로 마무리해요.`;
+      : `${this.asset ? "무기 윤곽" : "얼굴"}을 따라 클릭하거나 드래그해 주세요. 점 ${mask.points.length}개 · 시작점을 누르거나 ‘윤곽 완성’으로 마무리해요.`;
     this.el("photo-hint").textContent = !custom || this.contourTool === "move"
       ? "드래그로 사진 이동 · 방향키로 세밀하게 조절"
       : this.contourTool === "draw" ? "클릭 또는 드래그로 테두리 그리기 · Enter로 완성 · Ctrl+Z로 취소"
@@ -443,8 +476,8 @@ export class PhotoEditor {
     this.el("photo-manual").hidden = !this.analysisPending;
     for (const id of ["photo-zoom", "photo-rotation", "photo-x", "photo-y", "photo-flip", "photo-reset", "photo-landmarks"])
       this.el<HTMLInputElement>(id).disabled = !this.draft || this.busy;
-    this.el("photo-align").textContent = custom ? "윤곽에 맞추기" : "얼굴에 맞추기";
-    this.el<HTMLButtonElement>("photo-align").disabled = !this.draft || this.busy || (custom ? !mask.closed : this.draft.faceIndex < 0);
+    this.el("photo-align").textContent = custom ? "윤곽에 맞추기" : this.asset ? "사진 맞추기" : "얼굴에 맞추기";
+    this.el<HTMLButtonElement>("photo-align").disabled = !this.draft || this.busy || (custom ? !mask.closed : !this.asset && this.draft.faceIndex < 0);
     this.el<HTMLButtonElement>("photo-apply").disabled = !this.draft || this.busy ||
       (custom && (!mask.closed || Boolean(problem))) || (this.draft.faces.length > 1 && this.draft.faceIndex < 0);
     this.el<HTMLInputElement>("photo-file").disabled = false;
@@ -464,10 +497,12 @@ export class PhotoEditor {
       ctx.drawImage(renderPhoto(source, edit, false), 0, 0);
       const cropped = renderPhoto(source, edit, mask);
       const photoScale = FIXED_APPEARANCE.photoScale, frameScale = Math.min(1, photoScale);
-      if (mask.kind === "circle") {
-        smallCtx.fillStyle = "#e8bd8b"; smallCtx.beginPath(); smallCtx.arc(72, 72, 72 / Math.max(1, photoScale), 0, Math.PI * 2); smallCtx.fill();
-      }
       smallCtx.drawImage(cropped, 72 * (1 - frameScale), 72 * (1 - frameScale), 144 * frameScale, 144 * frameScale);
+      // Generic preview hook used by optional local tools, with no storage dependency.
+      this.dialog.dispatchEvent(new CustomEvent("photo-preview", { bubbles: true, detail: {
+        canvas: cropped, target: this.asset?.id ?? "face", name: this.draft.name,
+        valid: !this.el<HTMLButtonElement>("photo-apply").disabled,
+      } }));
       const base = defaultTransform(source.width, source.height).scale;
       const zoom = Math.round(edit.scale / base * 100), rotation = Math.round(edit.rotation * 180 / Math.PI);
       this.el<HTMLInputElement>("photo-zoom").max = String(Math.max(800, Math.ceil(zoom / 100) * 100));
@@ -498,9 +533,9 @@ export class PhotoEditor {
     }
     const mask = this.draft?.mask ?? defaultMask();
     const points = this.draft ? mask.points.map((p) => transformPoint(p, this.sourceSize(), this.draft!.edit)) : [];
-    const path = mask.kind === "circle" ? photoMaskPath(mask, { x: 512, y: 512 }, defaultTransform(512, 512))
+    const path = mask.kind !== "contour" ? photoMaskPath(mask, { x: 512, y: 512 }, defaultTransform(512, 512))
       : contourPath(points, mask.smooth, mask.closed);
-    if (mask.kind === "circle" || mask.closed) {
+    if (mask.kind !== "contour" || mask.closed) {
       const outside = new Path2D(); outside.rect(0, 0, PHOTO_SIZE, PHOTO_SIZE); outside.addPath(path);
       ctx.fillStyle = "rgba(21,31,25,.62)"; ctx.fill(outside, "evenodd");
     }
@@ -520,14 +555,14 @@ export class PhotoEditor {
     if (this.draft.mask.kind === "contour" && (!this.draft.mask.closed || contourProblem(this.draft.mask.points))) return;
     const id = ++this.generation, draft = { ...this.draft, edit: { ...this.draft.edit }, mask: copyMask(this.draft.mask) };
     this.busy = true; this.controls(); this.renderFaces();
-    this.el("photo-status").textContent = "고화질 얼굴과 충격에 쓸 사진을 준비하고 있어요…";
+    this.el("photo-status").textContent = this.asset ? "무기 사진과 충돌 윤곽을 준비하고 있어요…" : "고화질 얼굴과 충격에 쓸 사진을 준비하고 있어요…";
     const current = () => id === this.generation && this.open;
     try {
       const landmarks = (draft.faces[draft.faceIndex] ?? []).map((p) =>
         transformPoint(p, { x: draft.source.width, y: draft.source.height }, draft.edit));
       const frame = renderPhoto(draft.source, draft.edit, draft.mask);
       let variants: HTMLCanvasElement[] = [];
-      try { variants = await makeVariants(renderPhoto(draft.source, draft.edit, false), landmarks, () => !current(),
+      try { if (!this.asset) variants = await makeVariants(renderPhoto(draft.source, draft.edit, false), landmarks, () => !current(),
         renderMask(draft.mask, { x: draft.source.width, y: draft.source.height }, draft.edit)); }
       catch { /* The unmodified photo remains usable if variant generation fails. */ }
       if (!current()) return;
@@ -535,10 +570,10 @@ export class PhotoEditor {
       this.actions.apply(photo);
       this.session.current = photo;
       this.close();
-    } catch {
+    } catch (error) {
       if (!current()) return;
       this.busy = false; this.controls(); this.renderFaces();
-      this.el("photo-error").textContent = "사진을 적용하지 못했어요. 다시 적용하거나 취소해 주세요.";
+      this.el("photo-error").textContent = error instanceof Error ? error.message : "사진을 적용하지 못했어요. 다시 적용하거나 취소해 주세요.";
     }
   }
 

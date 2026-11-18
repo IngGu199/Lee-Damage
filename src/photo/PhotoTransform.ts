@@ -9,7 +9,8 @@ export interface PhotoTransform {
 
 /** Contour vertices live in source-image coordinates, so edits move image and mask together. */
 export interface PhotoMask {
-  kind: "circle" | "contour";
+  kind: "circle" | "contour" | "shape";
+  shape?: Point[];
   points: Point[];
   closed: boolean;
   smooth: boolean;
@@ -20,7 +21,7 @@ export function defaultMask(): PhotoMask {
 }
 
 export function copyMask(mask: PhotoMask): PhotoMask {
-  return { ...mask, points: mask.points.map((point) => ({ ...point })) };
+  return { ...mask, points: mask.points.map((point) => ({ ...point })), shape: mask.shape?.map(point => ({ ...point })) };
 }
 
 export const PHOTO_SIZE = 512;
@@ -68,6 +69,7 @@ export function contourPath(points: Point[], smooth: boolean, closed: boolean): 
 }
 
 export function photoMaskPath(mask: PhotoMask, source: Point, edit: PhotoTransform): Path2D {
+  if (mask.kind === "shape") return contourPath(mask.shape ?? [], false, true);
   if (mask.kind === "contour") {
     if (!mask.closed) return new Path2D();
     return contourPath(mask.points.map((p) => transformPoint(p, source, edit)), mask.smooth, true);
