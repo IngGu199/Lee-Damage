@@ -37,6 +37,7 @@ LeeDamageWeb/
 │   │   ├── PhotoLibrary.ts    # 저장 사진 썸네일 목록·직접 선택·갱신·다운로드 취소
 │   │   ├── PhotoEditor.ts     # 편집창·원형/직접 윤곽·점 수정·미리보기·비동기 취소
 │   │   ├── PhotoContour.ts    # 자유 곡선 샘플 정리·닫힌 윤곽의 교차/면적 검증
+│   │   ├── PhotoAlpha.ts      # 투명 배경에서 윤곽·구멍·분리 영역 복원, 무기 충돌 조각 생성
 │   │   ├── PhotoGeometry.ts   # 사진 마스크의 충돌 윤곽·이미지 영역 자르기·오목 다각형 분해
 │   │   ├── FaceAnalyzer.ts    # 로컬 모델·WASM 준비와 특징점 검출
 │   │   ├── PhotoTransform.ts  # 사진·특징점·윤곽의 정/역변환, 마스크 출력

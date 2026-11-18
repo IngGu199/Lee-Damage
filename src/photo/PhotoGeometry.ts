@@ -26,6 +26,7 @@ export function clipPolygon(subject: Point[], boundary: Point[]) {
 
 /** Same outline as the canvas mask, including the editor's rounded quadratic curves. */
 export function maskPolygon(mask: PhotoMask, source: Point, edit: PhotoTransform, clipToImage = true) {
+  if (mask.kind === "alpha") throw new Error("투명 배경 윤곽은 여러 영역을 포함할 수 있어 photoPieces를 사용해야 해요.");
   let points: Point[];
   if (mask.kind === "circle") points = Array.from({ length: 48 }, (_, i) => ({
     x: PHOTO_SIZE * (0.5 + 0.47 * Math.cos(i * Math.PI / 24)),
@@ -60,7 +61,10 @@ export function photoPieces(mask: PhotoMask, source: Point, edit: PhotoTransform
   const image = [{ x: 0, y: 0 }, { x: source.x, y: 0 }, source, { x: 0, y: source.y }]
     .map(point => transformPoint(point, source, edit));
   const output = [{ x: 0, y: 0 }, { x: PHOTO_SIZE, y: 0 }, { x: PHOTO_SIZE, y: PHOTO_SIZE }, { x: 0, y: PHOTO_SIZE }];
-  const pieces = convexPieces(maskPolygon(mask, source, edit, false))
+  const rawPieces = mask.kind === "alpha"
+    ? (mask.alpha?.pieces ?? []).map(piece => piece.map(point => transformPoint(point, source, edit)))
+    : convexPieces(maskPolygon(mask, source, edit, false));
+  const pieces = rawPieces
     .map(piece => clipPolygon(clipPolygon(piece, image), output)).filter(piece => Math.abs(polygonArea(piece)) > 0.01);
   if (!pieces.length) throw new Error("사진이 자르기 영역 밖에 있어요. 사진 위치를 맞춰 주세요.");
   return pieces;

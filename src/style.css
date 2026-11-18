@@ -81,6 +81,7 @@ button.photo-primary { background: #c4dc77; border-color: #aac660; color: #293b2
 .photo-faces:not(:empty) { margin-bottom: 12px; }
 .photo-mask-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 12px 0; }
 .photo-mask-modes button { padding: 9px 6px; font-size: 11px; }
+.photo-mask-modes button:last-child { grid-column: 1 / -1; }
 .photo-contour-tools { margin: 0 0 14px; padding: 12px; border: 1px solid #d5dacb; border-radius: 9px; background: #eef1e6; }
 .photo-contour-tool-row, .photo-contour-actions { display: flex; flex-wrap: wrap; gap: 5px; }
 .photo-contour-tool-row button, .photo-contour-actions button { padding: 7px 8px; font-size: 10px; }

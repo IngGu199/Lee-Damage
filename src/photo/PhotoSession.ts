@@ -8,6 +8,8 @@ export interface PhotoDraft {
   faceIndex: number;
   edit: PhotoTransform;
   mask: PhotoMask;
+  /** Original recovered outline remains available after switching crop modes. */
+  alphaMask?: PhotoMask;
 }
 export interface AppliedPhoto extends PhotoDraft {
   frames: HTMLCanvasElement[];

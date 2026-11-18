@@ -9,7 +9,9 @@ export interface PhotoTransform {
 
 /** Contour vertices live in source-image coordinates, so edits move image and mask together. */
 export interface PhotoMask {
-  kind: "circle" | "contour" | "shape";
+  kind: "circle" | "contour" | "shape" | "alpha";
+  /** Recovered from image transparency; all coordinates belong to the source image. */
+  alpha?: { outlines: Point[][]; pieces: Point[][] };
   shape?: Point[];
   points: Point[];
   closed: boolean;
@@ -21,7 +23,9 @@ export function defaultMask(): PhotoMask {
 }
 
 export function copyMask(mask: PhotoMask): PhotoMask {
-  return { ...mask, points: mask.points.map((point) => ({ ...point })), shape: mask.shape?.map(point => ({ ...point })) };
+  const copy = (points: Point[]) => points.map(point => ({ ...point }));
+  return { ...mask, points: copy(mask.points), shape: mask.shape && copy(mask.shape),
+    alpha: mask.alpha && { outlines: mask.alpha.outlines.map(copy), pieces: mask.alpha.pieces.map(copy) } };
 }
 
 export const PHOTO_SIZE = 512;
@@ -69,6 +73,12 @@ export function contourPath(points: Point[], smooth: boolean, closed: boolean): 
 }
 
 export function photoMaskPath(mask: PhotoMask, source: Point, edit: PhotoTransform): Path2D {
+  if (mask.kind === "alpha") {
+    const path = new Path2D();
+    for (const outline of mask.alpha?.outlines ?? [])
+      path.addPath(contourPath(outline.map(point => transformPoint(point, source, edit)), false, true));
+    return path;
+  }
   if (mask.kind === "shape") return contourPath(mask.shape ?? [], false, true);
   if (mask.kind === "contour") {
     if (!mask.closed) return new Path2D();
@@ -82,7 +92,11 @@ export function photoMaskPath(mask: PhotoMask, source: Point, edit: PhotoTransfo
 export function renderMask(mask: PhotoMask, source: Point, edit: PhotoTransform) {
   const canvas = canvasOf(PHOTO_SIZE), ctx = canvas.getContext("2d")!;
   ctx.fillStyle = "#fff";
-  ctx.fill(photoMaskPath(mask, source, edit), "evenodd");
+  // The source already contains its alpha mask. Avoid multiplying antialiased edges again.
+  const path = mask.kind === "alpha" ? contourPath([
+    { x: 0, y: 0 }, { x: source.x, y: 0 }, source, { x: 0, y: source.y },
+  ].map(point => transformPoint(point, source, edit)), false, true) : photoMaskPath(mask, source, edit);
+  ctx.fill(path, "evenodd");
   return canvas;
 }
 
@@ -129,7 +143,7 @@ export function renderPhoto(source: HTMLCanvasElement, edit: PhotoTransform, mas
   ctx.scale(edit.scale * (edit.flip ? -1 : 1), edit.scale);
   ctx.drawImage(source, -source.width / 2, -source.height / 2);
   ctx.restore();
-  if (masked) {
+  if (masked && (typeof masked === "boolean" || masked.kind !== "alpha")) {
     // Match the variants' alpha composition, including fractional edge coverage.
     ctx.globalCompositeOperation = "destination-in";
     ctx.drawImage(renderMask(typeof masked === "boolean" ? defaultMask() : masked,

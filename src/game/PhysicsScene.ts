@@ -228,7 +228,7 @@ export class PhysicsScene extends Phaser.Scene {
   }
 
   applyPhoto(photo: AppliedPhoto) {
-    this.photoFrames = photo.frames; this.photoOutline = photo.mask.kind === "contour";
+    this.photoFrames = photo.frames; this.photoOutline = photo.mask.kind === "contour" || photo.mask.kind === "alpha";
     for (const actor of this.actors) {
       actor.face.apply(this.photoFrames, this.photoOutline); actor.resetAppearance();
       actor.face.update(actor.doll.parts[0]); actor.face.setAlpha(actor.lifecycle.alpha(this.simulationTime));

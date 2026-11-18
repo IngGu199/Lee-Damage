@@ -9,6 +9,7 @@ import { faceBendControls, makeVariants } from "./PhotoVariants";
 import { FIXED_APPEARANCE } from "../game/appearanceConfig";
 import { contourProblem, simplifyStroke } from "./PhotoContour";
 import { PhotoLibrary } from "./PhotoLibrary";
+import { alphaTransform, recoverAlphaMask } from "./PhotoAlpha";
 
 interface EditorActions {
   begin(): void;
@@ -53,7 +54,7 @@ export class PhotoEditor {
           <p id="photo-status" class="photo-status" role="status" aria-live="polite">사진은 이 브라우저에서만 처리해요.</p>
           <button id="photo-manual" hidden>분석을 기다리지 않고 직접 맞추기</button>
           <div id="photo-faces" class="photo-faces" role="group" aria-label="적용할 얼굴 선택"></div>
-          <div class="photo-mask-modes" role="group" aria-label="사진 자르기 방식"><button id="photo-mask-circle" aria-pressed="true">원형으로 자르기</button><button id="photo-mask-contour" aria-pressed="false">직접 윤곽 그리기</button></div>
+          <div class="photo-mask-modes" role="group" aria-label="사진 자르기 방식"><button id="photo-mask-circle" aria-pressed="true">원형으로 자르기</button><button id="photo-mask-contour" aria-pressed="false">직접 윤곽 그리기</button><button id="photo-mask-alpha" aria-pressed="false" hidden>투명 배경 윤곽</button></div>
           <div id="photo-contour-tools" hidden>
             <div class="photo-contour-tool-row" role="group" aria-label="윤곽 편집 도구"><button id="photo-contour-draw" aria-pressed="true">선 긋기</button><button id="photo-contour-points" aria-pressed="false">점 수정</button><button id="photo-contour-move" aria-pressed="false">사진 이동</button></div>
             <p id="photo-contour-status" class="photo-contour-status" role="status" aria-live="polite"></p>
@@ -115,7 +116,7 @@ export class PhotoEditor {
     });
     listen("photo-reset", "click", () => {
       if (!this.draft) return;
-      this.draft.edit = this.initialTransform(this.draft.source);
+      this.draft.edit = this.draft.mask.kind === "alpha" ? alphaTransform(this.draft.source) : this.initialTransform(this.draft.source);
       this.edited = true; this.draw();
     });
     listen("photo-align", "click", () => this.align());
@@ -123,11 +124,14 @@ export class PhotoEditor {
       if (this.draft) { this.draft.edit.flip = !this.draft.edit.flip; this.edited = true; this.draw(); }
     });
     listen("photo-landmarks", "change", () => this.draw());
-    for (const kind of ["circle", "contour"] as const) listen(`photo-mask-${kind}`, "click", () => {
+    for (const kind of ["circle", "contour", "alpha"] as const) listen(`photo-mask-${kind}`, "click", () => {
       if (!this.draft || this.busy) return;
+      if (kind === "alpha" && !this.draft.alphaMask) return;
       this.saveContour();
-      if (kind === "circle" && this.asset) this.draft.mask = { ...this.draft.mask, ...this.asset.mask(), points: this.draft.mask.points };
+      if (kind === "alpha") this.draft.mask = copyMask(this.draft.alphaMask!);
+      else if (kind === "circle" && this.asset) this.draft.mask = { ...this.draft.mask, ...this.asset.mask(), points: this.draft.mask.points };
       else this.draft.mask.kind = kind;
+      if (kind === "contour" && this.draft.mask.points.length < 3) this.draft.mask.closed = false;
       this.contourTool = this.draft.mask.closed ? "points" : "draw";
       this.selectedPoint = -1; this.edited = true; this.draw();
     });
@@ -361,7 +365,8 @@ export class PhotoEditor {
     this.edited = false;
     this.el("photo-error").textContent = "";
     this.el("photo-status").textContent = current
-      ? current.faces.length ? "얼굴 기준점을 불러왔어요. 위치를 다시 조절할 수 있어요." : "수동 사진이에요. 얼굴을 맞춰 적용해 주세요."
+      ? current.mask.kind === "alpha" ? "투명 배경에서 복원한 윤곽이에요. 사진 위치를 조절하거나 그대로 적용할 수 있어요."
+        : current.faces.length ? "얼굴 기준점을 불러왔어요. 위치를 다시 조절할 수 있어요." : "수동 사진이에요. 얼굴을 맞춰 적용해 주세요."
       : "사진은 이 브라우저에서만 처리해요.";
     this.el("photo-filename").textContent = current?.name ?? "JPEG · PNG · WebP / 최대 20MB";
     this.busy = false; this.analysisPending = false;
@@ -388,11 +393,19 @@ export class PhotoEditor {
     try {
       const source = await PhotoSession.decode(file);
       if (id !== this.generation || !this.open) return;
+      const alphaMask = recoverAlphaMask(source);
       this.draft = { source, name: file.name, libraryPath, faces: [], faceIndex: -1,
-        edit: this.initialTransform(source), mask: this.asset?.mask() ?? defaultMask() };
+        edit: alphaMask ? alphaTransform(source) : this.initialTransform(source),
+        mask: alphaMask ? copyMask(alphaMask) : this.asset?.mask() ?? defaultMask(), alphaMask: alphaMask ?? undefined };
       this.contourHistory.length = 0; this.selectedPoint = -1; this.contourTool = "draw";
       this.edited = false; this.analysisPending = true; this.renderFaces(); this.draw();
       this.el("photo-filename").textContent = file.name;
+      if (alphaMask) {
+        // A saved cutout already has its framing baked in. Face fitting would change it again.
+        this.analysisPending = false;
+        this.el("photo-status").textContent = "투명 배경에서 윤곽을 자동으로 복원했어요. 저장된 모양 그대로 적용할 수 있어요.";
+        return;
+      }
       if (this.asset) {
         this.analysisPending = false;
         this.el("photo-status").textContent = "사진을 모형에 맞추거나 윤곽을 직접 그려 적용해 주세요.";
@@ -424,6 +437,9 @@ export class PhotoEditor {
   }
 
   private align() {
+    if (this.draft?.mask.kind === "alpha") {
+      this.draft.edit = alphaTransform(this.draft.source); this.edited = true; this.draw(); return;
+    }
     if (this.asset && this.draft && this.draft.mask.kind !== "contour") {
       this.draft.edit = this.initialTransform(this.draft.source); this.edited = true; this.draw(); return;
     }
@@ -455,7 +471,8 @@ export class PhotoEditor {
     const mask = this.draft?.mask ?? defaultMask(), custom = mask.kind === "contour";
     const problem = custom ? contourProblem(mask.points) : null;
     this.el("photo-contour-tools").hidden = !custom;
-    for (const kind of ["circle", "contour"]) {
+    this.el("photo-mask-alpha").hidden = !this.draft?.alphaMask;
+    for (const kind of ["circle", "contour", "alpha"]) {
       const button = this.el<HTMLButtonElement>(`photo-mask-${kind}`);
       button.disabled = !this.draft || this.busy;
       button.setAttribute("aria-pressed", String(mask.kind === kind || (kind === "circle" && mask.kind === "shape")));
@@ -484,8 +501,9 @@ export class PhotoEditor {
     this.el("photo-manual").hidden = !this.analysisPending;
     for (const id of ["photo-zoom", "photo-rotation", "photo-x", "photo-y", "photo-flip", "photo-reset", "photo-landmarks"])
       this.el<HTMLInputElement>(id).disabled = !this.draft || this.busy;
-    this.el("photo-align").textContent = custom ? "윤곽에 맞추기" : this.asset ? "사진 맞추기" : "얼굴에 맞추기";
-    this.el<HTMLButtonElement>("photo-align").disabled = !this.draft || this.busy || (custom ? !mask.closed : !this.asset && this.draft.faceIndex < 0);
+    this.el("photo-align").textContent = mask.kind === "alpha" ? "저장된 크기로 맞추기" : custom ? "윤곽에 맞추기" : this.asset ? "사진 맞추기" : "얼굴에 맞추기";
+    this.el<HTMLButtonElement>("photo-align").disabled = !this.draft || this.busy ||
+      (mask.kind !== "alpha" && (custom ? !mask.closed : !this.asset && this.draft.faceIndex < 0));
     this.el<HTMLButtonElement>("photo-apply").disabled = !this.draft || this.busy ||
       (custom && (!mask.closed || Boolean(problem))) || (this.draft.faces.length > 1 && this.draft.faceIndex < 0);
     this.el<HTMLInputElement>("photo-file").disabled = false;
@@ -541,7 +559,8 @@ export class PhotoEditor {
     }
     const mask = this.draft?.mask ?? defaultMask();
     const points = this.draft ? mask.points.map((p) => transformPoint(p, this.sourceSize(), this.draft!.edit)) : [];
-    const path = mask.kind !== "contour" ? photoMaskPath(mask, { x: 512, y: 512 }, defaultTransform(512, 512))
+    const path = mask.kind !== "contour" ? photoMaskPath(mask, this.draft ? this.sourceSize() : { x: 512, y: 512 },
+      this.draft?.edit ?? defaultTransform(512, 512))
       : contourPath(points, mask.smooth, mask.closed);
     if (mask.kind !== "contour" || mask.closed) {
       const outside = new Path2D(); outside.rect(0, 0, PHOTO_SIZE, PHOTO_SIZE); outside.addPath(path);
