@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { DEFAULT_SOUND_CONFIG, parseSoundConfig, collisionGain } from "../src/audio/SoundConfig";
+import { DEFAULT_SOUND_CONFIG, parseSoundConfig, collisionGain, soundVariants } from "../src/audio/SoundConfig";
 import { SoundMixer, type SoundBackend } from "../src/audio/SoundMixer";
 import { ImpactCollector, postCollisionSpeed, type ContactImpact } from "../src/game/ImpactCollector";
 import type { Ragdoll } from "../src/game/Ragdoll";
@@ -30,8 +30,8 @@ test("config accepts two collision events with speed/gain ranges and event coold
     "collision.wall": { ...wall, cooldownMs: 0 }, "death.burst": { files: ["death.m4a"] },
   } });
   expect(f.config.events["collision.normal"]).toMatchObject({ files: ["a.mp3"], speed: [100, 1000], "sound-size": [0.2, 1], cooldownMs: 100 });
-  expect(f.config.events["collision.wall"].cooldownMs).toBe(0);
-  expect(f.config.events["death.burst"].speed).toBeUndefined();
+  expect(soundVariants(f.config.events["collision.wall"])[0].cooldownMs).toBe(0);
+  expect(soundVariants(f.config.events["death.burst"])[0].speed).toBeUndefined();
   expect(DEFAULT_SOUND_CONFIG.defaults.cooldownMs).toBe(0);
 });
 
@@ -56,19 +56,19 @@ test("invalid ranges, legacy event names, cooldowns and paths are rejected", () 
   }
 });
 
-test("speed maps proportionally to gain at both inclusive endpoints and intermediate values", () => {
-  const event = fixture().config.events["collision.normal"];
+test("speed includes the lower bound, excludes the upper bound and maps proportionally to gain", () => {
+  const event = soundVariants(fixture().config.events["collision.normal"])[0];
   expect(collisionGain(event, 100)).toBe(0.2);
   expect(collisionGain(event, 550)).toBeCloseTo(0.6);
-  expect(collisionGain(event, 1000)).toBe(1);
-  for (const speed of [-1, 0, 99.99, 1000.01, NaN, Infinity]) expect(collisionGain(event, speed)).toBe(0);
+  expect(collisionGain(event, 999.999)).toBeCloseTo(1);
+  for (const speed of [-1, 0, 99.99, 1000, 1000.01, NaN, Infinity]) expect(collisionGain(event, speed)).toBe(0);
   event["sound-size"] = [0.25, 2];
   expect(collisionGain(event, 550)).toBeCloseTo(1.125); // A gain multiplier, not a speed or percentage.
   event["sound-size"] = [0.7, 0.7]; expect(collisionGain(event, 500)).toBe(0.7);
 });
 
 test("normal and surface audio use separate ranges and body contacts emit only normal audio", () => {
-  const f = fixture(); f.config.events["collision.wall"].speed = [600, 1000];
+  const f = fixture(); soundVariants(f.config.events["collision.wall"])[0].speed = [600, 1000];
   f.mixer.collision(1, 0, 550, "one", false, "wall"); f.mixer.flush(); expect(f.plays).toHaveLength(1);
   f.mixer.collision(1, 1, 800, "two", false, "wall"); f.mixer.flush(); expect(f.plays).toHaveLength(3);
   f.mixer.collision(1, 2, 800, "body"); f.mixer.flush(); expect(f.plays).toHaveLength(4);
@@ -125,9 +125,9 @@ test("muted, out-of-range and unavailable layers do not block the other sound or
   f.mixer.collision(1, 0, 550, "missing", false, "wall"); f.mixer.flush(); expect(f.plays).toHaveLength(1);
   f.unavailable.clear();
   f.mixer.collision(1, 1, 550, "available", false, "wall"); f.mixer.flush(); expect(f.plays).toHaveLength(2);
-  f.config.events["collision.normal"].volume = 0;
+  soundVariants(f.config.events["collision.normal"])[0].volume = 0;
   f.mixer.collision(1, 101, 550, "muted", false, "wall"); f.mixer.flush(); expect(f.plays).toHaveLength(3);
-  f.config.events["collision.normal"].volume = 0.5;
+  soundVariants(f.config.events["collision.normal"])[0].volume = 0.5;
   f.mixer.collision(1, 102, 550, "unmuted"); f.mixer.flush(); expect(f.plays).toHaveLength(4);
 });
 
@@ -171,4 +171,67 @@ test("post-collision speed includes relative contact-point rotation and excludes
   expect(postCollisionSpeed(hit, body, peer)).toBeCloseTo(0);
   peer.velocity.y = 1; expect(postCollisionSpeed(hit, body, peer)).toBeCloseTo(60);
   expect(postCollisionSpeed(hit, body)).toBeCloseTo(Math.hypot(3, -6) * 60);
+});
+
+test("array variants inherit defaults and select unsorted adjacent bands with independent gains and wall layers", () => {
+  const f = fixture({ defaults: { volume: 0.5, cooldownMs: 100, maxVoices: 3 }, events: {
+    "collision.normal": [
+      { files: ["strong.ogg", "strong.ogg"], speed: [1000, 2400], "sound-size": [0.5, 2], cooldownMs: 0 },
+      { files: ["weak.ogg"], speed: [300, 1000], "sound-size": [0.1, 1], cooldownMs: 0 },
+    ],
+    "collision.wall": [{ ...wall, speed: [300, 1500], cooldownMs: 0 },
+      { ...wall, files: ["hard-wall.ogg"], speed: [1500, 2400], cooldownMs: 0 }],
+  } });
+  expect(soundVariants(f.config.events["collision.normal"])[0]).toMatchObject({ files: ["strong.ogg"], volume: 0.5, maxVoices: 3 });
+  for (const speed of [299, 300, 999.999, 1000, 1700, 2400]) {
+    f.mixer.collision(1, speed, speed, String(speed), false, "wall"); f.mixer.flush();
+  }
+  expect(f.plays.map(play => play.file)).toEqual([
+    "weak.ogg", "wall.ogg", "weak.ogg", "wall.ogg", "strong.ogg", "wall.ogg", "strong.ogg", "hard-wall.ogg",
+  ]);
+  expect(f.plays[0].volume).toBeCloseTo(0.05);
+  expect(f.plays[4].volume).toBeCloseTo(0.25);
+  expect(f.plays[6].volume).toBeCloseTo(0.625);
+});
+
+test("empty, malformed, overlapping or duplicate bands and death arrays are rejected with a useful path", () => {
+  const band = { ...normal, speed: [300, 1000] };
+  for (const definitions of [[], [null], [band, { ...band, speed: [900, 1500] }],
+    [band, { ...band, speed: [400, 500] }], [band, band], [band, { ...band, files: [] }],
+    [band, { ...band, speed: [1000, 1000] }], [band, { ...band, "sound-size": [-1, 1] }]]) {
+    expect(() => fixture({ events: { "collision.normal": definitions } })).toThrow(/events\.collision\.normal/);
+  }
+  expect(() => fixture({ events: { "death.burst": [{ files: ["death.ogg"] }] } })).toThrow(/events\.death\.burst/);
+});
+
+test("band cooldowns and voice limits are independent while cooldown zero permits repeated onsets", () => {
+  const f = fixture({ maxConcurrentSounds: 8, events: { "collision.normal": [
+    { ...normal, files: ["weak.ogg"], speed: [100, 1000], cooldownMs: 100, maxVoices: 1 },
+    { ...normal, files: ["strong.ogg"], speed: [1000, 2400], cooldownMs: 0, maxVoices: 2 },
+  ] } });
+  const play = (owner: number, time: number, speed: number) => {
+    f.mixer.collision(owner, time, speed, `${owner}:${time}`); f.mixer.flush();
+  };
+  play(1, 0, 500); play(2, 1, 1500); play(2, 2, 1500); play(2, 3, 500);
+  expect(f.plays.map(play => play.file)).toEqual(["weak.ogg", "strong.ogg", "strong.ogg"]);
+  expect(f.plays.every(play => !play.stopped)).toBe(true);
+  play(2, 99.999, 500); expect(f.plays).toHaveLength(3);
+  play(2, 100, 500); expect(f.plays).toHaveLength(4); expect(f.plays[0].stopped).toBe(true);
+  expect(f.plays.slice(1).every(play => !play.stopped)).toBe(true);
+  f.mixer.reset(); play(1, 0, 500); expect(f.plays).toHaveLength(5);
+});
+
+test("range gaps and unavailable bands stay silent without consuming cooldown or blocking wall audio", () => {
+  const f = fixture({ events: {
+    "collision.normal": [{ ...normal, files: ["low.ogg"], speed: [100, 500], cooldownMs: 100 },
+      { ...normal, files: ["high.ogg"], speed: [1000, 2400], cooldownMs: 100 }],
+    "collision.wall": { ...wall, speed: [100, 2400] },
+  } });
+  f.unavailable.add("high.ogg");
+  f.mixer.collision(1, 0, 750, "gap", false, "wall"); f.mixer.flush();
+  f.mixer.collision(1, 1, 1500, "missing", false, "wall"); f.mixer.flush();
+  expect(f.plays.map(play => play.file)).toEqual(["wall.ogg", "wall.ogg"]);
+  f.unavailable.clear();
+  f.mixer.collision(1, 2, 1500, "loaded", false, "wall"); f.mixer.flush();
+  expect(f.plays.slice(-2).map(play => play.file)).toEqual(["high.ogg", "wall.ogg"]);
 });

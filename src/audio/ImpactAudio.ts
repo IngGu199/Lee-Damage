@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { DEFAULT_SOUND_CONFIG, parseSoundConfig, type CollisionSoundTarget, type SoundConfig } from "./SoundConfig";
+import { DEFAULT_SOUND_CONFIG, parseSoundConfig, soundVariants, type CollisionSoundTarget, type SoundConfig } from "./SoundConfig";
 import { SoundMixer, type SoundBackend, type SoundVoice } from "./SoundMixer";
 
 const STORAGE_KEY = "lee-damage:sound";
@@ -60,7 +60,7 @@ export class ImpactAudio {
     if (this.abort.signal.aborted) return;
     this.mixer.reset(); this.mixer = new SoundMixer(this.config, backend); this.applyPreferences();
     const root = new URL(this.config.basePath, appRoot);
-    const files = [...new Set(Object.values(this.config.events).flatMap(event => event.files))];
+    const files = [...new Set(Object.values(this.config.events).flatMap(definition => soundVariants(definition).flatMap(event => event.files)))];
     await Promise.all(files.map(async file => {
       try {
         const url = new URL(file, root);

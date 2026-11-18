@@ -1,4 +1,4 @@
-import { collisionGain, type CollisionSoundTarget, type SoundConfig } from "./SoundConfig";
+import { collisionGain, soundVariants, type CollisionSoundTarget, type SoundConfig, type SoundEventConfig } from "./SoundConfig";
 
 export interface SoundVoice { stop(): void }
 export interface SoundBackend {
@@ -6,9 +6,10 @@ export interface SoundBackend {
   play(file: string, volume: number, rate: number, ended: () => void): SoundVoice | null;
 }
 interface Request { events: string[]; owners: Set<number>; time: number; speed: number; debris: boolean }
+interface Layer { name: string; key: string; event: SoundEventConfig }
 interface Playing { event: string; priority: number; voice: SoundVoice }
 
-/** Merge duplicate reports and apply each event's configured cooldown independently. */
+/** Merge duplicate reports and apply each speed band's cooldown independently. */
 export class SoundMixer {
   private readonly pending = new Map<string, Request>();
   private readonly active = new Set<Playing>();
@@ -42,29 +43,40 @@ export class SoundMixer {
     this.pending.set(key, request);
   }
 
+  private layers(request: Request): Layer[] {
+    return request.events.flatMap(name => {
+      const definition = this.config.events[name];
+      if (!definition) return [];
+      const variants = soundVariants(definition);
+      const index = name.startsWith("collision.")
+        ? variants.findIndex(event => event.speed && request.speed >= event.speed[0] && request.speed < event.speed[1]) : 0;
+      if (index < 0) return [];
+      return [{ name, key: Array.isArray(definition) ? `${name}[${index}]` : name, event: variants[index] }];
+    });
+  }
+
   flush() {
     // Preserve contact order. At the same instant start stronger sounds last,
     // so bounded voice replacement retains them instead of cutting them first.
     // Keep a contact's body/surface layers together so they cannot evict one another
     // while older voices are still available to replace.
-    const priority = (request: Request) => Math.max(...request.events.map(name => this.config.events[name].priority));
-    const requests = [...this.pending.values()].sort((a, b) => a.time - b.time ||
+    const priority = (request: { layers: Layer[] }) => Math.max(0, ...request.layers.map(layer => layer.event.priority));
+    const requests = [...this.pending.values()].map(request => ({ ...request, layers: this.layers(request) })).sort((a, b) => a.time - b.time ||
       priority(a) - priority(b) || a.speed - b.speed);
     this.pending.clear();
     if (this.muted) return;
     for (const request of requests) {
       const started = new Set<Playing>();
-      for (const name of request.events) {
-        const event = this.config.events[name];
-        const last = this.lastPlayed.get(name);
+      for (const { name, key, event } of request.layers) {
+        const last = this.lastPlayed.get(key);
         if (event.cooldownMs > 0 && last !== undefined && request.time - last < event.cooldownMs) continue;
         const gain = name.startsWith("collision.") ? collisionGain(event, request.speed) : 1;
         const volume = event.volume * gain * (request.debris ? this.config.debris.volumeScale : 1);
         if (volume <= 0) continue;
         let files = event.files.filter(file => this.backend.available(file));
         if (!files.length) continue;
-        if (files.length > 1) files = files.filter(file => file !== this.lastFiles.get(name));
-        const sameEvent = [...this.active].filter(voice => voice.event === name);
+        if (files.length > 1) files = files.filter(file => file !== this.lastFiles.get(key));
+        const sameEvent = [...this.active].filter(voice => voice.event === key);
         if (sameEvent.length >= event.maxVoices) this.stopVoice(sameEvent[0]);
         if (this.active.size >= this.config.maxConcurrentSounds) {
           const older = [...this.active].filter(voice => !started.has(voice));
@@ -76,9 +88,9 @@ export class SoundMixer {
         let playing: Playing | undefined;
         const voice = this.backend.play(file, volume, rate, () => { if (playing) this.active.delete(playing); });
         if (!voice) continue; // Unloaded/locked contexts never build a backlog.
-        this.lastPlayed.set(name, request.time);
-        playing = { event: name, priority: event.priority, voice }; this.active.add(playing); started.add(playing);
-        this.lastFiles.set(name, file); this.played++;
+        this.lastPlayed.set(key, request.time);
+        playing = { event: key, priority: event.priority, voice }; this.active.add(playing); started.add(playing);
+        this.lastFiles.set(key, file); this.played++;
         this.recent.push({ event: name, file, volume, rate, speed: Number.isFinite(request.speed) ? request.speed : null });
         if (this.recent.length > 16) this.recent.shift();
       }

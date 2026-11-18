@@ -1,6 +1,6 @@
 import { DAMAGE_RULES } from "./damageConfig";
 
-export type LifeState = "alive" | "spawning" | "dying" | "bursting";
+export type LifeState = "alive" | "spawning" | "dying" | "finishing" | "bursting";
 
 /** All deadlines use the scene's fixed simulation clock, including pause and photo editing. */
 export class RagdollLifecycle {

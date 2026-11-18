@@ -14,22 +14,35 @@
     "priority": 1
   },
   "events": {
-    "collision.normal": {
+    "collision.normal": [
+      {
       "files": [
         "sfx/others/hard-punch-sound.m4a"
       ],
       "volume": 1,
-      "priority": 3,
-      "cooldownMs": 20,
+      "priority": 5,
+      "cooldownMs": 10,
       "speed": [
         300,
-        1000
+        2500
       ],
-      "sound-size": [
-        0.1,
-        2
-      ]
+      "sound-size": [0.1,2]
     },
+    {
+      "files": [
+        "sfx/others/EX-punch.mp3"
+      ],
+      "volume": 0.3,
+      "priority": 5,
+      "cooldownMs": 2000,
+      "speed": [
+        2500,
+        3000
+      ],
+      "sound-size": [0.5,2]
+    }
+  ],
+    
     "collision.wall": {
       "files": [
         "sfx/kenney-impact/wall-000.ogg",
@@ -57,7 +70,7 @@
       "volume": 0.85,
       "cooldownMs": 100,
       "maxVoices": 2,
-      "priority": 4
+      "priority": 10
     }
   },
   "debris": {

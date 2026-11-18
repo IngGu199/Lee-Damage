@@ -10,13 +10,18 @@ export interface SoundEventConfig {
   speed?: [number, number];
   "sound-size"?: [number, number];
 }
+export type SoundEventDefinition = SoundEventConfig | SoundEventConfig[];
+
+export function soundVariants(definition: SoundEventDefinition): SoundEventConfig[] {
+  return Array.isArray(definition) ? definition : [definition];
+}
 export interface SoundConfig {
   version: 1;
   basePath: string;
   masterVolume: number;
   maxConcurrentSounds: number;
   defaults: Omit<SoundEventConfig, "files" | "speed" | "sound-size">;
-  events: Record<string, SoundEventConfig>;
+  events: Record<string, SoundEventDefinition>;
   debris: { volumeScale: number };
 }
 
@@ -76,19 +81,31 @@ export function parseSoundConfig(input: unknown): SoundConfig {
   if (root.version !== 1) throw new Error("version: 지원하는 버전은 1입니다.");
   const basePath = relativePath(root.basePath, "basePath");
   const shared = playback(object(root.defaults ?? {}, "defaults"), defaults, "defaults");
-  const definitions = object(root.events, "events"), events: Record<string, SoundEventConfig> = Object.create(null);
+  const definitions = object(root.events, "events"), events: Record<string, SoundEventDefinition> = Object.create(null);
   for (const [name, inputEvent] of Object.entries(definitions)) {
     if (!["collision.normal", "collision.wall", "death.burst"].includes(name))
       throw new Error(`events.${name}: collision.normal, collision.wall 또는 death.burst 이벤트가 필요합니다.`);
-    const event = object(inputEvent, `events.${name}`);
-    if (!Array.isArray(event.files) || !event.files.length) throw new Error(`events.${name}.files: 음원 목록이 필요합니다.`);
-    events[name] = { ...playback(event, shared, `events.${name}`),
-      files: [...new Set(event.files.map((file, index) => relativePath(file, `events.${name}.files[${index}]`)))],
-      ...(name.startsWith("collision.") ? {
-        speed: interval(event.speed, `events.${name}.speed`, true),
-        "sound-size": interval(event["sound-size"], `events.${name}.sound-size`),
-      } : {}),
-    };
+    const collision = name.startsWith("collision."), multiple = collision && Array.isArray(inputEvent);
+    const inputs = multiple ? inputEvent : [inputEvent];
+    if (!inputs.length) throw new Error(`events.${name}: 속도 구간 목록은 비어 있을 수 없습니다.`);
+    const variants = inputs.map((input, index) => {
+      const path = `events.${name}${multiple ? `[${index}]` : ""}`, event = object(input, path);
+      if (!Array.isArray(event.files) || !event.files.length) throw new Error(`${path}.files: 음원 목록이 필요합니다.`);
+      return { ...playback(event, shared, path),
+        files: [...new Set(event.files.map((file, index) => relativePath(file, `${path}.files[${index}]`)))],
+        ...(collision ? {
+          speed: interval(event.speed, `${path}.speed`, true),
+          "sound-size": interval(event["sound-size"], `${path}.sound-size`),
+        } : {}),
+      };
+    });
+    if (multiple) {
+      const sorted = [...variants].sort((a, b) => a.speed![0] - b.speed![0]);
+      for (let index = 1; index < sorted.length; index++)
+        if (sorted[index].speed![0] < sorted[index - 1].speed![1])
+          throw new Error(`events.${name}: speed 구간이 겹칩니다.`);
+    }
+    events[name] = multiple ? variants : variants[0];
   }
   return {
     version: 1, basePath: `${basePath.replace(/\/$/, "")}/`,
@@ -99,10 +116,10 @@ export function parseSoundConfig(input: unknown): SoundConfig {
   };
 }
 
-/** Inclusive speed endpoints; silence outside, linear gain inside. */
+/** Lower bound inclusive, upper bound exclusive; silence outside, linear gain inside. */
 export function collisionGain(event: SoundEventConfig, speed: number): number {
   if (!Number.isFinite(speed) || speed <= 0 || !event.speed || !event["sound-size"]) return 0;
   const [min, max] = event.speed, [quiet, loud] = event["sound-size"];
-  if (speed < min || speed > max) return 0;
+  if (speed < min || speed >= max) return 0;
   return quiet + (loud - quiet) * ((speed - min) / (max - min));
 }

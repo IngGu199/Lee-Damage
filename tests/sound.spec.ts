@@ -164,6 +164,40 @@ test("custom JSON maps speed to gain, deduplicates files and softens debris", as
   expect(result.recent[0].volume).toBeCloseTo(0.4 * 0.6 * 0.2);
 });
 
+test("JSON band arrays load every unique clip once and layer selected normal and wall bands", async ({ page }) => {
+  const pack = "sfx/kenney-impact/", weak = `${pack}weak.ogg`, strong = `${pack}strong.ogg`, wall = `${pack}wall.ogg`;
+  const requests: string[] = [];
+  page.on("request", request => { if (request.url().endsWith(".ogg")) requests.push(request.url()); });
+  await page.route("**/assets/audio/sounds.json", route => route.fulfill({ json: {
+    version: 1, basePath: "assets/audio/", defaults: { volume: 0.5, rateRange: [1, 1], cooldownMs: 0 },
+    events: {
+      "collision.normal": [
+        { files: [weak], speed: [300, 1000], "sound-size": [0.1, 1] },
+        { files: [strong], speed: [1000, 2400], "sound-size": [0.5, 2] },
+      ],
+      "collision.wall": [
+        { files: [weak], speed: [200, 1500], "sound-size": [1, 1] },
+        { files: [wall], speed: [1500, 2400], "sound-size": [1, 1] },
+      ],
+      "death.burst": { files: [weak] },
+    },
+  } }));
+  await open(page);
+  const result = await page.evaluate(() => {
+    const audio = window.__physicsLab.audio;
+    for (const [time, speed] of [[0, 500], [1, 1000], [2, 1700], [3, 2400]]) {
+      audio.collision(1, time, speed, String(time), false, "wall"); audio.flush();
+    }
+    return audio.snapshot();
+  });
+  expect(result).toMatchObject({ source: "json", state: "ready", buffers: 3, played: 6, errors: [] });
+  expect(requests).toHaveLength(3); expect(new Set(requests).size).toBe(3);
+  expect(result.recent.map(sound => sound.file)).toEqual([weak, weak, strong, weak, strong, wall]);
+  expect(result.recent.map(sound => sound.event)).toEqual(Array(3).fill(["collision.normal", "collision.wall"]).flat());
+  expect(result.recent[2].volume).toBeCloseTo(0.25);
+  expect(result.recent[4].volume).toBeCloseTo(0.625);
+});
+
 test("volume and mute persist and paused/photo/reset scenes never replay queued impacts", async ({ page }) => {
   await open(page);
   await page.locator("#sound-volume").fill("45"); await page.locator("#sound-muted").check();
