@@ -1,14 +1,16 @@
 import { loadSettings } from "../weapons/WeaponConfig";
-import { PhotoSession, type AppliedPhoto } from "./PhotoSession";
+import { PhotoSession, type AppliedPhoto, type PhotoDraft } from "./PhotoSession";
+import { FaceAnalyzer } from "./FaceAnalyzer";
+import { preparePhoto } from "./preparePhoto";
 import { alphaTransform, recoverAlphaMask } from "./PhotoAlpha";
-import { PHOTO_SIZE, renderPhoto, type PhotoMask } from "./PhotoTransform";
+import { PHOTO_SIZE, type PhotoMask } from "./PhotoTransform";
 import { photoPieces } from "./PhotoGeometry";
 
 import { DEFAULT_IMAGE_CONFIG, IMAGE_TARGETS, parseImageConfig, type ImageTarget } from "./ImageConfig";
 
 export type DefaultPhotos = Record<ImageTarget, AppliedPhoto | null>;
 
-async function loadPhoto(path: string, signal: AbortSignal): Promise<AppliedPhoto> {
+async function loadPhoto(path: string, signal: AbortSignal, target: ImageTarget): Promise<AppliedPhoto> {
   const url = `${import.meta.env.BASE_URL}${path.split("/").map(encodeURIComponent).join("/")}`;
   const response = await fetch(url, { signal });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -22,16 +24,27 @@ async function loadPhoto(path: string, signal: AbortSignal): Promise<AppliedPhot
     shape: [{ x: 0, y: 0 }, { x: PHOTO_SIZE, y: 0 }, { x: PHOTO_SIZE, y: PHOTO_SIZE }, { x: 0, y: PHOTO_SIZE }] };
   // Validate geometry now so a bad cutout only disables this target, not startup.
   photoPieces(mask, { x: source.width, y: source.height }, edit);
-  return { source, name, libraryPath: path, faces: [], faceIndex: -1, edit, mask, alphaMask: alphaMask ?? undefined,
-    frames: [renderPhoto(source, edit, mask)], landmarks: [] };
+  const draft: PhotoDraft = { source, name, libraryPath: path, preserveFraming: true,
+    faces: [], faceIndex: -1, edit, mask, alphaMask: alphaMask ?? undefined };
+  if (target === "face") {
+    const analyzer = new FaceAnalyzer();
+    try {
+      draft.faces = await analyzer.detect(source, () => signal.aborted);
+      draft.faceIndex = draft.faces.length === 1 ? 0 : -1;
+    } catch (error) {
+      if (!signal.aborted) console.warn("기본 얼굴의 기준점을 검출하지 못했어요. 사진은 그대로 사용합니다.", error);
+    } finally { analyzer.destroy(); }
+  }
+  if (signal.aborted) throw new Error("기본 이미지 불러오기를 취소했습니다.");
+  return preparePhoto(draft, () => signal.aborted, target === "face");
 }
 
-/** Defaults are packaged assets, independent of user-photo storage and face inference. */
+/** Packaged faces gain landmarks/variants without auto-fitting; weapons only restore their outlines. */
 export async function loadDefaultImages(signal: AbortSignal): Promise<DefaultPhotos> {
   const config = await loadSettings("config/images.json", DEFAULT_IMAGE_CONFIG, parseImageConfig, signal);
   const entries = await Promise.all(IMAGE_TARGETS.map(async target => {
     const path = config[target];
-    try { return [target, path && !signal.aborted ? await loadPhoto(path, signal) : null] as const; }
+    try { return [target, path && !signal.aborted ? await loadPhoto(path, signal, target) : null] as const; }
     catch (error) {
       if (!signal.aborted) console.warn(`기본 이미지 ${target}: 기본 도형을 사용합니다.`, error);
       return [target, null] as const;

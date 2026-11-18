@@ -2,9 +2,11 @@ import { Matter } from "../game/matter";
 import { ROOM, REFERENCE_STEP } from "../game/config";
 import type { RagdollActor } from "../game/RagdollActor";
 import type { WeaponDefinition, WeaponId } from "./WeaponConfig";
+import { weaponRegistration } from "./WeaponRegistry";
+import type { AttachedBullet } from "./WeaponTypes";
+export type { AttachedBullet } from "./WeaponTypes";
 import { add, multiply, unit, type Point } from "./geometry";
 
-export interface AttachedBullet { position: Point; radius: number; color: number; texture?: string }
 interface Finisher {
   actor: RagdollActor; weapon: WeaponId; definition: WeaponDefinition; direction: Point; since: number;
   phase: "flying" | "pinned"; pinnedAt: number; bullet?: AttachedBullet; masks: number[];
@@ -24,7 +26,7 @@ export class WeaponFinishers {
     const state: Finisher = { actor, weapon, definition, direction: normal, since: time, phase: "flying", pinnedAt: 0,
       bullet, masks: actor.doll.bodies.map(body => body.collisionFilter.mask) };
     this.host.signal(definition.signals.finish, actor.id, actor.doll.centerOfMass, normal, time, definition.finisher.speed, "death.burst");
-    if (weapon === "hammer") this.explode(state, time);
+    if (weaponRegistration(weapon).behavior.finisher === "burst") this.explode(state, time);
     else {
       actor.landing = undefined; actor.lifecycle.state = "finishing"; actor.doll.setDynamic(false);
       for (const body of actor.doll.bodies) body.collisionFilter.mask = 0;
@@ -60,7 +62,7 @@ export class WeaponFinishers {
   step(delta: number, time: number) {
     for (const state of [...this.active.values()]) {
       const definition = state.definition.finisher;
-      if (state.weapon === "bat") {
+      if (weaponRegistration(state.weapon).behavior.finisher === "launch") {
         const direction = unit({ x: Math.abs(state.direction.x) < 0.2 ? 1 : state.direction.x, y: Math.min(-0.15, state.direction.y) });
         this.move(state, { x: direction.x * definition.speed * delta / 1000,
           y: (direction.y * definition.speed - definition.upwardSpeed) * delta / 1000 });

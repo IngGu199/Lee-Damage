@@ -2,10 +2,11 @@ import { FaceAnalyzer } from "./FaceAnalyzer";
 import { PhotoSession, type PhotoDraft, type AppliedPhoto } from "./PhotoSession";
 import {
   defaultTransform, fitFace, PHOTO_SIZE, renderPhoto, transformPoint, inversePoint,
-  defaultMask, copyMask, contourPath, photoMaskPath, renderMask, fitContour,
+  defaultMask, copyMask, contourPath, photoMaskPath, fitContour,
   type Point, type PhotoMask, type PhotoTransform,
 } from "./PhotoTransform";
-import { faceBendControls, makeVariants } from "./PhotoVariants";
+import { faceBendControls } from "./PhotoVariants";
+import { preparePhoto } from "./preparePhoto";
 import { FIXED_APPEARANCE } from "../game/appearanceConfig";
 import { contourProblem, simplifyStroke } from "./PhotoContour";
 import { PhotoLibrary } from "./PhotoLibrary";
@@ -396,33 +397,35 @@ export class PhotoEditor {
       const source = await PhotoSession.decode(file);
       if (id !== this.generation || !this.open) return;
       const alphaMask = recoverAlphaMask(source);
-      this.draft = { source, name: file.name, libraryPath, faces: [], faceIndex: -1,
+      this.draft = { source, name: file.name, libraryPath, preserveFraming: Boolean(alphaMask || libraryPath), faces: [], faceIndex: -1,
         edit: alphaMask ? alphaTransform(source) : this.initialTransform(source),
         mask: alphaMask ? copyMask(alphaMask) : this.asset?.mask() ?? defaultMask(), alphaMask: alphaMask ?? undefined };
       this.contourHistory.length = 0; this.selectedPoint = -1; this.contourTool = "draw";
       this.edited = false; this.analysisPending = true; this.renderFaces(); this.draw();
       this.el("photo-filename").textContent = file.name;
-      if (alphaMask) {
-        // A saved cutout already has its framing baked in. Face fitting would change it again.
-        this.analysisPending = false;
-        this.el("photo-status").textContent = "투명 배경에서 윤곽을 자동으로 복원했어요. 저장된 모양 그대로 적용할 수 있어요.";
-        return;
-      }
       if (this.asset) {
         this.analysisPending = false;
-        this.el("photo-status").textContent = "사진을 모형에 맞추거나 윤곽을 직접 그려 적용해 주세요.";
+        this.el("photo-status").textContent = alphaMask
+          ? "투명 배경에서 윤곽을 자동으로 복원했어요. 저장된 모양 그대로 적용할 수 있어요."
+          : "사진을 모형에 맞추거나 윤곽을 직접 그려 적용해 주세요.";
         return;
       }
-      this.el("photo-status").textContent = "얼굴 기준점을 찾고 있어요. 처음에는 모델 준비에 시간이 걸릴 수 있어요.";
+      this.el("photo-status").textContent = this.draft.preserveFraming
+        ? "사진의 위치와 윤곽을 유지하면서 얼굴 기준점을 찾고 있어요. 처음에는 모델 준비에 시간이 걸릴 수 있어요."
+        : "얼굴 기준점을 찾고 있어요. 처음에는 모델 준비에 시간이 걸릴 수 있어요.";
       try {
         const faces = await this.analyzer.detect(source, () => id !== this.generation || !this.open);
         if (id !== this.generation || !this.open) return;
         this.draft.faces = faces;
         this.draft.faceIndex = faces.length === 1 ? 0 : -1;
-        if (faces.length === 1 && !this.edited) this.draft.edit = fitFace(faces[0], source.width, source.height);
+        if (faces.length === 1 && !this.edited && !this.draft.preserveFraming)
+          this.draft.edit = fitFace(faces[0], source.width, source.height);
         this.el("photo-status").textContent = faces.length === 0
           ? "얼굴을 찾지 못했어요. 직접 맞춰 적용할 수 있어요. 사진 변형은 생략돼요."
-          : faces.length === 1 ? "얼굴을 찾았어요. 필요하면 위치를 조절해 주세요." : `${faces.length}개의 얼굴을 찾았어요. 사용할 얼굴을 골라 주세요.`;
+          : faces.length === 1 ? this.draft.preserveFraming
+            ? "얼굴 기준점을 찾았어요. 사진의 위치와 윤곽은 그대로 유지했어요."
+            : "얼굴을 찾았어요. 필요하면 위치를 조절해 주세요."
+          : `${faces.length}개의 얼굴을 찾았어요. 사용할 얼굴을 골라 주세요.`;
       } catch {
         if (id !== this.generation || !this.open) return;
         this.el("photo-status").textContent = "얼굴 분석을 준비하지 못했어요. 수동으로 적용하거나 사진을 다시 선택해 주세요.";
@@ -463,7 +466,9 @@ export class PhotoEditor {
       button.disabled = this.busy;
       button.setAttribute("aria-pressed", String(this.draft!.faceIndex === index));
       button.addEventListener("click", () => {
-        this.draft!.faceIndex = index; this.align(); this.renderFaces();
+        this.draft!.faceIndex = index;
+        if (this.draft!.preserveFraming) this.draw(); else this.align();
+        this.renderFaces();
       });
       container.append(button);
     });
@@ -587,15 +592,8 @@ export class PhotoEditor {
     this.el("photo-status").textContent = this.asset ? "무기 사진과 충돌 윤곽을 준비하고 있어요…" : "고화질 얼굴과 충격에 쓸 사진을 준비하고 있어요…";
     const current = () => id === this.generation && this.open;
     try {
-      const landmarks = (draft.faces[draft.faceIndex] ?? []).map((p) =>
-        transformPoint(p, { x: draft.source.width, y: draft.source.height }, draft.edit));
-      const frame = renderPhoto(draft.source, draft.edit, draft.mask);
-      let variants: HTMLCanvasElement[] = [];
-      try { if (!this.asset) variants = await makeVariants(renderPhoto(draft.source, draft.edit, false), landmarks, () => !current(),
-        renderMask(draft.mask, { x: draft.source.width, y: draft.source.height }, draft.edit)); }
-      catch { /* The unmodified photo remains usable if variant generation fails. */ }
+      const photo = await preparePhoto(draft, () => !current(), !this.asset);
       if (!current()) return;
-      const photo: AppliedPhoto = { ...draft, frames: [frame, ...variants], landmarks };
       this.actions.apply(photo);
       this.session.current = photo;
       this.close();

@@ -1,3 +1,4 @@
+import { isRangedWeapon } from "../weapons/WeaponRegistry";
 import type { Point } from "../photo/PhotoTransform";
 import { DAMAGE_RULES } from "./damageConfig";
 import { HealthState } from "./HealthState";
@@ -81,7 +82,7 @@ export class DamageSystem {
     this.lastTime = hit.time;
     // Gun hits are individual projectiles, consumed on contact by WeaponSystem.
     // Keep duplicate/stale-hit checks and per-hit damage caps for every source.
-    const projectile = hit.source === "weapon" && hit.weaponId === "gun";
+    const projectile = hit.source === "weapon" && Boolean(hit.weaponId && isRangedWeapon(hit.weaponId));
     if (!projectile && this.invulnerable(hit.time)) return null;
     const impact = damageFeedback(hit, maxDamage), amount = impact.damage;
     if (!Number.isFinite(amount) || amount <= 0) return null;

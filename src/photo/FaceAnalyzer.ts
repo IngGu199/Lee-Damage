@@ -3,7 +3,7 @@ import wasmBinaryPath from "@mediapipe/tasks-vision/vision_wasm_internal.wasm?ur
 import { canvasOf, type Point } from "./PhotoTransform";
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
 
-/** Loaded only after photo selection; image bytes never leave this browser. */
+/** Loaded for a selected/default face; image bytes never leave this browser. */
 export class FaceAnalyzer {
   private detector?: Promise<FaceLandmarker>;
 
@@ -25,8 +25,11 @@ export class FaceAnalyzer {
     if (cancelled()) throw new Error("Photo analysis cancelled");
     const ratio = Math.min(1, 1024 / Math.max(source.width, source.height));
     const sample = canvasOf(Math.max(1, Math.round(source.width * ratio)), Math.max(1, Math.round(source.height * ratio)));
-    sample.getContext("2d")!.drawImage(source, 0, 0, sample.width, sample.height);
-    // A single synchronous inference on a bounded image, while the editor pauses physics.
+    const context = sample.getContext("2d")!;
+    // Flatten transparency only in the analysis sample; the displayed photo/mask stays untouched.
+    context.fillStyle = "#ffffff"; context.fillRect(0, 0, sample.width, sample.height);
+    context.drawImage(source, 0, 0, sample.width, sample.height);
+    // A single synchronous inference on a bounded image during startup or photo editing.
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     if (cancelled()) throw new Error("Photo analysis cancelled");
     return detector.detect(sample).faceLandmarks.map((face) =>

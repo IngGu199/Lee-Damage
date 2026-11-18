@@ -1,84 +1,73 @@
-import Phaser from "phaser";
 import type { PhysicsScene } from "../game/PhysicsScene";
 import type { RagdollActor } from "../game/RagdollActor";
-import { Matter, forgetBodyContacts } from "../game/matter";
-import { ROOM, REFERENCE_STEP } from "../game/config";
-import { PointerVelocity } from "../game/PointerVelocity";
-import { captureMotion, contactVelocity, type ContactMotion } from "../game/ContactMotion";
+import type { ContactMotion } from "../game/ContactMotion";
+import { ROOM } from "../game/config";
 import { ImpactEffects } from "../effects/ImpactEffects";
-import { DEFAULT_WEAPON_CONFIG, loadSettings, meleeDamage, parseWeaponConfig, type ToolId, type WeaponId } from "./WeaponConfig";
-import { WeaponFinishers, type AttachedBullet } from "./WeaponFinishers";
-import { add, circleContact, closingSpeed, multiply, rotate, subtract, sweepCircle, sweepConvex, unit, type Point } from "./geometry";
-import { WeaponSkins, type WeaponPhotoTarget, type WeaponSkin } from "./WeaponSkins";
-import { clipPolygon, polygonArea } from "../photo/PhotoGeometry";
 import type { AppliedPhoto } from "../photo/PhotoSession";
+import { DEFAULT_WEAPON_CONFIG, loadSettings, parseWeaponConfig, type WeaponConfig } from "./WeaponConfig";
+import { isMeleeWeapon, isRangedWeapon, isWeaponId, PROJECTILE_WEAPON_ID, type ToolId } from "./WeaponRegistry";
+import { WeaponState } from "./WeaponState";
+import { WeaponFeedback } from "./WeaponFeedback";
+import { WeaponFinishers } from "./WeaponFinishers";
+import { WeaponSkins } from "./WeaponSkins";
+import { WeaponCombat } from "./WeaponCombat";
+import { WeaponCollision } from "./WeaponCollision";
+import { WeaponPhysics } from "./WeaponPhysics";
+import { WeaponInput } from "./WeaponInput";
+import { ProjectileSystem } from "./ProjectileSystem";
+import { WeaponRenderer } from "./WeaponRenderer";
+import type { WeaponPhotoTarget } from "./WeaponTypes";
+import type { Point } from "./geometry";
 
-interface Pose { position: Point; angle: number }
-interface Projectile extends AttachedBullet { id: number; gunId: number; direction: Point; since: number }
-interface GunItem { id: number; position: Point; lastShot: number }
-interface Contact { actor: RagdollActor; part: number; position: Point; direction: Point; speed: number; damage: number }
-interface MeleeItem {
-  id: "bat" | "hammer"; body: MatterJS.BodyType; originOffset: Point; previous?: Pose; motion?: ContactMotion;
-}
-
-/** Tool input is separate from ragdoll dragging. All gameplay advances on the shared physics clock. */
+/** Scene-facing facade. PhysicsScene remains the only owner of simulation timing. */
 export class WeaponSystem {
-  config = DEFAULT_WEAPON_CONFIG;
-  private baseConfig = DEFAULT_WEAPON_CONFIG;
-  private readonly sizePercents: Record<WeaponPhotoTarget, number> = { bat: 100, hammer: 100, gun: 100, bullet: 100 };
-  mode: ToolId = "hand";
-  loaded = false;
+  private readonly state = new WeaponState();
+  private readonly abort = new AbortController();
   readonly ready: Promise<void>;
   readonly effects: ImpactEffects;
   readonly finishers: WeaponFinishers;
   readonly skins: WeaponSkins;
-  private readonly items = new Map<number, MeleeItem>();
-  private activeItem?: MeleeItem;
-  private readonly guns: GunItem[] = [];
-  get body() { return this.activeItem?.body; }
-  get heldBody() { return this.holding ? this.body : undefined; }
-  get hasWeapons() { return this.items.size > 0 || this.guns.length > 0 || this.projectiles.length > 0; }
-  grip?: MatterJS.ConstraintType;
-  target: Point = { x: ROOM.width / 2, y: ROOM.height / 2 };
-  get gunOrigin(): Point { return this.guns.at(-1)?.position ?? this.target; }
-  private holding = false;
-  private pointerId: number | null = null;
-  private rightPressed = false;
-  private gripOffset: Point = { x: 0, y: 0 };
-  private freeInertia?: number;
-  private heldAngle = 0;
-  private readonly pointerMotion = new PointerVelocity();
-  private targetMotion?: ReadonlyMap<MatterJS.BodyType, ContactMotion>;
-  private readonly graphics: Phaser.GameObjects.Graphics;
-  private readonly abort = new AbortController();
-  private readonly lastHit = new Map<string, number>();
-  private touching = new Set<string>();
-  private nextHit = 0;
-  private nextBullet = 0;
-  private nextGun = 0;
-  private readonly projectiles: Projectile[] = [];
-  private readonly batKnockbacks: { actor: RagdollActor; bodies: MatterJS.BodyType[]; impulse: Point; interactive: boolean }[] = [];
-  private readonly textures = new Set<string>();
-  private bulletTexture?: string;
-  private bulletImages: Phaser.GameObjects.Image[] = [];
+  private readonly feedback: WeaponFeedback;
+  private readonly combat: WeaponCombat;
+  private readonly collisions: WeaponCollision;
+  private readonly physics: WeaponPhysics;
+  private readonly input: WeaponInput;
+  private readonly projectiles: ProjectileSystem;
+  private readonly renderer: WeaponRenderer;
   onChange: () => void = () => {};
 
+  get config() { return this.state.config; }
+  set config(value: WeaponConfig) { this.state.config = value; }
+  get mode() { return this.state.mode; }
+  set mode(value: ToolId) { this.state.mode = value; }
+  get loaded() { return this.state.loaded; }
+  set loaded(value: boolean) { this.state.loaded = value; }
+  get body() { return this.state.body; }
+  get heldBody() { return this.state.heldBody; }
+  get hasWeapons() { return this.state.hasWeapons; }
+  get grip() { return this.state.grip; }
+  set grip(value: MatterJS.ConstraintType | undefined) { this.state.grip = value; }
+  get target() { return this.state.target; }
+  set target(value: Point) { this.state.target = value; }
+  get gunOrigin() { return this.state.gunOrigin; }
+  get travelDistance() { return this.input.travelDistance; }
+  get motionSpeed() { return this.physics.motionSpeed; }
+
   constructor(private readonly scene: PhysicsScene) {
-    this.graphics = scene.add.graphics().setDepth(50);
     this.skins = new WeaponSkins(scene);
     this.effects = new ImpactEffects(scene);
+    this.feedback = new WeaponFeedback(this.effects, scene.audio);
     this.finishers = new WeaponFinishers({
       replace: actor => scene.replaceAfterWeapon(actor), remove: actor => scene.removeAfterWeapon(actor),
-      signal: (name, owner, position, direction, time, speed, fallback) => this.signal(name, owner, position, direction, time, speed, fallback),
+      signal: (name, owner, position, direction, time, speed, fallback) =>
+        this.feedback.emit(name, owner, position, direction, time, speed, fallback),
     });
-    const canvas = scene.game.canvas, options = { signal: this.abort.signal };
-    canvas.addEventListener("pointerdown", this.down, options);
-    canvas.addEventListener("contextmenu", event => {
-      if (this.holding && this.activeItem?.id === "bat") event.preventDefault();
-    }, options);
-    window.addEventListener("pointermove", this.move, options);
-    for (const name of ["pointerup", "pointercancel", "lostpointercapture"])
-      window.addEventListener(name, this.up as EventListener, options);
+    this.combat = new WeaponCombat(this.state, scene, this.finishers, this.feedback);
+    this.collisions = new WeaponCollision(this.state, scene, this.skins, this.combat);
+    this.physics = new WeaponPhysics(this.state, scene, this.skins, this.collisions);
+    this.projectiles = new ProjectileSystem(this.state, scene, this.skins, this.combat, this.feedback);
+    this.renderer = new WeaponRenderer(this.state, scene, this.skins, this.finishers, this.effects);
+    this.input = new WeaponInput(this.state, scene, this.physics, () => this.fire(), () => this.onChange(), this.abort.signal);
     this.ready = this.load();
   }
   private async load() {
@@ -87,570 +76,113 @@ export class WeaponSystem {
       this.effects.load(this.abort.signal),
     ]);
     if (this.abort.signal.aborted) return;
-    this.baseConfig = config;
-    this.config = structuredClone(config);
-    const image = config.weapons.gun.projectile.image;
-    if (image) {
-      try {
-        const response = await fetch(`${import.meta.env.BASE_URL}${image}`, { signal: this.abort.signal });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const bitmap = await createImageBitmap(await response.blob());
-        if (this.abort.signal.aborted) { bitmap.close(); return; }
-        const canvas = document.createElement("canvas"); canvas.width = bitmap.width; canvas.height = bitmap.height;
-        canvas.getContext("2d")!.drawImage(bitmap, 0, 0); bitmap.close();
-        const key = `weapon-bullet-${Phaser.Utils.String.UUID()}`;
-        this.scene.textures.addCanvas(key, canvas); this.textures.add(key); this.bulletTexture = key;
-      } catch (error) { if (!this.abort.signal.aborted) console.warn("탄알 이미지: 원형 도형으로 표시합니다.", error); }
-    }
-    if (!this.abort.signal.aborted) { this.loaded = true; this.onChange(); }
+    this.state.baseConfig = config;
+    this.state.config = structuredClone(config);
+    await this.projectiles.loadTexture(this.abort.signal);
+    if (!this.abort.signal.aborted) { this.state.loaded = true; this.onChange(); }
   }
-  private point(event: PointerEvent): Point {
-    const rect = this.scene.game.canvas.getBoundingClientRect();
-    return { x: (event.clientX - rect.left) / rect.width * ROOM.width, y: (event.clientY - rect.top) / rect.height * ROOM.height };
+  select(mode: ToolId) {
+    if (!this.loaded || this.scene.paused || (mode !== "hand" && !isWeaponId(mode))) return false;
+    this.scene.pointer.cancel(); this.cancel();
+    this.state.mode = mode; this.state.activeItem = undefined;
+    if (!isRangedWeapon(mode)) this.projectiles.clearGuns();
+    const anchor = { x: Math.max(ROOM.left + 30, Math.min(ROOM.right - 30, this.target.x)),
+      y: Math.max(ROOM.top + 30, Math.min(ROOM.bottom - 30, this.target.y)) };
+    if (isRangedWeapon(mode)) this.projectiles.create(mode, anchor);
+    else if (isMeleeWeapon(mode)) this.state.activeItem = this.physics.createMelee(mode, anchor);
+    this.onChange(); return true;
   }
-  private down = (event: PointerEvent) => {
-    if (event.button !== 0 || this.scene.paused || !this.loaded || this.pointerId !== null) return;
-    this.target = this.point(event);
-    if (this.mode === "gun") { event.preventDefault(); this.scene.game.canvas.focus({ preventScroll: true }); this.fire(); return; }
-    const item = this.pick(this.target);
-    if (!item) return;
-    event.preventDefault(); this.scene.game.canvas.focus({ preventScroll: true });
-    this.mode = item.id; this.activeItem = item;
-    this.scene.pointer.cancel();
-    this.holding = true; this.pointerId = event.pointerId;
-    this.scene.game.canvas.setPointerCapture(event.pointerId);
-    const body = item.body;
-    // Preserve the actual clicked local point; picking up never teleports the item.
-    this.gripOffset = rotate(subtract(this.target, body.position), -body.angle);
-    this.heldAngle = body.angle; this.freeInertia = body.inertia;
-    Matter.Body.setInertia(body, item.id === "bat" ? Infinity
-      : this.freeInertia + body.mass * (this.gripOffset.x ** 2 + this.gripOffset.y ** 2)/10);
-    if (item.id === "bat") Matter.Body.setAngularVelocity(body, 0);
-    this.grip = Matter.Constraint.create({ pointA: { ...this.target }, bodyB: body,
-      pointB: rotate(this.gripOffset, body.angle), length: 0, stiffness: 1, damping: 0,
-      angularStiffness: item.id === "bat" ? 1 : 0, label: "weapon-grip" });
-    this.scene.matter.world.add(this.grip);
-    this.pointerMotion.reset(this.target, event.timeStamp);
-    this.onChange();
-  };
-  pick(point: Point) {
-    return [...this.items.values()].reverse().find(item => Matter.Query.point([item.body], point).length > 0);
-  }
-  owns(body: MatterJS.BodyType) {
-    for (const item of this.items.values()) if (item.body === body || item.body === body.parent) return true;
-    return false;
-  }
-  collisionRestitution(body: MatterJS.BodyType) {
-    for (const item of this.items.values()) if (item.body === body || item.body === body.parent)
-      return this.config.weapons[item.id].physics.restitution;
-    return undefined;
-  }
+  cancel() { this.input.cancel(); }
+  pick(point: Point) { return this.physics.pick(point); }
+  owns(body: MatterJS.BodyType) { return this.physics.owns(body); }
+  collisionRestitution(body: MatterJS.BodyType) { return this.physics.collisionRestitution(body); }
   resize(oldWidth: number) {
     this.cancel();
     const ratio = ROOM.width / oldWidth;
-    this.target.x *= ratio;
-    for (const gun of this.guns) gun.position.x *= ratio;
-    for (const item of this.items.values()) {
-      this.keepInside(item.body, { x: item.body.position.x * ratio, y: item.body.position.y });
-      item.previous = undefined; item.motion = undefined;
-    }
-    for (const bullet of this.projectiles) bullet.position.x *= ratio;
-    this.touching.clear();
-  }
-  private move = (event: PointerEvent) => {
-    if (this.scene.paused) return;
-    // The second button changes pointermove.buttons rather than firing pointerdown.
-    // Pickup prevents compatibility mouse events, so detect the right-button edge here.
-    const right = Boolean(event.buttons & 2);
-    if (right && !this.rightPressed) this.rotateClick(event);
-    this.rightPressed = right;
-    if (this.holding && event.pointerId === this.pointerId && !(event.buttons & 1)) { this.up(event); return; }
-    const rect = this.scene.game.canvas.getBoundingClientRect();
-    if (!this.holding && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) return;
-    this.target = this.point(event);
-    if (this.holding && event.pointerId === this.pointerId) this.pointerMotion.record(this.target, event.timeStamp);
-  };
-  private up = (event: PointerEvent) => {
-    if (event.pointerId !== this.pointerId) return;
-    if (event.type === "pointerup" && event.buttons & 1) return;
-    if ((event.type === "pointerup" || event.type === "pointermove") && this.body) {
-      const point = this.point(event);
-      if (Math.hypot(point.x - this.target.x, point.y - this.target.y) > 0.001) this.pointerMotion.record(point, event.timeStamp);
-      const velocity = this.pointerMotion.at(event.timeStamp), offset = rotate(this.gripOffset, this.body.angle);
-      Matter.Body.setVelocity(this.body, { x: velocity.x + this.body.angularVelocity * offset.y,
-        y: velocity.y - this.body.angularVelocity * offset.x });
-    }
-    this.cancel();
-  };
-  private rotateClick = (event: MouseEvent) => {
-    if (this.scene.paused || !this.holding || this.activeItem?.id !== "bat" || !this.grip) return;
-    event.preventDefault();
-    const body = this.activeItem.body, angle = this.heldAngle + Phaser.Math.DegToRad(this.config.weapons.bat.handling.rotateStepDegrees);
-    const center = subtract(this.grip.pointA, rotate(this.gripOffset, angle));
-    const vertices = body.vertices!.map(vertex => add(center, rotate(subtract(vertex, body.position), angle - body.angle)));
-    // Turning near a wall must not move the clicked pivot through the room bounds.
-    if (vertices.some(vertex => vertex.x < ROOM.left || vertex.x > ROOM.right || vertex.y < ROOM.top || vertex.y > ROOM.bottom)) return;
-    this.heldAngle = angle;
-    Matter.Body.setAngle(body, angle); Matter.Body.setPosition(body, center); Matter.Body.setAngularVelocity(body, 0);
-    this.grip.pointB = rotate(this.gripOffset, angle); this.grip.angleB = angle;
-    this.onChange();
-  };
-  cancel() {
-    const pointerId = this.pointerId; this.pointerId = null; this.holding = false;
-    this.rightPressed = false;
-    if (this.grip) { this.scene.matter.world.removeConstraint(this.grip); this.grip = undefined; }
-    if (this.body && this.freeInertia !== undefined) Matter.Body.setInertia(this.body, this.freeInertia);
-    this.freeInertia = undefined;
-    this.pointerMotion.clear();
-    if (pointerId !== null && this.scene.game.canvas.hasPointerCapture(pointerId)) this.scene.game.canvas.releasePointerCapture(pointerId);
-    this.onChange();
-  }
-  select(mode: ToolId) {
-    if (!this.loaded || this.scene.paused || !["hand", "bat", "hammer", "gun"].includes(mode)) return false;
-    this.scene.pointer.cancel(); this.cancel();
-    this.mode = mode; this.activeItem = undefined;
-    if (mode !== "gun") this.clearGuns();
-    const anchor = { x: Phaser.Math.Clamp(this.target.x, ROOM.left + 30, ROOM.right - 30), y: Phaser.Math.Clamp(this.target.y, ROOM.top + 30, ROOM.bottom - 30) };
-    if (mode === "gun") this.guns.push({ id: ++this.nextGun, position: anchor, lastShot: -Infinity });
-    else if (mode !== "hand") this.activeItem = this.createMelee(mode, anchor);
-    this.onChange(); return true;
-  }
-  private createMelee(mode: "bat" | "hammer", anchor: Point, initialAngle = this.config.weapons[mode].shape.angle) {
-      const d = this.config.weapons[mode], { length, width, headWidth, headHeight } = d.shape;
-      let body: MatterJS.BodyType;
-      let originOffset: Point;
-      const material = { restitution: d.physics.restitution, friction: d.physics.friction, frictionStatic: d.physics.frictionStatic,
-        // Zero knockback must also suppress Matter's impulse/position transfer to dolls.
-        // Head/body sweeps still detect hits; walls and other weapons remain solid.
-        frictionAir: d.physics.frictionAir, collisionFilter: { mask: d.damage.knockback === 0 ? 6 : 7, category: 4, group: 0 } };
-      const skin = this.skins.get(mode);
-      if (skin) {
-        const edge = length - headWidth / 2;
-        const minX = Math.min(edge, ...skin.points.map(p => p.x)) - 1, maxX = Math.max(edge, ...skin.points.map(p => p.x)) + 1;
-        const minY = Math.min(...skin.points.map(p => p.y)) - 1, maxY = Math.max(...skin.points.map(p => p.y)) + 1;
-        // Split across the head boundary so a triangle spanning handle and head
-        // cannot accidentally give the heavy head the handle's density.
-        const pieces = mode === "hammer" ? skin.pieces.flatMap(piece => [
-          clipPolygon(piece, [{ x: minX, y: minY }, { x: edge, y: minY }, { x: edge, y: maxY }, { x: minX, y: maxY }]),
-          clipPolygon(piece, [{ x: edge, y: minY }, { x: maxX, y: minY }, { x: maxX, y: maxY }, { x: edge, y: maxY }]),
-        ]).filter(piece => Math.abs(polygonArea(piece)) > 0.0001) : skin.pieces;
-        const parts = pieces.map(piece => {
-          const centroid = Matter.Vertices.centre(piece as MatterJS.Vector[]);
-          const part = Matter.Bodies.fromVertices(centroid.x, centroid.y, [piece], material, false, 0, 0);
-          const density = mode === "hammer" && centroid.x >= edge
-            ? d.physics.headMass / (headWidth * headHeight) : d.physics.handleMass / (length * width);
-          Matter.Body.setMass(part, Math.max(0.0001, Math.abs(polygonArea(piece)) * density));
-          return part;
-        });
-        body = parts.length === 1 ? parts[0] : Matter.Body.create({ parts, ...material }) as unknown as MatterJS.BodyType;
-        Matter.Body.setMass(body, mode === "bat" ? d.physics.handleMass : d.physics.handleMass + d.physics.headMass);
-        originOffset = multiply(body.position, -1);
-      } else if (mode === "bat") {
-        body = Matter.Bodies.rectangle(length / 2, 0, length, width, material);
-        Matter.Body.setMass(body, d.physics.handleMass);
-        originOffset = { x: -length / 2, y: 0 };
-      } else {
-        const handle = Matter.Bodies.rectangle(length / 2, 0, length, width);
-        const head = Matter.Bodies.rectangle(length, 0, headWidth, headHeight);
-        Matter.Body.setMass(handle, d.physics.handleMass); Matter.Body.setMass(head, d.physics.headMass);
-        body = Matter.Body.create({ parts: [handle, head], ...material }) as unknown as MatterJS.BodyType;
-        originOffset = multiply(body.position, -1);
-      }
-      body.label = `weapon-${mode}`;
-      Matter.Body.setAngle(body, initialAngle);
-      Matter.Body.setPosition(body, subtract(anchor, rotate(originOffset, initialAngle)));
-      this.keepInside(body);
-      const item: MeleeItem = { id: mode, body, originOffset };
-      this.items.set(body.id, item);
-      this.scene.matter.world.add(body);
-      return item;
+    this.state.target.x *= ratio;
+    this.projectiles.resize(ratio);
+    this.physics.resize(ratio);
+    this.collisions.clearContacts();
   }
   applyPhoto(id: WeaponPhotoTarget, photo: AppliedPhoto | null) {
     this.skins.apply(this.config, id, photo);
     this.cancel();
-    this.rebuildMelee(id);
+    this.physics.rebuildMelee(id);
     this.render(this.scene.snapshot().simulationTime); this.onChange();
   }
-  sizePercent(id: WeaponPhotoTarget) { return this.sizePercents[id]; }
+  sizePercent(id: WeaponPhotoTarget) { return this.state.sizePercents[id]; }
   setSizePercent(id: WeaponPhotoTarget, percent: number) {
-    if (!this.loaded || this.scene.paused || !Object.hasOwn(this.sizePercents, id) || !Number.isFinite(percent)) return false;
-    const next = Phaser.Math.Clamp(Math.round(percent), 10, id === "bullet" ? 1000 : 300);
-    if (next === this.sizePercents[id]) return false;
-    if (this.activeItem?.id === id) this.cancel();
+    if (!this.loaded || this.scene.paused || !Object.hasOwn(this.state.sizePercents, id) || !Number.isFinite(percent)) return false;
+    const next = Math.max(10, Math.min(id === "bullet" ? 1000 : 300, Math.round(percent)));
+    if (next === this.state.sizePercents[id]) return false;
+    if (this.state.activeItem?.id === id) this.cancel();
     const scale = next / 100;
-    // Always scale from the loaded JSON, so returning to 100% restores its dimensions.
+    // Scale from the loaded settings, so 100% restores the configured dimensions.
     if (id === "bullet") {
-      const current = this.config.weapons.gun;
-      this.config.weapons.gun = { ...current, projectile: { ...current.projectile,
-        radius: this.baseConfig.weapons.gun.projectile.radius * scale } };
+      const current = this.config.weapons[PROJECTILE_WEAPON_ID];
+      this.config.weapons[PROJECTILE_WEAPON_ID] = { ...current, projectile: { ...current.projectile,
+        radius: this.state.baseConfig.weapons[PROJECTILE_WEAPON_ID].projectile.radius * scale } };
       this.skins.resize(this.config, "bullet");
-      const radius = this.config.weapons.gun.projectile.radius;
-      for (const bullet of [...this.projectiles, ...this.finishers.bullets()]) bullet.radius = radius;
+      const radius = this.config.weapons[PROJECTILE_WEAPON_ID].projectile.radius;
+      for (const bullet of [...this.state.projectiles, ...this.finishers.bullets()]) bullet.radius = radius;
     } else {
-      const base = this.baseConfig.weapons[id], current = this.config.weapons[id];
+      const base = this.state.baseConfig.weapons[id], current = this.config.weapons[id];
       this.config.weapons[id] = { ...current, shape: { ...current.shape,
         length: base.shape.length * scale, width: base.shape.width * scale,
         headWidth: base.shape.headWidth * scale, headHeight: base.shape.headHeight * scale,
       } };
       this.skins.resize(this.config, id);
-      if (id !== "gun") this.rebuildMelee(id);
+      if (isMeleeWeapon(id)) this.physics.rebuildMelee(id);
     }
-    this.sizePercents[id] = next;
+    this.state.sizePercents[id] = next;
     this.render(this.scene.snapshot().simulationTime); this.onChange();
     return true;
   }
-  /** Replace collision bodies together with their displayed dimensions. */
-  private rebuildMelee(id: WeaponPhotoTarget) {
-    for (const old of [...this.items.values()]) {
-      if (old.id !== id) continue;
-      const anchor = add(old.body.position, rotate(old.originOffset, old.body.angle));
-      const { angle, angularVelocity } = old.body, velocity = { ...old.body.velocity }, active = this.activeItem === old;
-      this.removeItem(old);
-      const item = this.createMelee(old.id, anchor, angle);
-      Matter.Body.setVelocity(item.body, velocity); Matter.Body.setAngularVelocity(item.body, angularVelocity);
-      if (active) this.activeItem = item;
-    }
-  }
-  get travelDistance() {
-    if (!this.holding || !this.body) return 0;
-    const delta = subtract(this.target, add(this.body.position, rotate(this.gripOffset, this.body.angle)));
-    return Math.hypot(delta.x, delta.y);
-  }
-  get motionSpeed() {
-    return Math.max(0, ...[...this.items.values()].map(item => (Math.hypot(item.body.velocity.x, item.body.velocity.y)
-      + Math.abs(item.body.angularVelocity) * this.config.weapons[item.id].shape.length) * 1000 / REFERENCE_STEP));
-  }
-  private keepInside(body: MatterJS.BodyType, target = body.position): Point {
-    const vertices = body.vertices!;
-    const center = { x: Phaser.Math.Clamp(target.x, ROOM.left + 0.5 - Math.min(...vertices.map(v => v.x - body.position.x)),
-      ROOM.right - 0.5 - Math.max(...vertices.map(v => v.x - body.position.x))),
-    y: Phaser.Math.Clamp(target.y, ROOM.top + 0.5 - Math.min(...vertices.map(v => v.y - body.position.y)),
-      ROOM.bottom - 0.5 - Math.max(...vertices.map(v => v.y - body.position.y))) };
-    Matter.Body.setPosition(body, center); return center;
-  }
-  beforeStep(_delta: number, remainingSlices: number) {
-    for (const item of this.items.values()) item.previous = { position: { ...item.body.position }, angle: item.body.angle };
-    if (this.holding && this.body && this.grip) {
-      const current = add(this.body.position, rotate(this.gripOffset, this.body.angle));
-      const anchor = add(current, multiply(subtract(this.target, current), 1 / remainingSlices));
-      if (this.mode === "bat") { Matter.Body.setAngle(this.body, this.heldAngle); Matter.Body.setAngularVelocity(this.body, 0); }
-      this.grip.pointA = anchor; this.grip.pointB = rotate(this.gripOffset, this.body.angle); this.grip.angleB = this.body.angle;
-    }
-  }
+  beforeStep(delta: number, remainingSlices: number) { this.physics.beforeStep(delta, remainingSlices); }
   beforeSolve(targets: ReadonlyMap<MatterJS.BodyType, ContactMotion>) {
-    this.targetMotion = targets;
-    for (const item of this.items.values()) {
-      item.motion = captureMotion(item.body, item.body.deltaTime);
-    }
+    this.collisions.beforeSolve(targets);
+    this.physics.beforeSolve();
   }
   afterStep(delta: number, time: number) {
-    for (const item of this.items.values()) {
-      const body = item.body, limit = this.config.weapons[item.id].physics.maxAngularSpeed * REFERENCE_STEP / 1000;
-      Matter.Body.setAngularVelocity(body, Phaser.Math.Clamp(body.angularVelocity, -limit, limit));
-    }
-    if (this.body && this.holding) {
-      if (this.mode === "bat") { Matter.Body.setAngle(this.body, this.heldAngle); Matter.Body.setAngularVelocity(this.body, 0); }
-      if (this.grip) {
-        this.grip.pointB = rotate(this.gripOffset, this.body.angle); this.grip.angleB = this.body.angle;
-        this.keepInside(this.body, subtract(this.grip.pointA, this.grip.pointB));
-        this.grip.pointA = add(this.body.position, this.grip.pointB);
-      }
-    }
-    for (const item of this.items.values()) {
-      this.keepInside(item.body);
-      if (item.previous) this.melee(item, delta, time);
-    }
-    this.stepProjectiles(delta, time);
+    this.physics.afterStep(item => this.collisions.stepItem(item, delta, time));
+    this.projectiles.step(delta, time);
     this.finishers.step(delta, time);
   }
-  private melee(item: MeleeItem, delta: number, time: number) {
-    const skin = this.skins.get(item.id);
-    if (skin) { this.meleeSkin(item, skin, delta, time); return; }
-    const weapon = item.id, definition = this.config.weapons[weapon], body = item.body, previous = item.previous!;
-    const samples: { local: Point; radius: number; tip: number }[] = [];
-    const shape = definition.shape;
-    if (weapon === "bat") {
-      const count = Math.ceil(shape.length / (shape.width * 0.75));
-      for (let i = 0; i <= count; i++) samples.push({ local: { x: shape.length * i / count, y: 0 }, radius: shape.width / 2, tip: i / count });
-    } else {
-      const radius = Math.min(shape.headWidth, shape.headHeight) / 2, span = shape.headHeight / 2 - radius;
-      for (const y of [-span, 0, span]) samples.push({ local: { x: shape.length, y }, radius, tip: 1 });
-    }
-    const motion = samples.map(sample => {
-      const local = add(item.originOffset, sample.local);
-      return { ...sample, start: add(previous.position, rotate(local, previous.angle)), end: add(body.position, rotate(local, body.angle)) };
-    });
-    const minX = Math.min(...motion.map(s => Math.min(s.start.x, s.end.x) - s.radius));
-    const maxX = Math.max(...motion.map(s => Math.max(s.start.x, s.end.x) + s.radius));
-    const minY = Math.min(...motion.map(s => Math.min(s.start.y, s.end.y) - s.radius));
-    const maxY = Math.max(...motion.map(s => Math.max(s.start.y, s.end.y) + s.radius));
-    const contacts = new Set<string>();
-    for (const actor of [...this.scene.actors]) {
-      if (!actor.lifecycle.interactive && !(actor.lifecycle.state === "bursting" && definition.damage.hitDebris)) continue;
-      let best: Contact | undefined;
-      actor.doll.parts.forEach((part, index) => {
-        const bounds = part.body.bounds;
-        if (bounds.min.x > maxX || bounds.max.x < minX || bounds.min.y > maxY || bounds.max.y < minY) return;
-        for (const sample of motion) {
-          const t = sweepCircle(sample.start, sample.end, sample.radius, part.body.vertices!);
-          if (t === null) continue;
-          const displacement = subtract(sample.end, sample.start);
-          const point = add(sample.start, multiply(displacement, t)), source = item.motion, peer = this.targetMotion?.get(part.body);
-          const surface = weapon === "hammer" ? circleContact(point, part.body.vertices!) : undefined;
-          const position = surface?.position ?? point;
-          let velocity = source ? contactVelocity(source, position)
-            : multiply(displacement, 1000 / delta);
-          if (weapon === "hammer" && this.holding && this.body === body) {
-            // Grip constraints move the hammer after beforeSolve. Include that translation
-            // and rotation instead of requiring a pre-existing angular velocity.
-            const linear = multiply(subtract(body.position, previous.position), 1000 / delta);
-            const angular = (body.angle - previous.angle) * 1000 / delta;
-            velocity = contactVelocity({ ...linear, angular, center: body.position }, position);
-          }
-          const relative = subtract(velocity, peer ? contactVelocity(peer, position)
-            : multiply(part.body.velocity, 1000 / REFERENCE_STEP));
-          // Pointer projection supplies the held bat's translation after the solver.
-          if (weapon === "bat" && this.holding && this.body === body) Object.assign(relative, multiply(displacement, 1000 / delta));
-          const speed = surface ? closingSpeed(relative, surface.normal) : Math.hypot(relative.x, relative.y);
-          // Keep raw damage here: the screen cap takes priority over the JSON cap.
-          const damage = meleeDamage(definition, speed, sample.tip, -1);
-          if (damage <= 0 || (best && damage <= best.damage)) continue;
-          best = { actor, part: index, position, direction: surface?.normal ?? unit(relative), speed, damage };
-        }
-      });
-      if (!best) continue;
-      this.meleeContact(item, best, contacts, time);
-    }
-    this.updateContacts(body, contacts);
-  }
-  private meleeSkin(item: MeleeItem, skin: WeaponSkin, delta: number, time: number) {
-    const { body, previous } = item, definition = this.config.weapons[item.id], shape = definition.shape;
-    let pieces = skin.pieces;
-    // A hammer still strikes with its head; its skin does not turn the handle into a weapon head.
-    if (item.id === "hammer") {
-      const x = shape.length - shape.headWidth / 2, y = shape.headHeight / 2;
-      pieces = pieces.map(piece => clipPolygon(piece, [{ x, y: -y }, { x: x + shape.headWidth, y: -y },
-        { x: x + shape.headWidth, y }, { x, y }])).filter(piece => Math.abs(polygonArea(piece)) > 0.001);
-    }
-    const contacts = new Set<string>(), slices = Math.max(1, Math.min(16, Math.ceil(Math.abs(body.angle - previous!.angle) / 0.025)));
-    for (const actor of [...this.scene.actors]) {
-      if (!actor.lifecycle.interactive && !(actor.lifecycle.state === "bursting" && definition.damage.hitDebris)) continue;
-      let best: Contact | undefined;
-      for (let index = 0; index < actor.doll.parts.length; index++) {
-        const target = actor.doll.parts[index].body;
-        for (let slice = 0; slice < slices; slice++) {
-          const t0 = slice / slices, t1 = (slice + 1) / slices;
-          const startCenter = add(previous!.position, multiply(subtract(body.position, previous!.position), t0));
-          const endCenter = add(previous!.position, multiply(subtract(body.position, previous!.position), t1));
-          const angle = previous!.angle + (body.angle - previous!.angle) * t0;
-          for (const piece of pieces) {
-            const vertices = piece.map(p => add(startCenter, rotate(add(item.originOffset, p), angle)));
-            const center = multiply(vertices.reduce(add, { x: 0, y: 0 }), 1 / vertices.length);
-            const angular = (body.angle - previous!.angle) / slices;
-            const translation = add(subtract(endCenter, startCenter), subtract(rotate(subtract(center, startCenter), angular), subtract(center, startCenter)));
-            const hitTime = sweepConvex(vertices, translation, target.vertices!); if (hitTime === null) continue;
-            const point = add(center, multiply(translation, hitTime)), surface = circleContact(point, target.vertices!);
-            const position = surface.position, source = item.motion, peer = this.targetMotion?.get(target);
-            const movement = multiply(subtract(body.position, previous!.position), 1000 / delta);
-            const rotation = (body.angle - previous!.angle) * 1000 / delta;
-            const velocity = this.holding && this.body === body || !source
-              ? contactVelocity({ ...movement, angular: rotation, center: body.position }, position)
-              : contactVelocity(source, position);
-            const relative = subtract(velocity, peer ? contactVelocity(peer, position) : multiply(target.velocity, 1000 / REFERENCE_STEP));
-            const speed = item.id === "hammer" ? closingSpeed(relative, surface.normal) : Math.hypot(relative.x, relative.y);
-            const local = subtract(rotate(subtract(position, body.position), -body.angle), item.originOffset);
-            const damage = meleeDamage(definition, speed, local.x / shape.length, -1);
-            if (damage <= 0 || (best && damage <= best.damage)) continue;
-            best = { actor, part: index, position, direction: item.id === "hammer" ? surface.normal : unit(relative), speed, damage };
-          }
-        }
-      }
-      if (!best) continue;
-      this.meleeContact(item, best, contacts, time);
-    }
-    this.updateContacts(body, contacts);
-  }
-  private meleeContact(item: MeleeItem, contact: Contact, contacts: Set<string>, time: number) {
-    const key = `${item.body.id}:${contact.actor.id}`;
-    contacts.add(key);
-    if (this.touching.has(key) || time - (this.lastHit.get(key) ?? -Infinity) < this.config.weapons[item.id].damage.hitCooldownMs) return;
-    this.lastHit.set(key, time);
-    this.hit(item.id, contact, time);
-  }
-  private updateContacts(body: MatterJS.BodyType, contacts: Set<string>) {
-    for (const key of this.touching) if (key.startsWith(`${body.id}:`)) this.touching.delete(key);
-    for (const key of contacts) this.touching.add(key);
-  }
-  private hit(weapon: WeaponId, contact: Contact, time: number, bullet?: AttachedBullet) {
-    const definition = this.config.weapons[weapon], actor = contact.actor;
-    this.signal(definition.signals.hit, actor.id, contact.position, contact.direction, time, contact.speed, "collision.normal");
-    if (actor.lifecycle.interactive) {
-      actor.interact();
-      const result = this.scene.receiveHit({ lifeId: actor.id, hitId: ++this.nextHit, source: "weapon", weaponId: weapon,
-        part: contact.part, position: contact.position, strength: contact.speed, damage: contact.damage, time });
-      if (result?.lethal) { this.finishers.start(actor, weapon, definition, contact.direction, time, bullet); return; }
-    }
-    if (definition.damage.knockback === 0) return;
-    const impulse = multiply(contact.direction, definition.damage.knockback * REFERENCE_STEP / 1000);
-    const bodies = actor.lifecycle.interactive ? actor.doll.bodies : [actor.doll.parts[contact.part].body];
-    if (weapon === "bat") {
-      this.batKnockbacks.push({ actor, bodies, impulse, interactive: actor.lifecycle.interactive }); return;
-    }
-    for (const body of bodies) Matter.Body.setVelocity(body, add(body.velocity, impulse));
-  }
-  /** Apply the bat's launch once after all adaptive slices, so later slices of the
-   * same pointer swing cannot immediately cancel the configured kick. */
-  flushKnockback() {
-    for (const hit of this.batKnockbacks) {
-      // A later hit in this tick may have started a finisher or removed the target.
-      if (!this.scene.actors.includes(hit.actor) || hit.actor.lifecycle.interactive !== hit.interactive) continue;
-      for (const body of hit.bodies) if (!body.isStatic) Matter.Body.setVelocity(body, add(body.velocity, hit.impulse));
-    }
-    this.batKnockbacks.length = 0;
-  }
+  flushKnockback() { this.combat.flushKnockback(); }
   signal(name: string, owner: number, position: Point, direction: Point, time: number, speed: number, fallback: string) {
-    this.effects.emit(name, position, direction, time);
-    this.scene.audio.signal(name, owner, time, speed, fallback);
+    this.feedback.emit(name, owner, position, direction, time, speed, fallback);
   }
-  fire() {
-    if (this.mode !== "gun" || this.scene.paused || !this.loaded) return false;
-    const definition = this.config.weapons.gun, p = definition.projectile, time = this.scene.snapshot().simulationTime;
-    const counts = new Map<number, number>();
-    for (const bullet of this.projectiles) counts.set(bullet.gunId, (counts.get(bullet.gunId) ?? 0) + 1);
-    let fired = false;
-    for (const gun of this.guns) {
-      if (time - gun.lastShot + 1e-6 < p.fireIntervalMs || (counts.get(gun.id) ?? 0) >= p.maxCount) continue;
-      gun.lastShot = time;
-      const direction = unit(subtract(this.target, gun.position)), position = add(gun.position, multiply(direction, definition.shape.length / 2 + p.radius));
-      this.projectiles.push({ id: ++this.nextBullet, gunId: gun.id, position, direction, since: time, radius: p.radius, color: p.color, texture: this.bulletTexture });
-      this.signal(definition.signals.fire, -gun.id, position, direction, time, p.speed, "collision.wall"); fired = true;
-    }
-    return fired;
+  fire() { return this.projectiles.fire(); }
+  render(time: number) { this.renderer.render(time); }
+  snapshot() {
+    return { mode: this.mode, loaded: this.loaded, holding: this.state.holding, gunOrigin: { ...this.gunOrigin },
+      sizePercents: { ...this.state.sizePercents }, heldBodyId: this.heldBody?.id ?? null,
+      guns: this.state.guns.map(gun => ({ id: gun.id, position: { ...gun.position } })),
+      items: [...this.state.items.values()].map(item => ({ id: item.id, bodyId: item.body.id, position: { ...item.body.position }, angle: item.body.angle })),
+      ...this.collisions.snapshot(),
+      projectiles: this.state.projectiles.map(bullet => ({ id: bullet.id, gunId: bullet.gunId, position: { ...bullet.position }, direction: { ...bullet.direction } })),
+      finishers: this.finishers.snapshot(), effects: this.effects.snapshot(), skins: this.skins.snapshot() };
   }
-  private stepProjectiles(delta: number, time: number) {
-    const definition = this.config.weapons.gun, settings = definition.projectile;
-    for (const bullet of [...this.projectiles]) {
-      const start = bullet.position, end = add(start, multiply(bullet.direction, settings.speed * delta / 1000));
-      const travel = subtract(end, start);
-      const skin = this.skins.get("bullet"), angle = Math.atan2(bullet.direction.y, bullet.direction.x);
-      const pieces = skin?.pieces.map(piece => piece.map(p => rotate(p, angle)));
-      const outline = pieces?.flat();
-      let wallTime = 1;
-      for (const [axis, low, high] of [["x", ROOM.left - (outline ? Math.min(...outline.map(p => p.x)) : -bullet.radius), ROOM.right - (outline ? Math.max(...outline.map(p => p.x)) : bullet.radius)],
-        ["y", ROOM.top - (outline ? Math.min(...outline.map(p => p.y)) : -bullet.radius), ROOM.bottom - (outline ? Math.max(...outline.map(p => p.y)) : bullet.radius)]] as const) {
-        if (travel[axis] > 0) wallTime = Math.min(wallTime, (high - start[axis]) / travel[axis]);
-        else if (travel[axis] < 0) wallTime = Math.min(wallTime, (low - start[axis]) / travel[axis]);
-      }
-      let target: { contact: Contact; t: number } | undefined;
-      for (const actor of this.scene.actors) {
-        if (!actor.lifecycle.interactive && !(actor.lifecycle.state === "bursting" && definition.damage.hitDebris)) continue;
-        actor.doll.parts.forEach((part, index) => {
-          const times = pieces?.map(piece => sweepConvex(piece.map(p => add(start, p)), travel, part.body.vertices!))
-            .filter((t): t is number => t !== null);
-          const t = times ? times.length ? Math.min(...times) : null : sweepCircle(start, end, bullet.radius, part.body.vertices!);
-          if (t === null || t > wallTime || (target && t >= target.t)) return;
-          target = { t, contact: { actor, part: index, position: add(start, multiply(travel, t)), direction: bullet.direction,
-            speed: settings.speed, damage: settings.damage } };
-        });
-      }
-      if (target) {
-        bullet.position = { ...target.contact.position }; this.hit("gun", target.contact, time, bullet);
-        this.projectiles.splice(this.projectiles.indexOf(bullet), 1);
-      } else if (wallTime < 1 || time - bullet.since >= settings.lifetimeMs) this.projectiles.splice(this.projectiles.indexOf(bullet), 1);
-      else bullet.position = end;
-    }
-  }
-  render(time: number) {
-    const g = this.graphics; g.clear();
-    this.skins.beginRender();
-    for (const item of this.items.values()) {
-      if (this.skins.draw(`item:${item.body.id}`, item.id, add(item.body.position, rotate(item.originOffset, item.body.angle)), item.body.angle)) continue;
-      const definition = this.config.weapons[item.id];
-      const parts = item.id === "hammer" ? item.body.parts.slice(1) : [item.body];
-      parts.forEach((body, index) => g.fillStyle(index ? definition.shape.headColor : definition.shape.color).fillPoints(body.vertices!, true));
-    }
-    if (this.holding && this.body) {
-      const point = add(this.body.position, rotate(this.gripOffset, this.body.angle));
-      g.lineStyle(2, 0xffffff).strokeCircle(point.x, point.y, 7);
-    }
-    for (const gun of this.guns) {
-      const d = this.config.weapons.gun, angle = Math.atan2(this.target.y - gun.position.y, this.target.x - gun.position.x);
-      if (this.skins.draw(`gun:${gun.id}`, "gun", gun.position, angle)) continue;
-      const rect = (x: number, y: number, width: number, height: number) => {
-        const points = [{ x, y }, { x: x + width, y }, { x: x + width, y: y + height }, { x, y: y + height }].map(p => add(gun.position, rotate(p, angle)));
-        g.fillStyle(d.shape.color).fillPoints(points, true);
-      };
-      rect(-d.shape.length / 2, -d.shape.width / 2, d.shape.length, d.shape.width);
-      rect(-d.shape.length / 2, 0, d.shape.width * 0.65, d.shape.width * 1.5);
-    }
-    const bullets = [...this.projectiles, ...this.finishers.bullets()];
-    this.bulletImages.forEach(image => image.setVisible(false));
-    let imageIndex = 0;
-    for (const [index, bullet] of bullets.entries()) {
-      const direction = "direction" in bullet ? bullet.direction as Point : { x: 1, y: 0 };
-      if (this.skins.draw(`bullet:${index}`, "bullet", bullet.position, Math.atan2(direction.y, direction.x))) continue;
-      if (bullet.texture && this.scene.textures.exists(bullet.texture)) {
-        const image = this.bulletImages[imageIndex] ?? this.scene.add.image(0, 0, bullet.texture).setDepth(51);
-        this.bulletImages[imageIndex++] = image;
-        image.setTexture(bullet.texture).setPosition(bullet.position.x, bullet.position.y).setDisplaySize(bullet.radius * 2, bullet.radius * 2).setVisible(true);
-      } else g.fillStyle(bullet.color).fillCircle(bullet.position.x, bullet.position.y, bullet.radius);
-    }
-    this.skins.endRender();
-    this.effects.render(time);
-  }
-  snapshot() { return { mode: this.mode, loaded: this.loaded, holding: this.holding, gunOrigin: { ...this.gunOrigin },
-    sizePercents: { ...this.sizePercents },
-    heldBodyId: this.heldBody?.id ?? null,
-    guns: this.guns.map(gun => ({ id: gun.id, position: { ...gun.position } })),
-    items: [...this.items.values()].map(item => ({ id: item.id, bodyId: item.body.id, position: { ...item.body.position }, angle: item.body.angle })),
-    trackedTargets: this.lastHit.size,
-    trackedTargetIds: [...new Set([...this.lastHit.keys()].map(key => Number(key.split(":")[1])))],
-    projectiles: this.projectiles.map(bullet => ({ id: bullet.id, gunId: bullet.gunId, position: { ...bullet.position }, direction: { ...bullet.direction } })),
-    finishers: this.finishers.snapshot(), effects: this.effects.snapshot(), skins: this.skins.snapshot() }; }
-  forget(actor: RagdollActor) {
-    for (const key of this.lastHit.keys()) if (key.endsWith(`:${actor.id}`)) this.lastHit.delete(key);
-    for (const key of this.touching) if (key.endsWith(`:${actor.id}`)) this.touching.delete(key);
-    this.finishers.forget(actor);
-  }
-  private removeItem(item: MeleeItem) {
-    this.scene.matter.world.remove(item.body, true); this.items.delete(item.body.id);
-    for (const key of this.lastHit.keys()) if (key.startsWith(`${item.body.id}:`)) this.lastHit.delete(key);
-    for (const key of this.touching) if (key.startsWith(`${item.body.id}:`)) this.touching.delete(key);
-    // Compound weapons leave child-body pairs in Matter's cache until its next step.
-    forgetBodyContacts(this.scene.matter.world, new Set([item.body]));
-    if (this.activeItem === item) this.activeItem = undefined;
-  }
+  forget(actor: RagdollActor) { this.collisions.forget(actor); this.finishers.forget(actor); }
   deleteHeld() {
-    if (this.scene.paused || !this.holding || !this.activeItem) return false;
-    const item = this.activeItem; this.cancel(); this.removeItem(item); this.onChange(); return true;
-  }
-  private clearGuns() {
-    for (const gun of this.guns) this.scene.audio.forget(-gun.id);
-    this.guns.length = 0;
+    if (this.scene.paused || !this.state.holding || !this.state.activeItem) return false;
+    const item = this.state.activeItem;
+    this.cancel(); this.physics.remove(item); this.onChange(); return true;
   }
   clearWeapons() {
     if (this.scene.paused || !this.loaded) return false;
-    this.cancel(); this.removeBody(); this.clearGuns(); this.projectiles.length = 0;
-    this.bulletImages.forEach(image => image.setVisible(false));
-    this.skins.resetImages();
-    this.batKnockbacks.length = 0; this.mode = "hand"; this.onChange(); return true;
+    this.cancel(); this.physics.removeAll(); this.projectiles.reset(); this.renderer.clearImages();
+    this.skins.resetImages(); this.combat.reset(); this.state.mode = "hand";
+    this.onChange(); return true;
   }
-  private removeBody() { for (const item of this.items.values()) this.removeItem(item); this.activeItem = undefined; }
   reset() {
     this.skins.resetImages();
-    this.cancel(); this.removeBody(); this.projectiles.length = 0; this.finishers.reset(); this.effects.reset();
-    this.clearGuns();
-    this.batKnockbacks.length = 0;
-    this.lastHit.clear(); this.touching.clear(); this.graphics.clear();
-    for (const image of this.bulletImages) image.destroy(); this.bulletImages = [];
-    this.mode = "hand"; this.onChange();
+    this.cancel(); this.physics.removeAll(); this.projectiles.reset(); this.finishers.reset(); this.effects.reset();
+    this.combat.reset(); this.collisions.reset(); this.renderer.reset();
+    this.state.mode = "hand"; this.onChange();
   }
   destroy() {
-    this.abort.abort(); this.cancel(); this.removeBody(); this.projectiles.length = 0; this.finishers.reset();
-    this.clearGuns();
-    this.batKnockbacks.length = 0;
-    this.lastHit.clear(); this.touching.clear();
-    this.bulletImages.forEach(image => image.destroy()); this.effects.destroy(); this.graphics.destroy(); this.skins.destroy();
-    for (const key of this.textures) this.scene.textures.remove(key);
+    this.abort.abort(); this.cancel(); this.physics.removeAll(); this.projectiles.destroy(); this.finishers.reset();
+    this.combat.reset(); this.collisions.reset(); this.effects.destroy(); this.renderer.destroy(); this.skins.destroy();
   }
 }

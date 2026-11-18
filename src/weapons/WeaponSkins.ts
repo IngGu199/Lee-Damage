@@ -2,31 +2,22 @@ import Phaser from "phaser";
 import type { AppliedPhoto } from "../photo/PhotoSession";
 import { photoPieces } from "../photo/PhotoGeometry";
 import { PHOTO_SIZE, type PhotoMask } from "../photo/PhotoTransform";
-import type { WeaponConfig, WeaponId } from "./WeaponConfig";
+import type { WeaponConfig } from "./WeaponConfig";
+import { PROJECTILE_WEAPON_ID, weaponRegistration } from "./WeaponRegistry";
+import type { WeaponPhotoTarget } from "./WeaponTypes";
+export type { WeaponPhotoTarget } from "./WeaponTypes";
 import { add, rotate, type Point } from "./geometry";
 
-export type WeaponPhotoTarget = WeaponId | "bullet";
 interface Frame { center: Point; size: number; points: Point[] }
 export interface WeaponSkin extends Frame { texture: string; pieces: Point[][]; photo: AppliedPhoto }
 
 export function weaponFrame(config: WeaponConfig, id: WeaponPhotoTarget): Frame {
-  const d = config.weapons[id === "bullet" ? "gun" : id], s = d.shape;
+  const d = config.weapons[id === "bullet" ? PROJECTILE_WEAPON_ID : id];
   let points: Point[];
   if (id === "bullet") {
     const r = d.projectile.radius;
     points = [{ x: -r, y: -r }, { x: r, y: -r }, { x: r, y: r }, { x: -r, y: r }];
-  } else if (id === "bat") points = [{ x: 0, y: -s.width / 2 }, { x: s.length, y: -s.width / 2 },
-    { x: s.length, y: s.width / 2 }, { x: 0, y: s.width / 2 }];
-  else if (id === "hammer") {
-    const left = s.length - s.headWidth / 2, right = s.length + s.headWidth / 2;
-    points = [{ x: 0, y: -s.width / 2 }, { x: left, y: -s.width / 2 }, { x: left, y: -s.headHeight / 2 },
-      { x: right, y: -s.headHeight / 2 }, { x: right, y: s.headHeight / 2 }, { x: left, y: s.headHeight / 2 },
-      { x: left, y: s.width / 2 }, { x: 0, y: s.width / 2 }];
-  } else {
-    const left = -s.length / 2, right = s.length / 2, grip = left + s.width * 0.65;
-    points = [{ x: left, y: -s.width / 2 }, { x: right, y: -s.width / 2 }, { x: right, y: s.width / 2 },
-      { x: grip, y: s.width / 2 }, { x: grip, y: s.width * 1.5 }, { x: left, y: s.width * 1.5 }];
-  }
+  } else points = weaponRegistration(id).behavior.frame(d);
   const xs = points.map(p => p.x), ys = points.map(p => p.y);
   const center = { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 };
   return { center, size: Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 0.94, points };

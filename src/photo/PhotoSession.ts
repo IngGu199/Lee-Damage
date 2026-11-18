@@ -4,6 +4,8 @@ export interface PhotoDraft {
   source: HTMLCanvasElement;
   name: string;
   libraryPath?: string;
+  /** Packaged/cutout photos keep their framing when detecting or selecting a face. */
+  preserveFraming?: boolean;
   faces: Point[][];
   faceIndex: number;
   edit: PhotoTransform;

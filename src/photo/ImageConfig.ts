@@ -1,9 +1,12 @@
 import { safeAssetPath } from "../weapons/WeaponConfig";
+import { WEAPON_IDS } from "../weapons/WeaponRegistry";
 
-export const IMAGE_TARGETS = ["face", "bat", "hammer", "gun", "bullet"] as const;
+export const IMAGE_TARGETS = ["face", ...WEAPON_IDS, "bullet"] as const;
 export type ImageTarget = typeof IMAGE_TARGETS[number];
 export type ImageConfig = { version: 1 } & Record<ImageTarget, string | null>;
-export const DEFAULT_IMAGE_CONFIG: ImageConfig = { version: 1, face: null, bat: null, hammer: null, gun: null, bullet: null };
+export const DEFAULT_IMAGE_CONFIG = { version: 1,
+  ...Object.fromEntries(IMAGE_TARGETS.map(target => [target, null])),
+} as ImageConfig;
 
 /** Missing targets use shapes. Never execute config values or fetch outside the app. */
 export function parseImageConfig(input: unknown): ImageConfig {

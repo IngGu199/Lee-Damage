@@ -15,6 +15,7 @@ import { separateBodies } from "./SelfCollision";
 import { BODY_CONTACT_PHYSICS, DEBRIS_PHYSICS, limitBodyReaction, softenBodyContact } from "./DebrisPhysics";
 import type { AppliedPhoto } from "../photo/PhotoSession";
 import { WeaponSystem } from "../weapons/WeaponSystem";
+import { isRangedWeapon } from "../weapons/WeaponRegistry";
 import { damageLimit, type ToolId } from "../weapons/WeaponConfig";
 
 interface BodyContact {
@@ -81,7 +82,7 @@ export class PhysicsScene extends Phaser.Scene {
     canvas.tabIndex = 0;
     canvas.setAttribute("aria-label", "물리 실험실. 1 손, 2 방망이 추가, 3 망치 추가, 4 총 추가. 잡은 방망이는 우클릭마다 회전. X 잡은 무기 삭제, C 무기 모두 삭제. T 인형 추가, B 강제 폭파, R 재배치, 스페이스 일시정지.");
     this.pointer = new PointerController(canvas, this.matter.world, () => this.doll,
-      () => this.paused || this.photoEditing || this.weapons?.mode === "gun" || Boolean(this.weapons?.grip),
+      () => this.paused || this.photoEditing || Boolean(this.weapons && isRangedWeapon(this.weapons.mode)) || Boolean(this.weapons?.grip),
       doll => {
         const actor = this.actors.find(actor => actor.doll === doll);
         if (!actor) return;

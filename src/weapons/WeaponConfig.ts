@@ -1,9 +1,9 @@
 import { capDamage, type DamageHit } from "../game/DamageSystem";
 import { DAMAGE_RULES } from "../game/damageConfig";
 
-export const WEAPON_IDS = ["bat", "hammer", "gun"] as const;
-export type WeaponId = typeof WEAPON_IDS[number];
-export type ToolId = "hand" | WeaponId;
+import { WEAPON_IDS, WEAPON_REGISTRY, type WeaponId } from "./WeaponRegistry";
+export { WEAPON_IDS };
+export type { WeaponId, ToolId } from "./WeaponRegistry";
 export interface WeaponDefinition {
   label: string;
   handling: { rotateStepDegrees: number };
@@ -90,9 +90,9 @@ export function parseWeaponConfig(input: unknown): WeaponConfig {
   if (root.weapons !== undefined && (!root.weapons || typeof root.weapons !== "object" || Array.isArray(root.weapons)))
     throw new Error("weapons: 객체가 필요합니다.");
   for (const id of Object.keys(root.weapons ?? {})) if (!WEAPON_IDS.includes(id as WeaponId)) throw new Error(`weapons.${id}: 알 수 없는 무기입니다.`);
-  const weapons = Object.fromEntries(WEAPON_IDS.map(id => {
+  const weapons = Object.fromEntries(WEAPON_REGISTRY.map(({ id, label }) => {
     const signals = Object.fromEntries(Object.keys(common.signals).map(kind => [kind, `weapon.${id}.${kind}`])) as WeaponDefinition["signals"];
-    const definition = mergeSettings({ ...structuredClone(shared), label: { bat: "야구방망이", hammer: "망치", gun: "총" }[id], signals }, root.weapons?.[id], `weapons.${id}`);
+    const definition = mergeSettings({ ...structuredClone(shared), label, signals }, root.weapons?.[id], `weapons.${id}`);
     for (const [key, value] of Object.entries(definition.signals))
       if (!/^weapon\.[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$/.test(value)) throw new Error(`weapons.${id}.signals.${key}: weapon.무기.신호 형식이 필요합니다.`);
     if (definition.handling.rotateStepDegrees <= 0 || definition.handling.rotateStepDegrees > 180 ||
@@ -111,12 +111,9 @@ export function parseWeaponConfig(input: unknown): WeaponConfig {
   return { version: 1, defaults: shared, weapons, collision: mergeSettings(collisionLimits, root.collision, "weapons.collision") };
 }
 
-export const DEFAULT_WEAPON_CONFIG = parseWeaponConfig({ version: 1, weapons: {
-  bat: { damage: { knockback: 2200 } },
-  hammer: { shape: { length: 145, width: 18, angle: 0 }, physics: { restitution: 0.02, friction: 0.15, frictionStatic: 0.3 },
-    damage: { amount: 150, handleMultiplier: 1, tipMultiplier: 1, knockback: 60 } },
-  gun: { shape: { length: 64, width: 22, angle: 0, color: 0x556274 }, damage: { amount: 0 } },
-} });
+export const DEFAULT_WEAPON_CONFIG = parseWeaponConfig({ version: 1,
+  weapons: Object.fromEntries(WEAPON_REGISTRY.map(weapon => [weapon.id, weapon.defaults])),
+});
 
 export async function loadSettings<T>(path: string, fallback: T, parse: (value: unknown) => T, signal: AbortSignal): Promise<T> {
   try {
