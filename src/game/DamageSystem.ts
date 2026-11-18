@@ -48,7 +48,7 @@ export function damageFeedback(hit: DamageHit): DamageFeedback {
   return { damage, intensity: damageIntensity(damage) };
 }
 
-/** One shared hit path. Every actual HP loss starts a simulation-time invulnerability window. */
+/** Shared HP/injury path. Bullets bypass and do not start the collision/melee immunity window. */
 export class DamageSystem {
   readonly health = new HealthState();
   readonly progression = new InjuryProgression();
@@ -68,12 +68,15 @@ export class DamageSystem {
       !Number.isFinite(hit.position.x + hit.position.y)) return null;
     this.lastHit.set(hit.source, hit.hitId);
     this.lastTime = hit.time;
-    if (this.invulnerable(hit.time)) return null;
+    // Gun hits are individual projectiles, consumed on contact by WeaponSystem.
+    // Keep duplicate/stale-hit checks and per-hit damage caps for every source.
+    const projectile = hit.source === "weapon" && hit.weaponId === "gun";
+    if (!projectile && this.invulnerable(hit.time)) return null;
     const impact = damageFeedback(hit), amount = Math.min(impact.damage, Math.max(0, maxDamage));
     if (!Number.isFinite(amount) || amount <= 0) return null;
     const lostHp = this.health.lose(amount);
     if (!lostHp) return null;
-    this.invulnerableUntil = hit.time + DAMAGE_RULES.invulnerabilityMs;
+    if (!projectile) this.invulnerableUntil = hit.time + DAMAGE_RULES.invulnerabilityMs;
     return { hit, impact, lostHp, hp: this.health.hp, lethal: this.health.dead,
       injuries: this.progression.advance(this.health.totalDamage), variant: this.variant };
   }

@@ -22,11 +22,11 @@ test("closing speed curve excludes weak, invalid and tangential motion and caps 
   expect(collisionDamage(600, 0)).toBe(0);
 });
 
-test("every damage source is blocked for 300ms after HP loss, including stronger simultaneous hits", () => {
+test("collision and melee damage are blocked for 300ms after HP loss, including stronger simultaneous hits", () => {
   const damage = new DamageSystem();
   expect(damage.apply(hit())?.lostHp).toBe(20);
   expect(damage.apply(hit({ hitId: 2, part: 7, time: 10, strength: 4000 }))).toBeNull();
-  expect(damage.apply(hit({ hitId: 3, source: "weapon", damage: 90, time: 299.999 }))).toBeNull();
+  expect(damage.apply(hit({ hitId: 3, source: "weapon", weaponId: "bat", damage: 90, time: 299.999 }))).toBeNull();
   expect(damage.health.lostHp).toBe(20);
   expect(damage.apply(hit({ hitId: 4, time: 300, strength: 4000 }))?.lostHp).toBe(180);
   expect(damage.apply(hit({ hitId: 5, time: 599.999, source: "weapon", damage: 35 }))).toBeNull();
@@ -34,6 +34,43 @@ test("every damage source is blocked for 300ms after HP loss, including stronger
   // A hit suppressed during immunity stays consumed; it cannot be replayed later.
   expect(damage.apply(hit({ hitId: 5, time: 1000, source: "weapon", damage: 35 }))).toBeNull();
   expect(damage.health.hp).toBe(765);
+});
+
+test("bullets bypass existing immunity without extending it and each hit is consumed once", () => {
+  const damage = new DamageSystem();
+  expect(damage.apply(hit())?.lostHp).toBe(20);
+  const bullet = (hitId: number, time: number) => hit({ source: "weapon", weaponId: "gun", damage: 120, hitId, time });
+  expect(damage.apply(bullet(1, 0))?.lostHp).toBe(120);
+  expect(damage.apply(bullet(1, 0))).toBeNull();
+  expect(damage.apply(bullet(2, 0))?.lostHp).toBe(120);
+  expect(damage.apply(hit({ source: "body", time: 100 }))).toBeNull();
+  expect(damage.apply(hit({ source: "weapon", weaponId: "hammer", hitId: 3, time: 150, damage: 100 }))).toBeNull();
+  expect(damage.apply(bullet(4, 290))?.lostHp).toBe(120);
+  expect(damage.invulnerable(299.999)).toBe(true); expect(damage.invulnerable(300)).toBe(false);
+  expect(damage.apply(hit({ hitId: 2, time: 300 }))?.lostHp).toBe(20);
+  expect(damage.health.hp).toBe(600);
+});
+
+test("bullets do not create immunity and each projectile respects the actual-damage cap", () => {
+  const damage = new DamageSystem();
+  const bullet = (hitId: number, time = 0) => hit({ source: "weapon", weaponId: "gun", damage: 120, hitId, time });
+  for (const id of [1, 2, 3]) expect(damage.apply(bullet(id), 50)?.lostHp).toBe(50);
+  expect(damage.health.hp).toBe(850); expect(damage.invulnerable(0)).toBe(false);
+  expect(damage.apply(bullet(4), 0)).toBeNull();
+  expect(damage.apply(hit())?.lostHp).toBe(20);
+  expect(damage.apply(hit({ source: "body", time: 1 }))).toBeNull();
+  expect(damage.apply(bullet(5, 1), 0)).toBeNull();
+  expect(damage.health.hp).toBe(830);
+});
+
+test("a projectile volley produces a single lethal result and still rejects dead or stale targets", () => {
+  const damage = new DamageSystem(); damage.health.lose(750);
+  const bullet = (hitId: number) => hit({ source: "weapon", weaponId: "gun", damage: 120, hitId });
+  const results = [1, 2, 3, 4].map(id => damage.apply(bullet(id)));
+  expect(results.map(result => result?.lostHp ?? 0)).toEqual([120, 120, 10, 0]);
+  expect(results.filter(result => result?.lethal)).toHaveLength(1);
+  damage.reset(2);
+  expect(damage.apply(bullet(5))).toBeNull(); expect(damage.health.hp).toBe(1000);
 });
 
 test("damage counts only actual HP loss, crosses all injury boundaries and rejects stale hits", () => {

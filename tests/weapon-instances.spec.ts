@@ -177,3 +177,65 @@ test("separate hammers have independent hit cooldowns and X removes compound con
   }, second.bodyId);
   expect(after).toEqual({ tracked: 1, items: 1, stale: false });
 });
+
+const volleyGun = { shape: { length: 64, width: 22 }, damage: { amount: 0, knockback: 0 },
+  projectile: { speed: 2000, damage: 120 } };
+async function prepareVolley(page: Page, count = 3) {
+  return page.evaluate(count => {
+    const s = window.__physicsLab, w = s.weapons, target = { ...s.doll.parts[0].body.position };
+    w.target = { x: target.x - 300, y: target.y };
+    for (let i = 0; i < count; i++) s.selectTool("gun");
+    return { id: s.selectedActor.id, target };
+  }, count);
+}
+
+for (const cap of [180, 50, 0]) {
+  test(`three simultaneous bullets each apply their capped damage when the damage bar is ${cap}`, async ({ page }) => {
+    await open(page, { gun: volleyGun }); await page.evaluate(cap => window.__physicsLab.setMaxDamage(cap), cap);
+    const setup = await prepareVolley(page);
+    await move(page, setup.target); await page.mouse.down(); await page.mouse.up();
+    expect(await page.evaluate(() => window.__physicsLab.weapons.snapshot().projectiles.length)).toBe(3);
+    await steps(page, 24);
+    const result = await page.evaluate(() => ({ hp: window.__physicsLab.damage.health.hp,
+      shots: window.__physicsLab.weapons.snapshot().projectiles.length, immune: window.__physicsLab.damage.invulnerable(window.__physicsLab.snapshot().simulationTime) }));
+    expect(result).toEqual({ hp: 1000 - 3 * Math.min(120, cap), shots: 0, immune: false });
+    await steps(page, 24);
+    expect(await page.evaluate(() => window.__physicsLab.damage.health.hp)).toBe(result.hp);
+  });
+}
+
+test("a real projectile volley bypasses collision immunity without extending its duration", async ({ page }) => {
+  await open(page, { gun: volleyGun }); const setup = await prepareVolley(page);
+  await page.evaluate(() => {
+    const s = window.__physicsLab; s.selectedActor.interact();
+    s.receiveHit({ source: "room", lifeId: s.selectedActor.id, hitId: 1, part: 0,
+      position: { ...s.doll.parts[0].body.position }, strength: 1400, time: s.snapshot().simulationTime });
+  });
+  await move(page, setup.target); await page.mouse.down(); await page.mouse.up(); await steps(page, 24);
+  expect(await page.evaluate(() => ({ hp: window.__physicsLab.damage.health.hp,
+    immune: window.__physicsLab.damage.invulnerable(window.__physicsLab.snapshot().simulationTime) }))).toEqual({ hp: 620, immune: true });
+  await steps(page, 12);
+  expect(await page.evaluate(() => window.__physicsLab.damage.invulnerable(window.__physicsLab.snapshot().simulationTime))).toBe(false);
+});
+
+test("a second volley inside 300ms of the first hit still damages the same doll", async ({ page }) => {
+  await open(page, { gun: volleyGun }); const setup = await prepareVolley(page, 1);
+  await move(page, setup.target); await page.mouse.down(); await page.mouse.up(); await steps(page, 24);
+  expect(await page.evaluate(() => window.__physicsLab.damage.health.hp)).toBe(880);
+  await page.mouse.down(); await page.mouse.up(); await steps(page, 24);
+  expect(await page.evaluate(() => window.__physicsLab.damage.health.hp)).toBe(760);
+});
+
+test("a lethal volley creates only one finisher and one replacement while excess bullets continue flying", async ({ page }) => {
+  await open(page, { gun: volleyGun }); const setup = await prepareVolley(page, 4);
+  await page.evaluate(() => window.__physicsLab.damage.health.lose(750));
+  await move(page, setup.target); await page.mouse.down(); await page.mouse.up(); await steps(page, 24);
+  const result = await page.evaluate(id => {
+    const s = window.__physicsLab, old = s.actors.find(actor => actor.id === id)!;
+    return { hp: old.damage.health.hp, state: old.lifecycle.state, alive: s.livingActors.length,
+      actors: s.actors.length, finishers: s.weapons.snapshot().finishers.length,
+      finishSignals: s.weapons.effects.snapshot().events.filter(event => event === "weapon.gun.finish").length,
+      shots: s.weapons.snapshot().projectiles.length };
+  }, setup.id);
+  expect(result).toEqual({ hp: 0, state: "finishing", alive: 1, actors: 2, finishers: 1, finishSignals: 1, shots: 1 });
+});

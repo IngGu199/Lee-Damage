@@ -47,7 +47,7 @@ export class ImpactAudio {
     if (!this.context) { this.state = "disabled"; this.changed(); return; }
     const appRoot = new URL(import.meta.env.BASE_URL, location.href);
     try {
-      const response = await fetch(new URL("assets/audio/sounds.json", appRoot), { cache: "no-store", signal: this.abort.signal });
+      const response = await fetch(new URL("config/sounds.json", appRoot), { cache: "no-store", signal: this.abort.signal });
       // Vite's SPA fallback answers missing public files with index.html and status 200.
       if (response.status !== 404 && !response.headers.get("content-type")?.includes("text/html")) {
         if (!response.ok) throw new Error(`sounds.json: HTTP ${response.status}`);

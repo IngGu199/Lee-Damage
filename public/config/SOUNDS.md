@@ -1,10 +1,14 @@
-# 충돌 효과음
+# 사운드 설정: sounds.json
+
+설정 파일은 이 문서와 같은 폴더의 [sounds.json](sounds.json)이며, 무기·탄알·이펙트 설정은 [설정 안내](README.md)를 참고한다. 음원 파일은 `public/assets/audio/`에 둔다.
 
 일반 타격음은 `collision.normal`, 벽·바닥 충돌음은 `collision.wall`로 통일한다. 충돌 효과음에 약·중·강 등급은 없다. 다른 인형·잔해와의 접촉은 일반음만, 왼쪽·오른쪽·위쪽 벽과 바닥 접촉은 일반음과 벽음을 함께 재생한다. 각 소리의 속도 구간·음량·쿨다운은 독립적이다. 사망 분리음 `death.burst`는 유지한다.
 
 ## 설정 위치와 파일
 
-`public/assets/audio/sounds.json`을 저장한 뒤 새로고침하면 읽는다. 런타임은 JSON을 생성·수정하지 않는다. 2026-11-17 요청에 따라 기존 3등급 설정을 일반음·벽음으로 한 번 통합했다. 음원 후보는 중복을 제거해 합쳤으며 쿨다운과 사망 설정을 보존했다. 최초 조율값은 다음과 같다.
+`public/config/sounds.json`을 저장한 뒤 새로고침하면 읽는다. 2026-11-18 설정과 안내를 `public/assets/audio/`에서 이 폴더로 옮겼으며, 사용자 JSON의 내용과 음원 위치는 보존했다. `basePath`는 설정 JSON의 위치가 아닌 배포 사이트의 시작 경로를 기준으로 한다. 따라서 기존 `"basePath": "assets/audio/"`와 `"files": ["sfx/others/BOOM.mp3"]`는 계속 `public/assets/audio/sfx/others/BOOM.mp3`를 읽는다. 런타임은 JSON을 생성·수정하지 않는다.
+
+2026-11-17에 기존 3등급 설정을 일반음·벽음으로 통합했을 때의 최초 조율값은 다음과 같다. 현재 사용자 JSON의 실제 값과는 다를 수 있다.
 
 | 이벤트 | speed (px/s) | sound-size (배수) | cooldownMs |
 | --- | --- | --- | --- |
@@ -35,7 +39,43 @@ JSON이 없거나 잘못되면 `src/audio/SoundConfig.ts` 기본값을 사용한
 
 충돌 이벤트에는 `speed`와 `sound-size`가 필수다. `death.burst`는 기존 `volume`으로 재생한다. 예전 `collision.light/medium/heavy`, `collision.wall.light/medium/heavy`, `collision.floor.*` 키는 새 형식으로 바꿔야 한다.
 
-무기 신호 `weapon.bat.hit/finish`, `weapon.hammer.hit/finish`, `weapon.gun.fire/hit/finish/pin/burst`도 지원한다. 무기의 단일 설정에서 `speed`·`sound-size`를 함께 생략하면 고정 음량이고, 함께 지정하거나 배열로 작성하면 기존과 같은 속도별 음량/구간 선택을 사용한다. 전용 설정이 없으면 초기 시제품은 기존 일반음·벽음·분리음의 첫 설정에서 파일·기본 음량·쿨다운을 임시 재사용한다. 임시 연결에는 충돌 전용 속도 구간을 적용하지 않으며 재생 기록은 신호별로 분리한다. 자세한 신호와 연결은 [무기 안내](../../../WEAPONS_AND_EFFECTS.md)를 참고한다. 사용자 사운드 JSON에 자동으로 키를 추가하지 않는다.
+무기 신호 `weapon.bat.hit/finish`, `weapon.hammer.hit/finish`, `weapon.gun.fire/hit/finish/pin/burst`도 지원한다. 무기의 단일 설정에서 `speed`·`sound-size`를 함께 생략하면 고정 음량이고, 함께 지정하거나 배열로 작성하면 기존과 같은 속도별 음량/구간 선택을 사용한다. 전용 설정이 없으면 초기 시제품은 기존 일반음·벽음·분리음의 첫 설정에서 파일·기본 음량·쿨다운을 임시 재사용한다. 임시 연결에는 충돌 전용 속도 구간을 적용하지 않으며 재생 기록은 신호별로 분리한다. 자세한 신호와 연결은 [무기 안내](../../WEAPONS_AND_EFFECTS.md)를 참고한다. 사용자 사운드 JSON에 자동으로 키를 추가하지 않는다.
+
+## 무기 타격 사운드 추가
+
+1. 음원을 `public/assets/audio/sfx/` 아래에 둔다. 예를 들어 `public/assets/audio/sfx/others/hard-punch.mp3`를 사용한다.
+2. `weapons.json`에서 해당 무기의 `signals.hit` 이름을 확인한다. 기본 방망이는 `weapon.bat.hit`, 망치는 `weapon.hammer.hit`, 총알 명중은 `weapon.gun.hit`이다.
+3. `sounds.json`의 기존 `events` 객체 안에 같은 이름의 항목을 추가한다. 아래는 기존 파일을 사용하는 방망이 타격음 예시이며, 다른 이벤트 항목은 보존한다.
+
+```json
+"weapon.bat.hit": {
+  "files": ["sfx/others/hard-punch.mp3"],
+  "volume": 0.8,
+  "rateRange": [0.96, 1.04],
+  "cooldownMs": 0,
+  "maxVoices": 6,
+  "priority": 5
+}
+```
+
+위 항목은 `events` 내부에 넣는 조각이다. 앞뒤 항목 사이에 쉼표를 넣고 같은 키를 중복 작성하지 않는다. 이 예시는 안내에만 있으며 실제 `sounds.json`에는 자동 추가하지 않았다. 저장 후 새로고침하고 화면을 한 번 클릭하면 음원이 준비되어 재생된다.
+
+| 이벤트 이름 | 재생 시점 |
+| --- | --- |
+| `weapon.bat.hit` / `weapon.hammer.hit` | 해당 무기의 유효 타격 |
+| `weapon.gun.hit` | 탄알이 랙돌 또는 허용된 잔해에 명중 |
+| `weapon.gun.fire` | 총에서 발사 |
+| `weapon.bat.finish` / `weapon.hammer.finish` / `weapon.gun.finish` | 해당 무기로 실제 HP가 0이 된 마지막 타격 |
+| `weapon.gun.pin` | 마지막 타격 연출에서 벽에 고정 |
+| `weapon.gun.burst` | 벽 고정 뒤 폭발 |
+
+망치에는 같은 방식으로 `weapon.hammer.hit`를 추가하고 파일을 바꾼다. 총의 타격음은 `weapon.gun.hit`, 발사음은 `weapon.gun.fire`에 각각 설정한다. `signals` 이름을 바꿨다면 사운드와 이펙트의 `events` 키도 동일하게 맞춘다. `sounds.json`은 소리, `effects.json`은 같은 신호의 화면 효과를 담당한다.
+
+`cooldownMs: 0`은 해당 사운드의 재생 간격을 없애며, HP의 피격 무적시간은 바꾸지 않는다. 생략하면 현재 사용자 파일의 `defaults.cooldownMs`인 **1000ms**를 상속하므로 빠른 연속 타격음이 생략될 수 있다. 이 값은 사용자가 바꿀 수 있다. 서로 다른 총에서 발생한 같은 신호도 해당 이벤트의 쿨다운과 `maxVoices`를 공유하며, 전체 재생 수는 `maxConcurrentSounds`로 제한한다.
+
+`speed`와 `sound-size`를 둘 다 생략한 위 예시는 속도 구간에 의해 무음이 되지 않는다. 속도별로 소리를 구분하고 싶으면 두 필드를 함께 추가하거나, 아래 충돌음 예시처럼 객체 배열을 사용한다. 무기 신호의 속도는 방망이·망치의 타격 판정 속도 또는 탄알의 `projectile.speed`이며, 일반 충돌음의 충돌 직후 상대 속력과는 측정 기준이 다르다.
+
+명중 신호는 HP 감소 여부와 별개로 발생한다. 무적 중에도 유효한 무기 타격은 소리를 요청하지만, 마지막 타격 신호는 실제 사망한 경우에만 발생한다. 신호가 없거나 구간 밖·쿨다운·재생 상한·음소거·파일 누락으로 재생되지 않는지 구분해서 확인한다.
 
 ## 여러 속도 구간
 
@@ -86,7 +126,7 @@ HP는 기존 충돌 전 접근 속도·800px/s 기준·300ms 무적·잔해 손�
 
 ## 실패와 라이선스
 
-설정 오류는 콘솔에 원인을 표시하고 기본 설정으로 진행한다. 개별 파일 누락은 해당 이벤트의 남은 후보만 사용하며 다른 이벤트로 바꾸지 않는다. 모든 파일 또는 Web Audio를 사용할 수 없으면 게임을 소리 없이 계속한다. Kenney Impact Sounds는 CC0이며 `sfx/kenney-impact/License.txt`를 보존한다. 다른 팩은 해당 라이선스를 확인한다. Kenney 원본 출처: https://kenney.nl/assets/impact-sounds
+설정 오류는 콘솔에 원인을 표시하고 기본 설정으로 진행한다. 개별 파일 누락은 해당 이벤트의 남은 후보만 사용하며 다른 이벤트로 바꾸지 않는다. 모든 파일 또는 Web Audio를 사용할 수 없으면 게임을 소리 없이 계속한다. Kenney Impact Sounds는 CC0이며 `public/assets/audio/sfx/kenney-impact/License.txt`를 보존한다. 다른 팩은 해당 라이선스를 확인한다. Kenney 원본 출처: https://kenney.nl/assets/impact-sounds
 
 ## 검증
 

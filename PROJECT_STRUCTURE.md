@@ -19,9 +19,9 @@ LeeDamageWeb/
 ├── .gitignore                 # 의존성·빌드·테스트 출력 제외
 ├── public/
 │   ├── models/                # Face Landmarker 모델과 출처·해시 설명
-│   ├── config/                # weapons.json·effects.json 공통 defaults/개별 설정
+│   ├── config/                # weapons.json·effects.json·sounds.json, README.md·SOUNDS.md 설정 설명서
 │   └── assets/
-│       ├── audio/             # Kenney 음원·라이선스·설정 안내 (JSON은 사용자 작성)
+│       ├── audio/             # Kenney·사용자 음원과 라이선스 (설정 JSON·안내는 config/)
 │       └── injuries/          # 투명 배경 멍·상처·반창고 SVG 검증 에셋
 ├── src/
 │   ├── main.ts                # 웹 UI 생성, 버튼·단축키, 설정 전달, Phaser 시작
@@ -68,14 +68,14 @@ LeeDamageWeb/
 ├── tests/
 │   ├── physics.spec.ts        # 브라우저 조작·관절·경계·반복 재배치 검증
 │   ├── collision-cycle.spec.ts # 실험 1의 자기 충돌 전환·재잡기·기립 완료 검증
-│   ├── damage-rules.spec.ts   # 곡선·손상·상처·접촉 회차·시간 단위·무적/소멸·잔해 감쇠·공통 타격 등급·사운드 회차 분리·회복 후 손상 누적 15개
+│   ├── damage-rules.spec.ts   # 곡선·상처·접촉 회차·시간 단위·무적/소멸·탄알 무적 분리·데미지 상한·잔해 감쇠·회복 후 손상 누적 18개
 │   ├── foundation.spec.ts     # 실제 HP·즉시 재등장·잔해 만료·100회 교체·기립·무적 9개
 │   ├── multi-ragdoll.spec.ts  # T키/10개 제한·개별 HP·잔해 조작·상호 충돌·자원 정리·폭주 방지·분리 운동 보존 14개
 │   ├── sound-rules.spec.ts    # 설정·속도/음량 보간·충돌 후 속도·두 소리·쿨다운·상한 13개
 │   ├── sound.spec.ts          # 실제 음원 신호·네 방향 충돌·JSON 읽기·무적 중 연속 충돌·설정 쿨다운·조작/실패/정리 14개
 │   ├── weapon-rules.spec.ts   # 무기 설정·피해식·접촉 방향·연속 충돌 규칙
 │   ├── weapons.spec.ts        # 무기 조작·타격·물리 반응·탄알·사망 연출·정리
-│   ├── weapon-instances.spec.ts # 다중 생성·우클릭 회전·X/C 삭제·총별 동시 발사/상한/간격·접촉 기록 정리
+│   ├── weapon-instances.spec.ts # 다중 생성·우클릭 회전·X/C 삭제·총별 발사/상한/간격·다중 탄알·무적 분리·중복 사망 방지·접촉 기록 정리
 │   └── photo.spec.ts          # 현재 사진 편집·변형·상처·수명주기 검증 24개
 ├── README.md                  # 설치·실행·조작·검증 방법
 ├── STAGE_1_PROGRESS.md        # 1단계 누적 진행·2번 채택·현재 동작·검증 범위
@@ -141,10 +141,10 @@ LeeDamageWeb/
 | 사진 머리 추종·텍스처 교체 | `src/game/FaceRenderer.ts` | 프레임 메모리 공유·인형별 텍스처/변형 단계 분리. 재배치와 사진 수명을 분리 |
 | 잔해·다중 신체 안정화 | `src/game/DebrisPhysics.ts`, `PhysicsScene.ts` | 잔해 반발 0.08·기본 상한 1,200px/s(더 큰 기존 운동은 보존 후 감쇠), 다른 생체 간 반발 0.15·접촉 반응 최대 2,400px/s. 잡는 조작은 유지 |
 | 접촉 회차·속도 단위 | `src/game/ImpactCollector.ts` | beforeSolve의 원시 속도는 실제 하위 스텝 간격으로 환산. 자세 보정 전 수집 |
-| HP·데미지·상처 임계값 | `src/game/DamageSystem.ts`, `HealthState.ts`, `InjuryProgression.ts`, `damageConfig.ts` | 최소 속도 800px/s·피격 후 300ms 무적과 실제 HP 손실을 외형에서 분리 |
+| HP·데미지·상처 임계값 | `src/game/DamageSystem.ts`, `HealthState.ts`, `InjuryProgression.ts`, `damageConfig.ts` | 충돌 최소 속도 800px/s·충돌/근접 타격 후 300ms 무적. 탄알은 무적을 적용/생성/연장하지 않고 각 발의 상한·중복 검사·상처 처리를 공유 |
 | 기립 낙하·착지 | `src/game/SpawnLanding.ts`, `PhysicsScene.ts` | 전체 기립 자세를 수직 이동, 잡기·유효 공격 시 동적 물리로 전환 |
 | 사망·관절 분리·즉시 재등장 | `src/game/RagdollActor.ts`, `RagdollLifecycle.ts`, `Ragdoll.ts`, `PhysicsScene.ts` | 분리 시 새 생명 추가, 잔해는 독립 조작/충돌 유지 후 5초에 해당 객체만 정리 |
-| 기반 회귀 검증 | `tests/damage-rules.spec.ts`, `foundation.spec.ts` | `npm run test:foundation` 24개. `test:multi` 14개. `test:current`는 다중 인형·사진 포함 62개 |
+| 기반 회귀 검증 | `tests/damage-rules.spec.ts`, `foundation.spec.ts` | `npm run test:foundation` 27개. `test:multi` 14개. `test:current`는 다중 인형·사진 포함 65개 |
 | 상처 에셋 부착 | `src/game/InjuryRenderer.ts`, `src/game/FaceRenderer.ts` | 자국 크기와 무관하게 테두리까지 균일하게 중심 선택. 사진은 불투명 픽셀 좌표를 보존해 배율 추종 |
 | 사진 회귀 검증 | `tests/photo.spec.ts` | `npm run test:photo`. 실제 모델 확인 결과는 2단계 진행 기록 참고 |
 | 회귀 검증 | `tests/physics.spec.ts` | 실제 포인터 조작과 가속된 물리 반복 검증 포함 |
@@ -219,7 +219,7 @@ LeeDamageWeb/
 
 `SoundConfig`는 `collision.normal`, `collision.wall`, `death.burst`를 읽습니다. 충돌 이벤트는 기존 단일 객체 또는 여러 속도 구간의 객체 배열을 지원합니다. 최솟값 포함·최댓값 제외로 구간을 고르고, 겹치는 구간은 오류·빈 구간은 무음입니다. 선택된 구간의 `speed` 내 위치를 `sound-size` 배수에 선형 대응합니다. 일반음과 벽·바닥음은 함께 재생하고 각 구간의 쿨다운·파일·음량·재생 수는 독립적입니다. 모든 구간의 파일을 중복 없이 로딩하며 전체 재생 상한도 적용합니다. `death.burst`는 단일 객체를 유지하고 HP 데미지 등급은 오디오에서 사용하지 않습니다.
 
-`ImpactAudio`는 Phaser AudioContext를 공유합니다. 선택 파일을 한 번 디코딩해 공유 버퍼로 보관하고 재생 때만 Source/Gain 노드를 만듭니다. 일시정지·사진 편집에서 재생을 정리하며 R은 버퍼를 유지하고 쿨다운을 초기화합니다. 장면 종료는 비동기 로딩·입력·버퍼·노드를 해제합니다. 런타임은 사용자 JSON을 쓰지 않습니다. 이번 설정 형식 변경에 따른 JSON 통합은 요청에 따라 한 번 수행했습니다. 설정 상세는 `public/assets/audio/README.md`에 정리했습니다.
+`ImpactAudio`는 Phaser AudioContext를 공유합니다. `public/config/sounds.json`을 읽고 `basePath`는 배포 앱 시작 경로를 기준으로 해석하므로 음원은 계속 `public/assets/audio/`에 둡니다. 선택 파일을 한 번 디코딩해 공유 버퍼로 보관하고 재생 때만 Source/Gain 노드를 만듭니다. 일시정지·사진 편집에서 재생을 정리하며 R은 버퍼를 유지하고 쿨다운을 초기화합니다. 장면 종료는 비동기 로딩·입력·버퍼·노드를 해제합니다. 런타임은 사용자 JSON을 쓰지 않습니다. 설정 필드는 [config 안내](public/config/README.md), 사운드 상세는 [SOUNDS.md](public/config/SOUNDS.md)에 정리했습니다.
 
 ## 창 크기와 체력 조절
 

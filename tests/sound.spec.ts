@@ -13,7 +13,7 @@ async function open(page: Page) {
   await page.waitForFunction(() => !window.__physicsLab.audio.snapshot().locked);
 }
 test.beforeEach(async ({ page }) => {
-  await page.route("**/assets/audio/sounds.json", route => route.fulfill({ status: 404, body: "" }));
+  await page.route("**/config/sounds.json", route => route.fulfill({ status: 404, body: "" }));
   // Keep decoding tests independent of user audio pack changes.
   const clip = readFileSync(new URL("./fixtures/impact.ogg", import.meta.url));
   await page.route("**/assets/audio/sfx/kenney-impact/*.ogg", route => route.fulfill({ contentType: "audio/ogg", body: clip }));
@@ -50,7 +50,7 @@ for (const surface of ["left", "right", "ceiling", "floor"] as const) {
       "collision.normal": { files: [`${pack}impactPlate_heavy_000.ogg`], speed: [0, 100000], "sound-size": [1, 1] },
       "collision.wall": { files: [`${pack}impactPlate_heavy_001.ogg`], speed: [0, 100000], "sound-size": [1, 1] },
     };
-    await page.route("**/assets/audio/sounds.json", route => route.fulfill({ json: {
+    await page.route("**/config/sounds.json", route => route.fulfill({ json: {
       version: 1, basePath: "assets/audio/", events,
     } }));
     await open(page);
@@ -109,7 +109,7 @@ test("speed-configured weak collisions sound with no HP damage and strong contac
 
 for (const cooldownMs of [0, 10000]) {
   test(`rapid physical wall impacts respect a ${cooldownMs}ms JSON cooldown during HP immunity`, async ({ page }) => {
-    await page.route("**/assets/audio/sounds.json", route => route.fulfill({ json: {
+    await page.route("**/config/sounds.json", route => route.fulfill({ json: {
       ...DEFAULT_SOUND_CONFIG, maxConcurrentSounds: 1,
       defaults: { ...DEFAULT_SOUND_CONFIG.defaults, cooldownMs },
       events: Object.fromEntries(Object.entries(DEFAULT_SOUND_CONFIG.events).map(([name, event]) =>
@@ -149,7 +149,7 @@ for (const cooldownMs of [0, 10000]) {
 
 test("custom JSON maps speed to gain, deduplicates files and softens debris", async ({ page }) => {
   const file = "sfx/kenney-impact/impactWood_light_000.ogg";
-  await page.route("**/assets/audio/sounds.json", route => route.fulfill({ json: {
+  await page.route("**/config/sounds.json", route => route.fulfill({ json: {
     version: 1, basePath: "assets/audio/", defaults: { volume: 0.4, rateRange: [1, 1] },
     masterVolume: 0.5, debris: { volumeScale: 0.2 },
     events: { "collision.normal": { files: [file], speed: [100, 1000], "sound-size": [0.2, 1] }, "death.burst": { files: [file] } },
@@ -168,7 +168,7 @@ test("JSON band arrays load every unique clip once and layer selected normal and
   const pack = "sfx/kenney-impact/", weak = `${pack}weak.ogg`, strong = `${pack}strong.ogg`, wall = `${pack}wall.ogg`;
   const requests: string[] = [];
   page.on("request", request => { if (request.url().endsWith(".ogg")) requests.push(request.url()); });
-  await page.route("**/assets/audio/sounds.json", route => route.fulfill({ json: {
+  await page.route("**/config/sounds.json", route => route.fulfill({ json: {
     version: 1, basePath: "assets/audio/", defaults: { volume: 0.5, rateRange: [1, 1], cooldownMs: 0 },
     events: {
       "collision.normal": [
@@ -224,10 +224,10 @@ test("volume and mute persist and paused/photo/reset scenes never replay queued 
 
 test("bad JSON falls back safely and a missing clip leaves remaining configured audio usable", async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
-  await page.route("**/assets/audio/sounds.json", route => route.fulfill({ body: "{broken", contentType: "application/json" }));
+  await page.route("**/config/sounds.json", route => route.fulfill({ body: "{broken", contentType: "application/json" }));
   await open(page);
   expect(await page.evaluate(() => window.__physicsLab.audio.snapshot())).toMatchObject({ source: "default", state: "partial", buffers: 8 });
-  await page.route("**/assets/audio/sounds.json", route => route.fulfill({ json: {
+  await page.route("**/config/sounds.json", route => route.fulfill({ json: {
     version: 1, basePath: "assets/audio/", events: { "death.burst": {
       files: ["sfx/kenney-impact/impactSoft_heavy_000.ogg", "sfx/missing.ogg"],
     } },
