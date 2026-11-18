@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./test";
 import { damageFeedback } from "../src/game/DamageSystem";
 
 async function open(page: Page) {

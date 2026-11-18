@@ -8,6 +8,7 @@ import { PHOTO_BASE_SIZE } from "./game/appearanceConfig";
 import { DAMAGE_RULES } from "./game/damageConfig";
 import { DEFAULT_SETTINGS, ROOM, type LabStats } from "./game/config";
 import { weaponFrame, type WeaponPhotoTarget } from "./weapons/WeaponSkins";
+import { loadDefaultImages, type DefaultPhotos } from "./photo/DefaultImages";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
@@ -69,11 +70,17 @@ app.innerHTML = `
 
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const scene = new PhysicsScene();
+const defaultImageAbort = new AbortController();
+const defaultImagesReady = loadDefaultImages(defaultImageAbort.signal);
+let defaultPhotos: DefaultPhotos = { face: null, bat: null, hammer: null, gun: null, bullet: null };
 const photoSession = new PhotoSession();
 const photoEditor = new PhotoEditor(photoSession, {
   begin: () => scene.beginPhotoEdit(), end: () => scene.endPhotoEdit(),
   apply: photo => scene.applyPhoto(photo),
-  clear: () => { photoSession.clear(); scene.clearPhoto(); },
+  clear: () => {
+    photoSession.current = defaultPhotos.face;
+    if (defaultPhotos.face) scene.applyPhoto(defaultPhotos.face, false); else scene.clearPhoto();
+  },
   previewSize: () => scene.game.canvas.getBoundingClientRect().width / ROOM.width * Math.max(PHOTO_BASE_SIZE, scene.face.displaySize),
 });
 const weaponEditors = new Map<WeaponPhotoTarget, PhotoEditor>();
@@ -81,10 +88,16 @@ const weaponPhotoEditor = (id: WeaponPhotoTarget) => {
   let editor = weaponEditors.get(id);
   if (!editor) {
     const session = new PhotoSession(), label = id === "bullet" ? "탄알" : scene.weapons.config.weapons[id].label;
+    session.current = scene.weapons.skins.get(id)?.photo ?? null;
     editor = new PhotoEditor(session, {
       begin: () => scene.beginPhotoEdit(), end: () => scene.endPhotoEdit(),
       apply: photo => { scene.weapons.applyPhoto(id, photo); scene.onNotice(`${label} 사진과 충돌 윤곽을 적용했어요.`); },
-      clear: () => { scene.weapons.applyPhoto(id, null); scene.onNotice(`${label}을 기본 도형으로 되돌렸어요.`); },
+      clear: () => {
+        session.current = defaultPhotos[id];
+        scene.weapons.applyPhoto(id, defaultPhotos[id]);
+        scene.onNotice(`${label}을 기본 ${defaultPhotos[id] ? "이미지" : "도형"}로 되돌렸어요.`);
+      },
+      clearLabel: () => defaultPhotos[id] ? "기본 이미지로" : "기본 도형으로",
       previewSize: () => Math.min(190, weaponFrame(scene.weapons.config, id).size * scene.game.canvas.getBoundingClientRect().width / ROOM.width),
     }, { id, label, mask: () => scene.weapons.skins.mask(scene.weapons.config, id) });
     weaponEditors.set(id, editor);
@@ -94,12 +107,12 @@ const weaponPhotoEditor = (id: WeaponPhotoTarget) => {
 let ready = false;
 const updatePhotoTarget = () => {
   const face = element<HTMLSelectElement>("weapon-photo-target").value === "face";
-  element<HTMLButtonElement>("weapon-photo-open").disabled = face ? !ready : !scene.weapons?.loaded;
+  element<HTMLButtonElement>("weapon-photo-open").disabled = !ready || (!face && !scene.weapons?.loaded);
 };
 scene.onToolState = () => {
   updatePhotoTarget();
   const mode = scene.weapons?.mode, size = element<HTMLInputElement>("weapon-size");
-  const weaponSelected = scene.weapons?.loaded && mode && mode !== "hand";
+  const weaponSelected = ready && scene.weapons?.loaded && mode && mode !== "hand";
   size.disabled = !weaponSelected || scene.paused;
   if (weaponSelected) {
     const label = scene.weapons.config.weapons[mode].label, percent = scene.weapons.sizePercent(mode);
@@ -124,7 +137,7 @@ scene.onToolState = () => {
     element("bullet-size-value").textContent = `${percent}%`;
   }
   for (const button of app.querySelectorAll<HTMLButtonElement>("[data-tool]")) {
-    button.disabled = !scene.weapons?.loaded || scene.paused;
+    button.disabled = !ready || !scene.weapons?.loaded || scene.paused;
     button.setAttribute("aria-pressed", String(button.dataset.tool === scene.weapons?.mode));
     if (button.dataset.tool !== "hand" && scene.weapons?.loaded) {
       const label = scene.weapons.config.weapons[button.dataset.tool as "bat" | "hammer" | "gun"].label;
@@ -136,8 +149,8 @@ scene.onToolState = () => {
 };
 scene.onStats = (stats: LabStats) => {
   scene.onToolState();
-  element<HTMLButtonElement>("spawn").disabled = stats.paused || stats.aliveCount >= stats.maxRagdolls;
-  element<HTMLButtonElement>("force-burst").disabled = stats.paused || !scene.selectedActor?.lifecycle.interactive;
+  element<HTMLButtonElement>("spawn").disabled = !ready || stats.paused || stats.aliveCount >= stats.maxRagdolls;
+  element<HTMLButtonElement>("force-burst").disabled = !ready || stats.paused || !scene.selectedActor?.lifecycle.interactive;
   element("photo-open").textContent = scene.face?.active ? "사진 편집" : "사진 추가";
   element("pause-overlay").hidden = !stats.paused;
   element("pause").textContent = stats.paused ? "▷" : "Ⅱ";
@@ -161,15 +174,29 @@ scene.onNotice = message => {
   clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { element("notice").textContent = ""; }, 3500);
 };
 scene.onReady = () => {
-  ready = true; element("loading").hidden = true;
-  app.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = false; });
   scene.configure({ ...DEFAULT_SETTINGS }); scene.onAudioState();
+  scene.events.once("shutdown", () => defaultImageAbort.abort());
+  void (async () => {
+    const [, photos] = await Promise.all([scene.weapons.ready, defaultImagesReady]);
+    if (defaultImageAbort.signal.aborted) return;
+    defaultPhotos = photos;
+    photoSession.current = photos.face;
+    if (photos.face) scene.applyPhoto(photos.face, false);
+    for (const id of ["bat", "hammer", "gun", "bullet"] as const) {
+      if (!photos[id]) continue;
+      try { scene.weapons.applyPhoto(id, photos[id]); }
+      catch (error) { defaultPhotos[id] = null; console.warn(`기본 이미지 ${id}: 기본 도형을 사용합니다.`, error); }
+    }
+    ready = true; element("loading").hidden = true;
+    app.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = false; });
+    scene.onStats(scene.snapshot());
+  })();
 };
 element("photo-open").addEventListener("click", () => photoEditor.show());
 element("weapon-photo-open").addEventListener("click", () => {
   const target = element<HTMLSelectElement>("weapon-photo-target").value;
   if (target === "face") { if (ready) photoEditor.show(); }
-  else if (scene.weapons.loaded) weaponPhotoEditor(target as WeaponPhotoTarget).show();
+  else if (ready && scene.weapons.loaded) weaponPhotoEditor(target as WeaponPhotoTarget).show();
 });
 element("weapon-photo-target").addEventListener("change", updatePhotoTarget);
 element("spawn").addEventListener("click", () => scene.spawnRagdoll());
@@ -277,6 +304,7 @@ const observer = new ResizeObserver(entries => {
 observer.observe(element("game"));
 window.addEventListener("pagehide", event => {
   if (!(event as PageTransitionEvent).persisted) {
+    defaultImageAbort.abort();
     photoEditor.destroy(); for (const editor of weaponEditors.values()) editor.destroy();
     observer.disconnect(); clearTimeout(noticeTimer);
   }

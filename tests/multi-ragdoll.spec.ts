@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./test";
 import type { PhysicsScene } from "../src/game/PhysicsScene";
 declare global { interface Window { __physicsLab: PhysicsScene } }
 

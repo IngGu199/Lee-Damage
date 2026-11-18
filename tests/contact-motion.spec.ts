@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { captureMotion, contactVelocity, relativeContactVelocity } from "../src/game/ContactMotion";
 import { REFERENCE_STEP } from "../src/game/config";
 import { postCollisionSpeed, type ContactImpact } from "../src/game/ImpactCollector";

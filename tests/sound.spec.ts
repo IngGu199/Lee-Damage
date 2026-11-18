@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./test";
 import { readFileSync } from "node:fs";
 import type { PhysicsScene } from "../src/game/PhysicsScene";
 import { DEFAULT_SOUND_CONFIG } from "../src/audio/SoundConfig";

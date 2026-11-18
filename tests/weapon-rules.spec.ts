@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { DEFAULT_WEAPON_CONFIG, damageLimit, meleeDamage, parseWeaponConfig } from "../src/weapons/WeaponConfig";
 import { collisionDamage, DamageSystem, type DamageHit } from "../src/game/DamageSystem";
 import { circleContact, closingSpeed, sweepCircle } from "../src/weapons/geometry";

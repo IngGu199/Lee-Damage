@@ -221,13 +221,13 @@ export class PhysicsScene extends Phaser.Scene {
     if (this.selectedId === actor.id) this.selectedId = this.livingActors[0]?.id ?? this.actors[0]?.id ?? 0;
   }
 
-  applyPhoto(photo: AppliedPhoto) {
+  applyPhoto(photo: AppliedPhoto, announce = true) {
     this.photoFrames = photo.frames; this.photoOutline = photo.mask.kind === "contour" || photo.mask.kind === "alpha";
     for (const actor of this.actors) {
       actor.face.apply(this.photoFrames, this.photoOutline); actor.resetAppearance();
       actor.face.update(actor.doll.parts[0]); actor.face.setAlpha(actor.lifecycle.alpha(this.simulationTime));
     }
-    this.onNotice(photo.frames.length > 1 ? "모든 인형에 사진을 적용했어요. 체력을 30%·65% 잃으면 변형 사진으로 바뀝니다."
+    if (announce) this.onNotice(photo.frames.length > 1 ? "모든 인형에 사진을 적용했어요. 체력을 30%·65% 잃으면 변형 사진으로 바뀝니다."
       : "모든 인형에 사진을 적용했어요. 얼굴 기준점이 없어 사진 변형은 생략합니다.");
   }
   clearPhoto() {

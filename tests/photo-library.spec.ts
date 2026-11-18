@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";

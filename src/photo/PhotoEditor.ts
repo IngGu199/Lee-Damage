@@ -16,6 +16,7 @@ interface EditorActions {
   end(): void;
   apply(photo: AppliedPhoto): void;
   clear(): void;
+  clearLabel?(): string;
   previewSize(): number;
 }
 interface PhotoAsset { id: string; label: string; mask(): PhotoMask }
@@ -357,6 +358,7 @@ export class PhotoEditor {
 
   show() {
     if (this.open) return;
+    if (this.actions.clearLabel) this.el("photo-clear").textContent = this.actions.clearLabel();
     this.actions.begin();
     const current = this.session.current;
     this.draft = current ? { ...current, edit: { ...current.edit }, mask: copyMask(current.mask ?? defaultMask()) } : null;

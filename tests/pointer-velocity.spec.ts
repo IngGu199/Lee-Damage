@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { PointerVelocity } from "../src/game/PointerVelocity";
 
 test("throws use hardware sample times, ignore duplicates and expire after an 80ms pause", () => {

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { DEFAULT_SOUND_CONFIG, parseSoundConfig, collisionGain, soundVariants } from "../src/audio/SoundConfig";
 import { SoundMixer, type SoundBackend } from "../src/audio/SoundMixer";
 import { ImpactCollector, postCollisionSpeed, type ContactImpact } from "../src/game/ImpactCollector";

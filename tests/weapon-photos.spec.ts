@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./test";
 import { convexPieces, maskPolygon, photoPieces, polygonArea } from "../src/photo/PhotoGeometry";
 import { inside, sweepConvex } from "../src/weapons/geometry";
 

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./test";
 
 async function open(page: Page, weapons: Record<string, unknown> = {}, hammerKnockback = 60) {
   await page.route("**/config/weapons.json", route => route.fulfill({ json: { version: 1, weapons: {

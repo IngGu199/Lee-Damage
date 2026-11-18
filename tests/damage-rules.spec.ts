@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { capDamage, collisionDamage, damageFeedback, damageIntensity, DamageSystem, type DamageHit } from "../src/game/DamageSystem";
 import { HealthState } from "../src/game/HealthState";
 import { InjuryProgression, photoStage } from "../src/game/InjuryProgression";
