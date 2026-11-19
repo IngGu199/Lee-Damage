@@ -4,7 +4,7 @@ import { meleeBehavior, weaponRegistration } from "./WeaponRegistry";
 import type { WeaponState } from "./WeaponState";
 import type { WeaponSkins } from "./WeaponSkins";
 import type { WeaponFinishers } from "./WeaponFinishers";
-import { add, rotate, type Point } from "./geometry";
+import { add, rotate } from "./geometry";
 
 /** Draws the latest simulation state without advancing physics or applying hits. */
 export class WeaponRenderer {
@@ -41,8 +41,11 @@ export class WeaponRenderer {
     this.bulletImages.forEach(image => image.setVisible(false));
     let imageIndex = 0;
     for (const [index, bullet] of bullets.entries()) {
-      const direction = "direction" in bullet ? bullet.direction as Point : { x: 1, y: 0 };
-      if (this.skins.draw(`bullet:${index}`, "bullet", bullet.position, Math.atan2(direction.y, direction.x))) continue;
+      if (bullet.skin) {
+        const direction = bullet.direction ?? { x: 1, y: 0 };
+        this.skins.drawBullet(`bullet:${index}`, bullet.skin, bullet.position, Math.atan2(direction.y, direction.x));
+        continue;
+      }
       if (bullet.texture && this.scene.textures.exists(bullet.texture)) {
         const image = this.bulletImages[imageIndex] ?? this.scene.add.image(0, 0, bullet.texture).setDepth(51);
         this.bulletImages[imageIndex++] = image;

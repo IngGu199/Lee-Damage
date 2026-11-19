@@ -27,7 +27,7 @@ export class WeaponCollision {
     if (item.previous) this.melee(item, delta, time);
   }
   private melee(item: MeleeItem, delta: number, time: number) {
-    const skin = this.skins.get(item.id);
+    const skin = this.skins.getCollisionSkin(item.id);
     if (skin) { this.meleeSkin(item, skin, delta, time); return; }
     const weapon = item.id, definition = this.state.config.weapons[weapon], body = item.body, previous = item.previous!;
     const behavior = meleeBehavior(weapon), samples = behavior.samples(definition);

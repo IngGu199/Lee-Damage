@@ -35,12 +35,13 @@ test("shipped defaults load a face and all four weapon images with editable tran
   expect(state.face.frames).toBeGreaterThanOrEqual(1);
   expect(state.skins.kinds.sort()).toEqual(["bat", "bullet", "gun", "hammer"]);
   expect(state.hp).toBe(1000);
-  for (const id of ["bat", "hammer", "gun", "bullet"] as const) expect(state.photos[id]).toBe(config[id]);
+  for (const id of ["bat", "hammer", "gun", "bullet"] as const) expect(state.photos[id]).toBe(id === "bullet" ? config.bullet[0] : config[id]);
   for (const id of IMAGE_TARGETS) {
     await page.locator("#weapon-photo-target").selectOption(id);
     await page.locator("#weapon-photo-open").click();
     const dialog = page.locator('dialog[open]');
-    await expect(dialog.locator('[id$="photo-filename"]')).toHaveText(config[id].split("/").at(-1));
+    const path = id === "bullet" ? config.bullet[0] : config[id];
+    await expect(dialog.locator('[id$="photo-filename"]')).toHaveText(path.split("/").at(-1));
     await expect(dialog.locator('[id$="photo-apply"]')).toBeEnabled();
     await dialog.locator('[id$="photo-cancel"]').click();
   }

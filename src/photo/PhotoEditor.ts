@@ -9,18 +9,31 @@ import { faceBendControls } from "./PhotoVariants";
 import { preparePhoto } from "./preparePhoto";
 import { FIXED_APPEARANCE } from "../game/appearanceConfig";
 import { contourProblem, simplifyStroke } from "./PhotoContour";
-import { PhotoLibrary } from "./PhotoLibrary";
+import { PhotoLibrary, readSavedPhoto, type SavedPhoto } from "./PhotoLibrary";
 import { alphaTransform, recoverAlphaMask } from "./PhotoAlpha";
+import { MAX_BULLET_PHOTOS } from "./ImageConfig";
 
-interface EditorActions {
+interface SharedEditorActions {
   begin(): void;
   end(): void;
-  apply(photo: AppliedPhoto): void;
   clear(): void;
   clearLabel?(): string;
   previewSize(): number;
 }
+type EditorActions = SharedEditorActions & ({ apply(photo: AppliedPhoto): void; batch?: never } | {
+  batch: { current(): readonly AppliedPhoto[]; apply(photos: readonly AppliedPhoto[]): void };
+});
 interface PhotoAsset { id: string; label: string; mask(): PhotoMask }
+
+function copyDraft(photo: PhotoDraft): PhotoDraft {
+  return { ...photo, edit: { ...photo.edit }, mask: copyMask(photo.mask ?? defaultMask()) };
+}
+
+function validDraft(draft: PhotoDraft) {
+  const { mask, faces, faceIndex } = draft;
+  return (mask.kind !== "contour" || (mask.closed && !contourProblem(mask.points))) &&
+    (faces.length <= 1 || faceIndex >= 0);
+}
 
 export class PhotoEditor {
   private readonly dialog: HTMLDialogElement;
@@ -36,6 +49,11 @@ export class PhotoEditor {
   private selectedPoint = -1;
   private readonly contourHistory: { mask: PhotoMask; edit: PhotoTransform }[] = [];
   private readonly abort = new AbortController();
+  private batchDrafts: PhotoDraft[] = [];
+  private readonly pendingBatch = new Set<string | File>();
+  private batchQueue = Promise.resolve();
+  private batchAbort?: AbortController;
+  private batchFocus?: string | File;
 
   constructor(private readonly session: PhotoSession, private readonly actions: EditorActions, private readonly asset?: PhotoAsset) {
     this.dialog = document.createElement("dialog");
@@ -51,6 +69,11 @@ export class PhotoEditor {
         </div><p class="photo-hint" id="photo-hint">드래그로 이동 · 방향키로 세밀하게 조절</p></div>
         <div class="photo-controls">
           <section class="photo-library" aria-label="저장된 사진 선택"></section>
+          ${actions.batch ? `<div class="photo-batch">
+            <p class="photo-batch-count" aria-live="polite"></p>
+            <div class="photo-batch-list" role="group" aria-label="편집할 탄알 사진"></div>
+            <button type="button" id="photo-batch-remove" hidden>이 사진 빼기</button>
+          </div>` : ""}
           <label class="photo-file-button">내 기기에서 새 사진 추가<input id="photo-file" type="file" accept="image/jpeg,image/png,image/webp"></label>
           <p id="photo-filename" class="photo-filename">JPEG · PNG · WebP / 최대 20MB</p>
           <p id="photo-status" class="photo-status" role="status" aria-live="polite">사진은 이 브라우저에서만 처리해요.</p>
@@ -82,27 +105,39 @@ export class PhotoEditor {
       this.dialog.setAttribute("aria-labelledby", `${asset.id}-photo-title`);
       this.el("photo-title").textContent = `${asset.label} 사진`;
       this.dialog.querySelector(".eyebrow")!.textContent = "무기 이미지";
-      this.el("photo-copy").textContent = "기본 모형에 맞춰 자르거나, 사진의 윤곽을 직접 그려 주세요. 윤곽 밖은 충돌하지 않아요.";
+      this.el("photo-copy").textContent = "기본 모형에 맞춰 자르거나 윤곽을 직접 그려 주세요. 복잡한 윤곽은 기본 모형으로 충돌해요.";
       this.el("photo-mask-circle").textContent = "모형으로 자르기";
       this.el("photo-apply").textContent = `${asset.label}에 적용하기 →`;
       this.el("photo-clear").textContent = "기본 도형으로";
       this.el("photo-empty").textContent = "무기로 사용할 사진을 골라 주세요";
       this.el("photo-landmarks").closest("label")!.hidden = true;
     }
+    if (actions.batch) {
+      this.el("photo-copy").textContent = "탄알 사진을 여러 장 골라 각각 크기와 윤곽을 맞춰 주세요. 발사할 때마다 한 장을 무작위로 사용해요.";
+      this.el("photo-apply").textContent = "탄알 사진 적용하기 →";
+      this.el<HTMLInputElement>("photo-file").multiple = true;
+    }
     this.el("photo-contour-tools").classList.add("photo-contour-tools");
     this.dialog.dataset.photoTarget = asset?.id ?? "face";
     document.body.append(this.dialog);
     this.library = new PhotoLibrary(this.dialog.querySelector(".photo-library")!, asset?.id ?? "face",
-      (file, entry) => this.load(file, entry.path));
+      (file, entry) => this.load(file, entry.path), actions.batch ? entry => this.pickBatchPhoto(entry) : undefined);
     window.addEventListener("resize", () => { if (this.open) this.draw(); }, { signal: this.abort.signal });
     const listen = (id: string, event: string, listener: EventListener) =>
       this.el(id).addEventListener(event, listener, { signal: this.abort.signal });
     listen("photo-file", "change", () => {
-      this.library.clearSelection();
-      const file = this.el<HTMLInputElement>("photo-file").files?.[0];
-      if (file) void this.load(file);
-      this.el<HTMLInputElement>("photo-file").value = "";
+      const input = this.el<HTMLInputElement>("photo-file"), files = Array.from(input.files ?? []);
+      if (actions.batch) {
+        for (const file of files) {
+          if (!this.queueBatchPhoto(file)) break;
+        }
+      } else if (files[0]) {
+        this.library.clearSelection();
+        void this.load(files[0]);
+      }
+      input.value = "";
     });
+    if (actions.batch) listen("photo-batch-remove", "click", () => this.removeBatchPhoto());
     for (const id of ["photo-close", "photo-cancel"]) listen(id, "click", () => this.close());
     this.dialog.addEventListener("cancel", (event) => { event.preventDefault(); this.close(); });
     listen("photo-clear", "click", () => {
@@ -361,31 +396,141 @@ export class PhotoEditor {
     if (this.open) return;
     if (this.actions.clearLabel) this.el("photo-clear").textContent = this.actions.clearLabel();
     this.actions.begin();
+    const batch = this.actions.batch;
+    if (batch) {
+      const photos = batch.current();
+      this.session.current = photos[0] ?? null;
+      this.batchDrafts = photos.map(copyDraft);
+      this.batchAbort = new AbortController();
+    }
     const current = this.session.current;
-    this.draft = current ? { ...current, edit: { ...current.edit }, mask: copyMask(current.mask ?? defaultMask()) } : null;
+    this.draft = batch ? this.batchDrafts[0] ?? null : current ? copyDraft(current) : null;
     this.contourHistory.length = 0; this.selectedPoint = -1; this.drag = null;
     this.contourTool = this.draft?.mask.closed ? "points" : "draw";
     this.edited = false;
     this.el("photo-error").textContent = "";
     this.el("photo-status").textContent = current
       ? current.mask.kind === "alpha" ? "투명 배경에서 복원한 윤곽이에요. 사진 위치를 조절하거나 그대로 적용할 수 있어요."
-        : current.faces.length ? "얼굴 기준점을 불러왔어요. 위치를 다시 조절할 수 있어요." : "수동 사진이에요. 얼굴을 맞춰 적용해 주세요."
+        : this.asset ? "사진 위치와 윤곽을 다시 조절할 수 있어요."
+          : current.faces.length ? "얼굴 기준점을 불러왔어요. 위치를 다시 조절할 수 있어요." : "수동 사진이에요. 얼굴을 맞춰 적용해 주세요."
       : "사진은 이 브라우저에서만 처리해요.";
     this.el("photo-filename").textContent = current?.name ?? "JPEG · PNG · WebP / 최대 20MB";
     this.busy = false; this.analysisPending = false;
+    if (batch) this.renderBatchList();
     this.renderFaces(); this.draw();
     this.dialog.showModal();
-    this.library.open(current?.libraryPath);
+    const selected = batch ? this.batchDrafts : this.draft ? [this.draft] : [];
+    this.library.open(selected.flatMap(photo => photo.libraryPath ? [photo.libraryPath] : []));
   }
 
   private close() {
     if (!this.open) return;
     this.generation++; this.drag = null; this.draft = null; this.busy = false; this.analysisPending = false;
     this.library.close();
+    this.batchAbort?.abort(); this.batchAbort = undefined;
+    this.batchDrafts = []; this.pendingBatch.clear(); this.batchQueue = Promise.resolve();
+    this.batchFocus = undefined;
+    this.dialog.querySelector(".photo-batch-list")?.replaceChildren();
+    this.clearSavePreview();
     this.contourHistory.length = 0; this.selectedPoint = -1;
     this.dialog.close(); this.actions.end();
     this.el<HTMLCanvasElement>("photo-canvas").getContext("2d")!.clearRect(0, 0, PHOTO_SIZE, PHOTO_SIZE);
     this.el<HTMLCanvasElement>("photo-small").getContext("2d")!.clearRect(0, 0, 144, 144);
+  }
+
+  private makeDraft(source: HTMLCanvasElement, name: string, libraryPath?: string): PhotoDraft {
+    const alphaMask = recoverAlphaMask(source);
+    return { source, name, libraryPath, preserveFraming: Boolean(alphaMask || libraryPath), faces: [], faceIndex: -1,
+      edit: alphaMask ? alphaTransform(source) : this.initialTransform(source),
+      mask: alphaMask ? copyMask(alphaMask) : this.asset?.mask() ?? defaultMask(), alphaMask: alphaMask ?? undefined };
+  }
+
+  private pickBatchPhoto(entry: SavedPhoto) {
+    if (this.busy) return;
+    const existing = this.batchDrafts.find(draft => draft.libraryPath === entry.path);
+    if (existing) {
+      this.batchFocus = undefined;
+      this.showBatchPhoto(existing);
+    }
+    else this.queueBatchPhoto(entry);
+  }
+
+  private queueBatchPhoto(input: File | SavedPhoto) {
+    const signal = this.batchAbort?.signal;
+    if (!signal || this.busy) return false;
+    const key = input instanceof File ? input : input.path;
+    if (this.pendingBatch.has(key)) { this.batchFocus = key; return true; }
+    if (this.batchDrafts.length + this.pendingBatch.size >= MAX_BULLET_PHOTOS) {
+      this.el("photo-error").textContent = `탄알 사진은 최대 ${MAX_BULLET_PHOTOS}장까지 선택할 수 있어요.`;
+      return false;
+    }
+    this.batchFocus = key;
+    this.pendingBatch.add(key);
+    this.renderBatchList(); this.controls();
+    this.batchQueue = this.batchQueue.then(async () => {
+      if (signal.aborted) return;
+      try {
+        const file = input instanceof File ? input : await readSavedPhoto(input, signal);
+        const source = await PhotoSession.decode(file);
+        if (signal.aborted) return;
+        const draft = this.makeDraft(source, file.name, typeof key === "string" ? key : undefined);
+        this.batchDrafts.push(draft);
+        if (!this.draft || (this.batchFocus === key && !this.drag)) this.showBatchPhoto(draft);
+      } catch (error) {
+        if (!signal.aborted) this.el("photo-error").textContent = `${input.name} · ${error instanceof Error ? error.message : "사진을 준비하지 못했어요."}`;
+      } finally {
+        if (!signal.aborted) {
+          if (this.batchFocus === key) this.batchFocus = undefined;
+          this.pendingBatch.delete(key);
+          this.renderBatchList(); this.draw();
+        }
+      }
+    });
+    return true;
+  }
+
+  private showBatchPhoto(draft: PhotoDraft | null) {
+    this.draft = draft;
+    this.drag = null; this.contourHistory.length = 0; this.selectedPoint = -1;
+    this.contourTool = draft?.mask.closed ? "points" : "draw";
+    this.el("photo-error").textContent = "";
+    this.el("photo-filename").textContent = draft?.name ?? "JPEG · PNG · WebP / 최대 20MB";
+    this.el("photo-status").textContent = draft ? "이 사진의 크기, 위치, 윤곽을 조절할 수 있어요." : "탄알로 사용할 사진을 골라 주세요.";
+    this.renderBatchList(); this.draw();
+  }
+
+  private removeBatchPhoto() {
+    if (!this.draft || this.busy) return;
+    const index = this.batchDrafts.indexOf(this.draft);
+    if (index < 0) return;
+    this.batchFocus = undefined;
+    this.batchDrafts.splice(index, 1);
+    this.showBatchPhoto(this.batchDrafts[index] ?? this.batchDrafts.at(-1) ?? null);
+  }
+
+  private renderBatchList() {
+    const list = this.dialog.querySelector(".photo-batch-list")!;
+    const focusedIndex = Array.from(list.children).indexOf(document.activeElement!);
+    this.dialog.querySelector(".photo-batch-count")!.textContent = `${this.batchDrafts.length}장 선택됨${this.pendingBatch.size ? ` · ${this.pendingBatch.size}장 불러오는 중` : ""}`;
+    const buttons = this.batchDrafts.map(draft => {
+      const button = document.createElement("button");
+      button.type = "button"; button.textContent = draft.name; button.title = draft.name;
+      button.setAttribute("aria-pressed", String(draft === this.draft));
+      button.addEventListener("click", () => {
+        if (this.busy) return;
+        this.batchFocus = undefined;
+        this.showBatchPhoto(draft);
+      });
+      return button;
+    });
+    list.replaceChildren(...buttons);
+    buttons[focusedIndex]?.focus({ preventScroll: true });
+    this.el("photo-batch-remove").hidden = !this.draft;
+    this.library.setSelection(this.batchDrafts.flatMap(draft => draft.libraryPath ? [draft.libraryPath] : []));
+  }
+
+  private clearSavePreview() {
+    this.dialog.dispatchEvent(new CustomEvent("photo-preview", { bubbles: true, detail: { valid: false } }));
   }
 
   private async load(file: File, libraryPath?: string) {
@@ -396,16 +541,13 @@ export class PhotoEditor {
     try {
       const source = await PhotoSession.decode(file);
       if (id !== this.generation || !this.open) return;
-      const alphaMask = recoverAlphaMask(source);
-      this.draft = { source, name: file.name, libraryPath, preserveFraming: Boolean(alphaMask || libraryPath), faces: [], faceIndex: -1,
-        edit: alphaMask ? alphaTransform(source) : this.initialTransform(source),
-        mask: alphaMask ? copyMask(alphaMask) : this.asset?.mask() ?? defaultMask(), alphaMask: alphaMask ?? undefined };
+      this.draft = this.makeDraft(source, file.name, libraryPath);
       this.contourHistory.length = 0; this.selectedPoint = -1; this.contourTool = "draw";
       this.edited = false; this.analysisPending = true; this.renderFaces(); this.draw();
       this.el("photo-filename").textContent = file.name;
       if (this.asset) {
         this.analysisPending = false;
-        this.el("photo-status").textContent = alphaMask
+        this.el("photo-status").textContent = this.draft.alphaMask
           ? "투명 배경에서 윤곽을 자동으로 복원했어요. 저장된 모양 그대로 적용할 수 있어요."
           : "사진을 모형에 맞추거나 윤곽을 직접 그려 적용해 주세요.";
         return;
@@ -511,10 +653,14 @@ export class PhotoEditor {
     this.el("photo-align").textContent = mask.kind === "alpha" ? "저장된 크기로 맞추기" : custom ? "윤곽에 맞추기" : this.asset ? "사진 맞추기" : "얼굴에 맞추기";
     this.el<HTMLButtonElement>("photo-align").disabled = !this.draft || this.busy ||
       (mask.kind !== "alpha" && (custom ? !mask.closed : !this.asset && this.draft.faceIndex < 0));
-    this.el<HTMLButtonElement>("photo-apply").disabled = !this.draft || this.busy ||
-      (custom && (!mask.closed || Boolean(problem))) || (this.draft.faces.length > 1 && this.draft.faceIndex < 0);
-    this.el<HTMLInputElement>("photo-file").disabled = false;
-    this.el<HTMLButtonElement>("photo-clear").disabled = !this.session.current;
+    const valid = this.draft ? validDraft(this.draft) : Boolean(this.actions.batch && this.session.current);
+    this.el<HTMLButtonElement>("photo-apply").disabled = this.busy || Boolean(this.pendingBatch.size) || !valid;
+    this.el<HTMLInputElement>("photo-file").disabled = Boolean(this.actions.batch && this.busy);
+    this.el<HTMLButtonElement>("photo-clear").disabled = this.actions.batch ? this.busy : !this.session.current;
+    if (this.actions.batch) {
+      this.el<HTMLButtonElement>("photo-batch-remove").disabled = this.busy;
+      for (const button of this.dialog.querySelectorAll<HTMLButtonElement>(".photo-batch-list button")) button.disabled = this.busy;
+    }
   }
 
   private draw() {
@@ -533,8 +679,8 @@ export class PhotoEditor {
       smallCtx.drawImage(cropped, 72 * (1 - frameScale), 72 * (1 - frameScale), 144 * frameScale, 144 * frameScale);
       // Generic preview hook used by optional local tools, with no storage dependency.
       this.dialog.dispatchEvent(new CustomEvent("photo-preview", { bubbles: true, detail: {
-        canvas: cropped, target: this.asset?.id ?? "face", name: this.draft.name,
-        valid: !this.el<HTMLButtonElement>("photo-apply").disabled,
+        canvas: cropped, target: this.asset?.id ?? "face", name: this.draft.name, identity: this.draft,
+        valid: !this.busy && validDraft(this.draft),
       } }));
       const base = defaultTransform(source.width, source.height).scale;
       const zoom = Math.round(edit.scale / base * 100), rotation = Math.round(edit.rotation * 180 / Math.PI);
@@ -563,7 +709,7 @@ export class PhotoEditor {
           ctx.beginPath(); ctx.arc(center.x, center.y, 3, 0, Math.PI * 2); ctx.fill();
         }
       }
-    }
+    } else this.clearSavePreview();
     const mask = this.draft?.mask ?? defaultMask();
     const points = this.draft ? mask.points.map((p) => transformPoint(p, this.sourceSize(), this.draft!.edit)) : [];
     const path = mask.kind !== "contour" ? photoMaskPath(mask, this.draft ? this.sourceSize() : { x: 512, y: 512 },
@@ -585,6 +731,8 @@ export class PhotoEditor {
   }
 
   private async apply() {
+    const actions = this.actions;
+    if (actions.batch) { await this.applyBatch(actions.batch); return; }
     if (!this.draft || this.busy) return;
     if (this.draft.mask.kind === "contour" && (!this.draft.mask.closed || contourProblem(this.draft.mask.points))) return;
     const id = ++this.generation, draft = { ...this.draft, edit: { ...this.draft.edit }, mask: copyMask(this.draft.mask) };
@@ -594,13 +742,42 @@ export class PhotoEditor {
     try {
       const photo = await preparePhoto(draft, () => !current(), !this.asset);
       if (!current()) return;
-      this.actions.apply(photo);
+      actions.apply(photo);
       this.session.current = photo;
       this.close();
     } catch (error) {
       if (!current()) return;
-      this.busy = false; this.controls(); this.renderFaces();
+      this.busy = false; this.draw(); this.renderFaces();
       this.el("photo-error").textContent = error instanceof Error ? error.message : "사진을 적용하지 못했어요. 다시 적용하거나 취소해 주세요.";
+    }
+  }
+
+  private async applyBatch(batch: NonNullable<EditorActions["batch"]>) {
+    if (this.busy || this.pendingBatch.size) return;
+    const invalid = this.batchDrafts.find(draft => !validDraft(draft));
+    if (invalid) {
+      this.showBatchPhoto(invalid);
+      this.el("photo-error").textContent = `${invalid.name}의 윤곽을 완성해 주세요.`;
+      return;
+    }
+    const id = ++this.generation;
+    const cancelled = () => id !== this.generation || !this.open;
+    this.busy = true; this.draw();
+    this.el("photo-error").textContent = "";
+    this.el("photo-status").textContent = "탄알 사진과 충돌 윤곽을 준비하고 있어요…";
+    try {
+      const photos: AppliedPhoto[] = [];
+      for (const draft of this.batchDrafts) {
+        const photo = await preparePhoto(copyDraft(draft), cancelled, false);
+        if (cancelled()) return;
+        photos.push(photo);
+      }
+      batch.apply(photos);
+      this.close();
+    } catch (error) {
+      if (cancelled()) return;
+      this.busy = false; this.draw();
+      this.el("photo-error").textContent = error instanceof Error ? error.message : "탄알 사진을 적용하지 못했어요.";
     }
   }
 

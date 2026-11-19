@@ -40,7 +40,7 @@ export class WeaponPhysics {
         // Zero knockback must also suppress Matter's impulse/position transfer to dolls.
         // Head/body sweeps still detect hits; walls and other weapons remain solid.
         frictionAir: d.physics.frictionAir, collisionFilter: { mask: d.damage.knockback === 0 ? 6 : 7, category: 4, group: 0 } };
-      const skin = this.skins.get(mode);
+      const skin = this.skins.getCollisionSkin(mode);
       if (skin) {
         const edge = length - headWidth / 2;
         const minX = Math.min(edge, ...skin.points.map(p => p.x)) - 1, maxX = Math.max(edge, ...skin.points.map(p => p.x)) + 1;

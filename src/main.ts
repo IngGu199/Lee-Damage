@@ -8,8 +8,7 @@ import { PHOTO_BASE_SIZE } from "./game/appearanceConfig";
 import { DAMAGE_RULES } from "./game/damageConfig";
 import { DEFAULT_SETTINGS, ROOM, type LabStats } from "./game/config";
 import { weaponFrame, type WeaponPhotoTarget } from "./weapons/WeaponSkins";
-import { loadDefaultImages, type DefaultPhotos } from "./photo/DefaultImages";
-import { IMAGE_TARGETS } from "./photo/ImageConfig";
+import { emptyDefaultPhotos, loadDefaultImages } from "./photo/DefaultImages";
 import { DEFAULT_WEAPON_CONFIG } from "./weapons/WeaponConfig";
 import { WEAPON_REGISTRY, WEAPON_IDS, isWeaponId, isRangedWeapon, weaponRegistration, toolForShortcut, type ToolId } from "./weapons/WeaponRegistry";
 
@@ -73,7 +72,7 @@ const element = <T extends HTMLElement>(id: string) => document.getElementById(i
 const scene = new PhysicsScene();
 const defaultImageAbort = new AbortController();
 const defaultImagesReady = loadDefaultImages(defaultImageAbort.signal);
-let defaultPhotos = Object.fromEntries(IMAGE_TARGETS.map(target => [target, null])) as DefaultPhotos;
+let defaultPhotos = emptyDefaultPhotos();
 const photoSession = new PhotoSession();
 const photoEditor = new PhotoEditor(photoSession, {
   begin: () => scene.beginPhotoEdit(), end: () => scene.endPhotoEdit(),
@@ -90,17 +89,33 @@ const weaponPhotoEditor = (id: WeaponPhotoTarget) => {
   if (!editor) {
     const session = new PhotoSession(), label = id === "bullet" ? "탄알" : scene.weapons.config.weapons[id].label;
     session.current = scene.weapons.skins.get(id)?.photo ?? null;
-    editor = new PhotoEditor(session, {
+    const shared = {
       begin: () => scene.beginPhotoEdit(), end: () => scene.endPhotoEdit(),
-      apply: photo => { scene.weapons.applyPhoto(id, photo); scene.onNotice(`${label} 사진과 충돌 윤곽을 적용했어요.`); },
+      previewSize: () => Math.min(190, weaponFrame(scene.weapons.config, id).size * scene.game.canvas.getBoundingClientRect().width / ROOM.width),
+    };
+    const asset = { id, label, mask: () => scene.weapons.skins.mask(scene.weapons.config, id) };
+    editor = id === "bullet" ? new PhotoEditor(session, { ...shared,
+      batch: {
+        current: () => scene.weapons.skins.bulletPhotos(),
+        apply: photos => {
+          scene.weapons.applyBulletPhotos(photos);
+          scene.onNotice(photos.length ? `탄알 사진 ${photos.length}장을 적용했어요.` : "탄알을 기본 도형으로 변경했어요.");
+        },
+      },
+      clear: () => {
+        scene.weapons.applyBulletPhotos(defaultPhotos.bullet);
+        scene.onNotice("탄알을 기본 설정으로 되돌렸어요.");
+      },
+      clearLabel: () => defaultPhotos.bullet.length ? "기본 이미지로" : "기본 도형으로",
+    }, asset) : new PhotoEditor(session, { ...shared,
+      apply: photo => { scene.weapons.applyPhoto(id, photo); scene.onNotice(`${label} 사진을 적용했어요.`); },
       clear: () => {
         session.current = defaultPhotos[id];
         scene.weapons.applyPhoto(id, defaultPhotos[id]);
         scene.onNotice(`${label}을 기본 ${defaultPhotos[id] ? "이미지" : "도형"}로 되돌렸어요.`);
       },
       clearLabel: () => defaultPhotos[id] ? "기본 이미지로" : "기본 도형으로",
-      previewSize: () => Math.min(190, weaponFrame(scene.weapons.config, id).size * scene.game.canvas.getBoundingClientRect().width / ROOM.width),
-    }, { id, label, mask: () => scene.weapons.skins.mask(scene.weapons.config, id) });
+    }, asset);
     weaponEditors.set(id, editor);
   }
   return editor;
@@ -184,10 +199,14 @@ scene.onReady = () => {
     defaultPhotos = photos;
     photoSession.current = photos.face;
     if (photos.face) scene.applyPhoto(photos.face, false);
-    for (const id of [...WEAPON_IDS, "bullet"] as const) {
+    for (const id of WEAPON_IDS) {
       if (!photos[id]) continue;
       try { scene.weapons.applyPhoto(id, photos[id]); }
       catch (error) { defaultPhotos[id] = null; console.warn(`기본 이미지 ${id}: 기본 도형을 사용합니다.`, error); }
+    }
+    if (photos.bullet.length) {
+      try { scene.weapons.applyBulletPhotos(photos.bullet); }
+      catch (error) { photos.bullet = []; console.warn("기본 탄알 이미지: 기본 도형을 사용합니다.", error); }
     }
     ready = true; element("loading").hidden = true;
     app.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = false; });

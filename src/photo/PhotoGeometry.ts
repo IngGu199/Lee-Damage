@@ -56,6 +56,22 @@ export function maskPolygon(mask: PhotoMask, source: Point, edit: PhotoTransform
   return points;
 }
 
+function withoutAdjacentDuplicates(points: Point[]) {
+  return points.filter((point, i) => Math.hypot(point.x - points[(i + 1) % points.length].x,
+    point.y - points[(i + 1) % points.length].y) > 1e-5);
+}
+
+function withoutStraightVertices(points: Point[]) {
+  return points.filter((p, i) => Math.abs(cross(points[(i + points.length - 1) % points.length],
+    p, points[(i + 1) % points.length])) > 1e-7);
+}
+
+/** Count contour vertices before triangulation, including holes and separate islands. */
+export function photoOutlineVertexCount(mask: PhotoMask, source: Point, edit: PhotoTransform) {
+  const outlines = mask.kind === "alpha" ? mask.alpha?.outlines ?? [] : [maskPolygon(mask, source, edit, false)];
+  return outlines.reduce((count, outline) => count + withoutStraightVertices(withoutAdjacentDuplicates(outline)).length, 0);
+}
+
 /** Clip convex pieces separately: cropping can split a concave outline into islands. */
 export function photoPieces(mask: PhotoMask, source: Point, edit: PhotoTransform) {
   const image = [{ x: 0, y: 0 }, { x: source.x, y: 0 }, source, { x: 0, y: source.y }]
@@ -72,12 +88,11 @@ export function photoPieces(mask: PhotoMask, source: Point, edit: PhotoTransform
 
 /** Ear clipping preserves concave cutouts, unlike a convex-hull fallback. */
 export function convexPieces(input: Point[]): Point[][] {
-  let points = input.filter((point, i) => Math.hypot(point.x - input[(i + 1) % input.length].x,
-    point.y - input[(i + 1) % input.length].y) > 1e-5).map(point => ({ ...point }));
+  let points = withoutAdjacentDuplicates(input).map(point => ({ ...point }));
   if (polygonArea(points) < 0) points.reverse();
   if (points.length < 3 || polygonArea(points) < 0.01) throw new Error("사진의 보이는 영역이 너무 작아요. 위치와 윤곽을 확인해 주세요.");
   // Drop collinear samples before triangulating, without changing the boundary.
-  points = points.filter((p, i, all) => Math.abs(cross(all[(i + all.length - 1) % all.length], p, all[(i + 1) % all.length])) > 1e-7);
+  points = withoutStraightVertices(points);
   if (points.every((p, i, all) => cross(p, all[(i + 1) % all.length], all[(i + 2) % all.length]) >= -1e-7)) return [points];
   const remaining = [...points], result: Point[][] = [];
   while (remaining.length > 3) {

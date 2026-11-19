@@ -51,7 +51,7 @@ export class ProjectileSystem {
       gun.lastShot = time;
       const direction = unit(subtract(this.state.target, gun.position)), position = add(gun.position, multiply(direction, definition.shape.length / 2 + p.radius));
       this.state.projectiles.push({ id: ++this.nextBullet, gunId: gun.id, weaponId: gun.weaponId, position, direction,
-        since: time, radius: p.radius, color: p.color, texture: this.bulletTexture });
+        since: time, radius: p.radius, color: p.color, texture: this.bulletTexture, skin: this.skins.chooseBulletSkin() });
       this.feedback.emit(definition.signals.fire, -gun.id, position, direction, time, p.speed, "collision.wall");
       fired = true;
     }
@@ -62,8 +62,9 @@ export class ProjectileSystem {
       const definition = this.state.config.weapons[bullet.weaponId], settings = definition.projectile;
       const start = bullet.position, end = add(start, multiply(bullet.direction, settings.speed * delta / 1000));
       const travel = subtract(end, start);
-      const skin = this.skins.get("bullet"), angle = Math.atan2(bullet.direction.y, bullet.direction.x);
-      const pieces = skin?.pieces.map(piece => piece.map(p => rotate(p, angle)));
+      const photoPieces = bullet.skin?.pieces;
+      const angle = Math.atan2(bullet.direction.y, bullet.direction.x);
+      const pieces = photoPieces?.length ? photoPieces.map(piece => piece.map(p => rotate(p, angle))) : undefined;
       const outline = pieces?.flat();
       let wallTime = 1;
       for (const [axis, low, high] of [["x", ROOM.left - (outline ? Math.min(...outline.map(p => p.x)) : -bullet.radius), ROOM.right - (outline ? Math.max(...outline.map(p => p.x)) : bullet.radius)],

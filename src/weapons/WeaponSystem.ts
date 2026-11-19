@@ -110,6 +110,11 @@ export class WeaponSystem {
     this.physics.rebuildMelee(id);
     this.render(this.scene.snapshot().simulationTime); this.onChange();
   }
+  applyBulletPhotos(photos: readonly AppliedPhoto[]) {
+    this.skins.applyBulletPhotos(this.config, photos);
+    this.render(this.scene.snapshot().simulationTime);
+    this.onChange();
+  }
   sizePercent(id: WeaponPhotoTarget) { return this.state.sizePercents[id]; }
   setSizePercent(id: WeaponPhotoTarget, percent: number) {
     if (!this.loaded || this.scene.paused || !Object.hasOwn(this.state.sizePercents, id) || !Number.isFinite(percent)) return false;

@@ -4,6 +4,14 @@ function assetUrl(path: string) {
   return `${import.meta.env.BASE_URL}${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
+export async function readSavedPhoto(entry: SavedPhoto, signal: AbortSignal) {
+  const response = await fetch(assetUrl(entry.path), { cache: "no-store", signal });
+  if (!response.ok || !response.headers.get("content-type")?.startsWith("image/"))
+    throw new Error("저장된 사진이 없어요. 목록을 새로고침해 주세요.");
+  const blob = await response.blob();
+  return new File([blob], entry.name, { type: blob.type });
+}
+
 /** Both development and static builds expose the same read-only catalog. */
 export class PhotoLibrary {
   private readonly grid: HTMLDivElement;
@@ -13,10 +21,11 @@ export class PhotoLibrary {
   private listing?: AbortController;
   private selection?: AbortController;
   private visible = false;
-  private selectedPath?: string;
+  private selectedPaths = new Set<string>();
 
   constructor(container: HTMLElement, private readonly target: string,
-    private readonly select: (file: File, entry: SavedPhoto) => Promise<void>) {
+    private readonly select: (file: File, entry: SavedPhoto) => Promise<void>,
+    private readonly chooseForBatch?: (entry: SavedPhoto) => void) {
     container.innerHTML = `<div class="photo-library-heading"><strong>저장된 사진</strong><button type="button">목록 새로고침</button></div>
       <p class="photo-library-status" role="status" aria-live="polite"></p>
       <div class="photo-library-grid" role="group" aria-label="public/images에 저장된 사진"></div>`;
@@ -26,14 +35,15 @@ export class PhotoLibrary {
     this.refreshButton.addEventListener("click", () => void this.refresh(), { signal: this.abort.signal });
     window.addEventListener("photo-library-changed", () => { if (this.visible) void this.refresh(); }, { signal: this.abort.signal });
   }
-  open(selectedPath?: string) { this.visible = true; this.selectedPath = selectedPath; void this.refresh(); }
+  open(paths: readonly string[] = []) { this.visible = true; this.setSelection(paths); void this.refresh(); }
   close() { this.visible = false; this.listing?.abort(); this.cancelSelection(); }
   cancelSelection() { this.selection?.abort(); }
-  clearSelection() { this.cancelSelection(); this.selectedPath = undefined; this.markSelected(); }
+  clearSelection() { this.cancelSelection(); this.setSelection([]); }
+  setSelection(paths: readonly string[]) { this.selectedPaths = new Set(paths); this.markSelected(); }
 
   private markSelected() {
     for (const button of this.grid.querySelectorAll<HTMLButtonElement>("button"))
-      button.setAttribute("aria-pressed", String(button.dataset.photoPath === this.selectedPath));
+      button.setAttribute("aria-pressed", String(this.selectedPaths.has(button.dataset.photoPath!)));
   }
   private async refresh() {
     this.listing?.abort(); const request = this.listing = new AbortController();
@@ -58,21 +68,22 @@ export class PhotoLibrary {
         button.append(image, name); button.addEventListener("click", () => void this.choose(entry)); fragment.append(button);
       }
       this.grid.replaceChildren(fragment); this.markSelected();
-      this.status.textContent = images.length ? `${images.length}장 · 사진을 눌러 바로 불러오세요.`
+      this.status.textContent = images.length ? this.chooseForBatch ? `${images.length}장 · 사진을 누를 때마다 탄알 목록에 추가돼요.`
+        : `${images.length}장 · 사진을 눌러 바로 불러오세요.`
         : "저장된 사진이 없어요. public/images에 사진을 넣거나 아래에서 새 사진을 추가해 주세요.";
     } catch {
       if (!request.signal.aborted && this.visible) this.status.textContent = "사진 목록을 불러오지 못했어요. 목록 새로고침을 눌러 주세요.";
     } finally { if (!request.signal.aborted) this.refreshButton.disabled = false; }
   }
   private async choose(entry: SavedPhoto) {
+    if (this.chooseForBatch) { this.chooseForBatch(entry); return; }
     this.cancelSelection(); const request = this.selection = new AbortController();
     this.status.textContent = `${entry.name} 사진을 불러오고 있어요…`;
     try {
-      const response = await fetch(assetUrl(entry.path), { cache: "no-store", signal: request.signal });
-      if (!response.ok || !response.headers.get("content-type")?.startsWith("image/")) throw new Error("저장된 사진이 없어요. 목록을 새로고침해 주세요.");
-      const blob = await response.blob(); if (request.signal.aborted || !this.visible) return;
-      this.selectedPath = entry.path; this.markSelected();
-      await this.select(new File([blob], entry.name, { type: blob.type }), entry);
+      const file = await readSavedPhoto(entry, request.signal);
+      if (request.signal.aborted || !this.visible) return;
+      this.setSelection([entry.path]);
+      await this.select(file, entry);
       if (!request.signal.aborted && this.visible) this.status.textContent = `${entry.name} 사진을 불러왔어요.`;
     } catch (error) {
       if (!request.signal.aborted && this.visible) this.status.textContent = error instanceof Error ? error.message : "사진을 불러오지 못했어요.";

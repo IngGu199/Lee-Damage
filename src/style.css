@@ -79,6 +79,10 @@ button.photo-primary { background: #c4dc77; border-color: #aac660; color: #293b2
 .photo-library-grid img { display: block; width: 100%; height: 64px; object-fit: contain; background: repeating-conic-gradient(#e4e8dd 0 25%, #fff 0 50%) 0 / 12px 12px; }
 .photo-library-grid span { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
 .photo-library-grid button[aria-pressed="true"] { outline: 2px solid #789747; outline-offset: -2px; }
+.photo-batch { margin: 0 0 14px; }
+.photo-batch-count { margin: 0 0 6px; color: #5d704c; font-size: 11px; }
+.photo-batch-list { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }
+.photo-batch button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 5px 8px; font-size: 10px; }
 .photo-status { min-height: 42px; font-size: 11px; line-height: 1.8; color: #5d704c; margin: 0 0 12px; }
 .photo-faces { display: flex; flex-wrap: wrap; gap: 5px; }
 .photo-faces:not(:empty) { margin-bottom: 12px; }
@@ -105,7 +109,12 @@ button.photo-primary { background: #c4dc77; border-color: #aac660; color: #293b2
 .photo-error { color: #9f4a3c; font-size: 12px; margin: 15px 0; }
 .photo-error:empty { margin: 0; }
 .photo-bottom { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--line); margin-top: 20px; padding-top: 18px; }
-.photo-bottom span { flex: 1; font-size: 10px; color: #88907e; margin: 0 10px; }
+.photo-bottom > span { flex: 1; font-size: 10px; color: #88907e; margin: 0 10px; }
+.photo-save-name { display: inline-flex; align-items: center; gap: 5px; min-width: 0; padding-left: 8px; border: 1px solid #d5dacb; border-radius: 8px; background: #fff; font-size: 12px; }
+.photo-save-name span { color: #5d704c; }
+.photo-save-name input { width: 100px; min-width: 0; padding: 9px 7px 9px 0; border: 0; background: transparent; color: inherit; font: inherit; }
+.photo-save-name:focus-within { outline: 2px solid #789747; }
+.photo-save-name input:focus { outline: none; }
 .photo-dialog .photo-clear { background: transparent; color: #77836c; }
 @media (max-width: 760px) {
   .photo-panel { grid-column: 1 / -1; }
@@ -113,7 +122,7 @@ button.photo-primary { background: #c4dc77; border-color: #aac660; color: #293b2
   .photo-dialog { padding: 20px; }
   .photo-layout { grid-template-columns: minmax(0, 1fr) 220px; gap: 18px; }
   .photo-heading h2 { font-size: 23px; }
-  .photo-bottom span { display: none; }
+  .photo-bottom > span { display: none; }
   .photo-bottom .photo-clear { margin-right: auto; }
 }
 @media (max-width: 580px) {

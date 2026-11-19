@@ -6,9 +6,12 @@ import { alphaTransform, recoverAlphaMask } from "./PhotoAlpha";
 import { PHOTO_SIZE, type PhotoMask } from "./PhotoTransform";
 import { photoPieces } from "./PhotoGeometry";
 
-import { DEFAULT_IMAGE_CONFIG, IMAGE_TARGETS, parseImageConfig, type ImageTarget } from "./ImageConfig";
+import { DEFAULT_IMAGE_CONFIG, IMAGE_TARGETS, parseImageConfig, type ImageTarget, type SingleImageTarget } from "./ImageConfig";
 
-export type DefaultPhotos = Record<ImageTarget, AppliedPhoto | null>;
+export type DefaultPhotos = Record<SingleImageTarget, AppliedPhoto | null> & { bullet: AppliedPhoto[] };
+export function emptyDefaultPhotos(): DefaultPhotos {
+  return { ...Object.fromEntries(IMAGE_TARGETS.map(target => [target, null])), bullet: [] } as DefaultPhotos;
+}
 
 async function loadPhoto(path: string, signal: AbortSignal, target: ImageTarget): Promise<AppliedPhoto> {
   const url = `${import.meta.env.BASE_URL}${path.split("/").map(encodeURIComponent).join("/")}`;
@@ -36,19 +39,36 @@ async function loadPhoto(path: string, signal: AbortSignal, target: ImageTarget)
     } finally { analyzer.destroy(); }
   }
   if (signal.aborted) throw new Error("기본 이미지 불러오기를 취소했습니다.");
-  return preparePhoto(draft, () => signal.aborted, target === "face");
+  const photo = await preparePhoto(draft, () => signal.aborted, target === "face");
+  if (target === "bullet") {
+    const pixels = photo.frames[0].getContext("2d")!.getImageData(0, 0, PHOTO_SIZE, PHOTO_SIZE).data;
+    if (!pixels.some((value, index) => index % 4 === 3 && value >= 128)) throw new Error("사진의 보이는 영역이 없어요.");
+  }
+  return photo;
 }
 
 /** Packaged faces gain landmarks/variants without auto-fitting; weapons only restore their outlines. */
 export async function loadDefaultImages(signal: AbortSignal): Promise<DefaultPhotos> {
   const config = await loadSettings("config/images.json", DEFAULT_IMAGE_CONFIG, parseImageConfig, signal);
-  const entries = await Promise.all(IMAGE_TARGETS.map(async target => {
-    const path = config[target];
-    try { return [target, path && !signal.aborted ? await loadPhoto(path, signal, target) : null] as const; }
+  const photos = emptyDefaultPhotos();
+  const load = async (path: string, target: ImageTarget) => {
+    try { return signal.aborted ? null : await loadPhoto(path, signal, target); }
     catch (error) {
-      if (!signal.aborted) console.warn(`기본 이미지 ${target}: 기본 도형을 사용합니다.`, error);
-      return [target, null] as const;
+      if (!signal.aborted) console.warn(`기본 이미지 ${target}: ${path} 불러오기 실패`, error);
+      return null;
+    }
+  };
+  await Promise.all(IMAGE_TARGETS.map(async target => {
+    if (target === "bullet") {
+      const paths = Array.isArray(config.bullet) ? config.bullet : config.bullet ? [config.bullet] : [];
+      for (const path of paths) {
+        const photo = await load(path, target);
+        if (photo) photos.bullet.push(photo);
+      }
+    } else {
+      const path = config[target];
+      if (path) photos[target] = await load(path, target);
     }
   }));
-  return Object.fromEntries(entries) as DefaultPhotos;
+  return photos;
 }
