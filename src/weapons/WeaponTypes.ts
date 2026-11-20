@@ -1,10 +1,16 @@
 import type { ContactMotion } from "../game/ContactMotion";
 import type { RagdollActor } from "../game/RagdollActor";
-import type { MeleeWeaponId, RangedWeaponId, WeaponId } from "./WeaponRegistry";
+import type { MeleeWeaponId, RangedWeaponId, weaponPhotoTargets } from "./WeaponRegistry";
 import type { Point } from "./geometry";
 import type { WeaponSkin } from "./WeaponSkins";
 
-export type WeaponPhotoTarget = WeaponId | "bullet";
+export type WeaponPhotoTarget = ReturnType<typeof weaponPhotoTargets>[number];
+export type WeaponSizeTarget = WeaponPhotoTarget;
+
+export function weaponSizeMax(id: WeaponSizeTarget) {
+  return id === "bullet" ? 1000 : 300;
+}
+
 export interface Pose { position: Point; angle: number }
 export interface AttachedBullet { position: Point; radius: number; color: number; texture?: string; skin?: WeaponSkin; direction?: Point }
 export interface Projectile extends AttachedBullet {

@@ -19,13 +19,23 @@ export class WeaponCombat {
     private readonly finishers: WeaponFinishers,
     private readonly feedback: WeaponFeedback,
   ) {}
+  private damage(weapon: WeaponId, contact: Contact, time: number) {
+    return this.scene.receiveHit({ lifeId: contact.actor.id, hitId: ++this.nextHit, source: "weapon", weaponId: weapon,
+      part: contact.part, position: contact.position, strength: contact.speed, damage: contact.damage, time });
+  }
+  blast(contact: Contact, time: number) {
+    this.damage("bomb", contact, time);
+    if (!contact.actor.lifecycle.interactive || contact.speed <= 0) return;
+    contact.actor.interact();
+    const impulse = multiply(contact.direction, contact.speed * REFERENCE_STEP / 1000);
+    for (const body of contact.actor.doll.bodies) if (!body.isStatic) Matter.Body.setVelocity(body, add(body.velocity, impulse));
+  }
   hit(weapon: WeaponId, contact: Contact, time: number, bullet?: AttachedBullet) {
     const definition = this.state.config.weapons[weapon], actor = contact.actor;
     this.feedback.emit(definition.signals.hit, actor.id, contact.position, contact.direction, time, contact.speed, "collision.normal");
     if (actor.lifecycle.interactive) {
       actor.interact();
-      const result = this.scene.receiveHit({ lifeId: actor.id, hitId: ++this.nextHit, source: "weapon", weaponId: weapon,
-        part: contact.part, position: contact.position, strength: contact.speed, damage: contact.damage, time });
+      const result = this.damage(weapon, contact, time);
       if (result?.lethal) { this.finishers.start(actor, weapon, definition, contact.direction, time, bullet); return; }
     }
     if (definition.damage.knockback === 0) return;

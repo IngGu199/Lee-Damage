@@ -4,6 +4,7 @@ import { meleeBehavior, weaponRegistration } from "./WeaponRegistry";
 import type { WeaponState } from "./WeaponState";
 import type { WeaponSkins } from "./WeaponSkins";
 import type { WeaponFinishers } from "./WeaponFinishers";
+import type { BombSystem } from "./BombSystem";
 import { add, rotate } from "./geometry";
 
 /** Draws the latest simulation state without advancing physics or applying hits. */
@@ -16,6 +17,7 @@ export class WeaponRenderer {
     private readonly skins: WeaponSkins,
     private readonly finishers: WeaponFinishers,
     private readonly effects: ImpactEffects,
+    private readonly bombs: BombSystem,
   ) { this.graphics = scene.add.graphics().setDepth(50); }
   render(time: number) {
     const g = this.graphics; g.clear();
@@ -25,6 +27,16 @@ export class WeaponRenderer {
       const definition = this.state.config.weapons[item.id];
       const parts = meleeBehavior(item.id).headOnly ? item.body.parts.slice(1) : [item.body];
       parts.forEach((body, index) => g.fillStyle(index ? definition.shape.headColor : definition.shape.color).fillPoints(body.vertices!, true));
+    }
+    const { bomberSize, bomberColor } = this.state.config.bomb;
+    for (const bomber of this.bombs.appearances) {
+      if (this.skins.draw(`bomber:${bomber.id}`, bomber.skin, bomber.position, 0)) continue;
+      g.fillStyle(bomberColor).fillRect(bomber.position.x - bomberSize / 2, bomber.position.y - bomberSize / 2, bomberSize, bomberSize);
+    }
+    for (const bomb of this.bombs.items) {
+      const { position, angle } = this.bombs.pose(bomb);
+      if (this.skins.draw(`bomb:${bomb.body.id}`, bomb.skin, position, angle)) continue;
+      g.fillStyle(this.state.config.weapons.bomb.shape.color).fillCircle(position.x, position.y, this.bombs.radius);
     }
     if (this.state.holding && this.state.body) {
       const point = add(this.state.body.position, rotate(this.state.gripOffset, this.state.body.angle));

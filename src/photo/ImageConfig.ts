@@ -1,7 +1,7 @@
 import { safeAssetPath } from "../weapons/WeaponConfig";
 import { WEAPON_IDS } from "../weapons/WeaponRegistry";
 
-export const IMAGE_TARGETS = ["face", ...WEAPON_IDS, "bullet"] as const;
+export const IMAGE_TARGETS = ["face", ...WEAPON_IDS, "bullet", "bomber"] as const;
 export type ImageTarget = typeof IMAGE_TARGETS[number];
 export type SingleImageTarget = Exclude<ImageTarget, "bullet">;
 export type ImageConfig = { version: 1; bullet: string | string[] | null } & Record<SingleImageTarget, string | null>;

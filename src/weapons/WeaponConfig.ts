@@ -26,8 +26,10 @@ const collisionLimits: Record<CollisionKind, { maxDamage: number }> = {
   body: { maxDamage: DAMAGE_RULES.maxCollisionDamage },
   debris: { maxDamage: DAMAGE_RULES.maxDebrisDamage },
 };
+const defaultBomb = { fuseMs: 5000, bomberLifetimeMs: 500, tickIntervalMs: 500, blastRadius: 180, bomberSize: 62, bomberColor: 0x788951 };
+
 export interface WeaponConfig { version: 1; defaults: WeaponDefinition; weapons: Record<WeaponId, WeaponDefinition>;
-  collision: typeof collisionLimits }
+  collision: typeof collisionLimits; bomb: typeof defaultBomb }
 
 /** A nonnegative screen value overrides JSON; -1 delegates to the source's cap. */
 export function damageLimit(config: WeaponConfig, hit: DamageHit, screenLimit: number) {
@@ -84,7 +86,7 @@ export function safeAssetPath(path: string) {
 }
 
 export function parseWeaponConfig(input: unknown): WeaponConfig {
-  const root = input as { version?: unknown; defaults?: unknown; weapons?: Record<string, unknown>; collision?: unknown };
+  const root = input as { version?: unknown; defaults?: unknown; weapons?: Record<string, unknown>; collision?: unknown; bomb?: unknown };
   if (!root || root.version !== 1) throw new Error("weapons.version: 지원하는 버전은 1입니다.");
   const shared = mergeSettings(common, root.defaults, "weapons.defaults");
   if (root.weapons !== undefined && (!root.weapons || typeof root.weapons !== "object" || Array.isArray(root.weapons)))
@@ -108,7 +110,12 @@ export function parseWeaponConfig(input: unknown): WeaponConfig {
       throw new Error(`weapons.${id}: 크기·물리·시간·색상 값이 허용 범위를 벗어났습니다.`);
     return [id, definition];
   })) as Record<WeaponId, WeaponDefinition>;
-  return { version: 1, defaults: shared, weapons, collision: mergeSettings(collisionLimits, root.collision, "weapons.collision") };
+  const bomb = mergeSettings(defaultBomb, root.bomb, "weapons.bomb");
+  if (bomb.fuseMs < 1 || bomb.fuseMs > 30000 || bomb.bomberLifetimeMs < 1 || bomb.bomberLifetimeMs > 5000 ||
+    bomb.tickIntervalMs < 50 || bomb.tickIntervalMs > 30000 || bomb.blastRadius < 1 || bomb.blastRadius > 600 ||
+    bomb.bomberSize < 16 || bomb.bomberSize > 300 || !Number.isInteger(bomb.bomberColor))
+    throw new Error("weapons.bomb: 시간·범위·폭탄마 크기·색상 값을 확인해 주세요.");
+  return { version: 1, defaults: shared, weapons, bomb, collision: mergeSettings(collisionLimits, root.collision, "weapons.collision") };
 }
 
 export const DEFAULT_WEAPON_CONFIG = parseWeaponConfig({ version: 1,

@@ -23,6 +23,7 @@
     "weapon.gun.hit": { "type": "sparks", "size": 38, "count": 6 },
     "weapon.gun.finish": { "type": "star", "size": 80, "color": "#f2936a" },
     "weapon.gun.pin": { "type": "ring", "size": 80, "color": "#f2936a" },
-    "weapon.gun.burst": { "type": "sparks", "size": 220, "count": 24, "durationMs": 600, "color": "#f2936a" }
+    "weapon.gun.burst": { "type": "sparks", "size": 220, "count": 24, "durationMs": 600, "color": "#f2936a" },
+    "weapon.bomb.explode": { "type": "ring", "size": 180, "durationMs": 420, "color": "#ef8553", "lineWidth": 5 }
   }
 }

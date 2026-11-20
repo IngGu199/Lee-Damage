@@ -1,24 +1,34 @@
 import { prepareStoredPhoto } from "../photo/DefaultImages";
+import { MAX_BULLET_PHOTOS } from "../photo/ImageConfig";
 import { readPhotoCatalog, readSavedPhoto, savedPhotoUrl, type SavedPhoto } from "../photo/PhotoLibrary";
 import type { AppliedPhoto } from "../photo/PhotoSession";
-import { isWeaponId, type ToolId, type WeaponId } from "./WeaponRegistry";
+import { isWeaponId, weaponPhotoTargets, type ToolId, type WeaponId } from "./WeaponRegistry";
+import type { WeaponPhotoTarget } from "./WeaponTypes";
 
 interface WeaponPickerActions {
   select(id: ToolId): boolean;
-  edit(id: WeaponId): void;
-  apply(id: WeaponId, photo: AppliedPhoto): void;
-  photo(id: WeaponId): AppliedPhoto | undefined;
-  label(id: WeaponId): string;
+  edit(id: WeaponPhotoTarget): void;
+  apply(id: Exclude<WeaponPhotoTarget, "bullet">, photo: AppliedPhoto): void;
+  applyBulletPhotos(photos: readonly AppliedPhoto[]): void;
+  photo(id: WeaponPhotoTarget): AppliedPhoto | undefined;
+  bulletPhotos(): AppliedPhoto[];
+  label(id: WeaponPhotoTarget): string;
   hint(id: WeaponId): string;
   notice(message: string): void;
+}
+
+interface PhotoColumn {
+  target: WeaponPhotoTarget;
+  element: HTMLElement;
+  add: HTMLButtonElement;
+  list: HTMLElement;
+  status: HTMLElement;
 }
 
 export class WeaponPicker {
   private readonly strip: HTMLElement;
   private readonly panel: HTMLElement;
-  private readonly list: HTMLElement;
-  private readonly add: HTMLButtonElement;
-  private readonly status: HTMLElement;
+  private columns: PhotoColumn[] = [];
   private readonly buttons = new Map<ToolId, HTMLButtonElement>();
   private readonly thumbnails = new WeakMap<HTMLCanvasElement, string>();
   private readonly thumbnailCanvas = document.createElement("canvas");
@@ -31,9 +41,6 @@ export class WeaponPicker {
   constructor(private readonly root: HTMLElement, private readonly actions: WeaponPickerActions) {
     this.strip = root.querySelector(".weapon-strip")!;
     this.panel = root.querySelector(".weapon-photo-panel")!;
-    this.list = this.panel.querySelector(".weapon-photo-list")!;
-    this.add = this.panel.querySelector(".weapon-photo-add")!;
-    this.status = this.panel.querySelector(".weapon-photo-status")!;
     this.thumbnailCanvas.width = this.thumbnailCanvas.height = 96;
     const { signal } = this.events;
 
@@ -42,22 +49,13 @@ export class WeaponPicker {
       if (id !== "hand" && !isWeaponId(id)) continue;
       this.buttons.set(id, button);
       button.addEventListener("click", () => {
-        if (id !== "hand" && this.openId !== id) {
-          this.open(id);
-          return;
-        }
-        if (this.actions.select(id)) this.close();
+        if (id === "hand" || this.openId === id) this.select(id);
+        else this.open(id);
       }, { signal });
       button.addEventListener("keydown", event => {
-        if (event.key === "ArrowDown" && this.openId === id) { event.preventDefault(); this.add.focus(); }
+        if (event.key === "ArrowDown" && this.openId === id) { event.preventDefault(); this.columns[0]?.add.focus(); }
       }, { signal });
     }
-    this.add.addEventListener("click", () => {
-      const id = this.openId;
-      if (!id) return;
-      this.close(true);
-      this.actions.edit(id);
-    }, { signal });
     this.strip.addEventListener("scroll", this.position, { passive: true, signal });
     this.strip.addEventListener("wheel", event => {
       if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY) || this.strip.scrollWidth <= this.strip.clientWidth) return;
@@ -73,7 +71,7 @@ export class WeaponPicker {
     }, { signal });
     window.addEventListener("resize", this.position, { signal });
     window.addEventListener("photo-library-changed", () => {
-      if (this.openId && !this.applying) void this.loadPhotos(this.openId);
+      if (this.openId && !this.applying) void this.loadPhotos();
     }, { signal });
     this.layout = new ResizeObserver(this.position);
     this.layout.observe(root);
@@ -82,9 +80,7 @@ export class WeaponPicker {
   }
 
   select(id: ToolId) {
-    if (!this.actions.select(id)) return;
-    if (id === "hand") { this.close(); return; }
-    this.open(id);
+    if (this.actions.select(id)) this.close();
   }
 
   private open(id: WeaponId) {
@@ -94,14 +90,38 @@ export class WeaponPicker {
     this.close();
     this.openId = id;
     button.setAttribute("aria-expanded", "true");
-    const label = this.actions.label(id);
-    this.panel.setAttribute("aria-label", `${label} 사진 선택`);
-    this.add.setAttribute("aria-label", `${label} 사진 편집`);
+    const targets = weaponPhotoTargets(id);
+    this.columns = targets.map(target => this.createColumn(target, targets.length > 1));
+    this.panel.replaceChildren(...this.columns.map(column => column.element));
+    this.panel.dataset.columns = String(this.columns.length);
+    this.panel.setAttribute("aria-label", `${this.actions.label(id)} 사진 선택`);
     this.panel.hidden = false;
     this.panel.scrollTop = 0;
     button.scrollIntoView({ block: "nearest", inline: "nearest" });
     this.position();
-    if (this.openId === id) void this.loadPhotos(id);
+    if (this.openId === id) void this.loadPhotos();
+  }
+
+  private createColumn(target: WeaponPhotoTarget, showTitle: boolean): PhotoColumn {
+    const element = document.createElement("section"), label = this.actions.label(target);
+    element.className = "weapon-photo-column";
+    element.dataset.photoTarget = target;
+    element.setAttribute("aria-label", `${label} 사진`);
+    element.innerHTML = `<button type="button" class="weapon-photo-add">+</button>
+      <p class="weapon-photo-status" role="status"></p><div class="weapon-photo-list"></div>`;
+    if (showTitle) {
+      const title = document.createElement("div");
+      title.className = "weapon-photo-title";
+      title.textContent = label;
+      element.prepend(title);
+    }
+    const add = element.querySelector<HTMLButtonElement>(".weapon-photo-add")!;
+    add.setAttribute("aria-label", `${label} 사진 편집`);
+    add.addEventListener("click", () => {
+      this.close(true);
+      this.actions.edit(target);
+    });
+    return { target, element, add, list: element.querySelector(".weapon-photo-list")!, status: element.querySelector(".weapon-photo-status")! };
   }
 
   sync(mode: ToolId | undefined, enabled: boolean) {
@@ -159,49 +179,78 @@ export class WeaponPicker {
     this.panel.style.top = `${top - root.top - this.root.clientTop}px`;
   };
 
-  private async loadPhotos(id: WeaponId) {
+  private async loadPhotos() {
     this.listing?.abort();
     const request = this.listing = new AbortController();
-    this.list.replaceChildren();
-    this.status.textContent = "사진을 불러오는 중…";
+    const columns = this.columns;
+    for (const column of columns) {
+      column.list.replaceChildren();
+      column.status.textContent = "사진을 불러오는 중…";
+    }
     try {
-      const photos = (await readPhotoCatalog(request.signal)).filter(photo => photo.name.startsWith(`${id}-`));
+      const catalog = await readPhotoCatalog(request.signal);
       if (request.signal.aborted) return;
-      const current = this.actions.photo(id)?.libraryPath;
-      for (const photo of photos) {
-        const button = document.createElement("button");
-        button.type = "button"; button.className = "weapon-photo-option";
-        button.title = photo.name; button.setAttribute("aria-pressed", String(photo.path === current));
-        const image = document.createElement("img");
-        image.alt = ""; image.src = savedPhotoUrl(photo.path); image.loading = "lazy"; image.decoding = "async";
-        const label = document.createElement("span");
-        label.textContent = photo.name;
-        button.append(image, label);
-        button.addEventListener("click", () => void this.applyPhoto(id, photo));
-        this.list.append(button);
+      for (const column of columns) {
+        const photos = catalog.filter(photo => photo.name.startsWith(`${column.target}-`));
+        for (const photo of photos) {
+          const button = document.createElement("button");
+          button.type = "button"; button.className = "weapon-photo-option";
+          button.title = photo.name; button.dataset.photoPath = photo.path;
+          const image = document.createElement("img");
+          image.alt = ""; image.src = savedPhotoUrl(photo.path); image.loading = "lazy"; image.decoding = "async";
+          const label = document.createElement("span");
+          label.textContent = photo.name;
+          button.append(image, label);
+          button.addEventListener("click", () => void this.applyPhoto(column, photo));
+          column.list.append(button);
+        }
+        this.markSelection(column);
+        column.status.textContent = photos.length ? "" : "저장된 사진이 없어요.";
       }
-      this.status.textContent = photos.length ? "" : "저장된 사진이 없어요.";
     } catch {
-      if (!request.signal.aborted) this.status.textContent = "사진 목록을 불러오지 못했어요.";
+      if (!request.signal.aborted) for (const column of columns) column.status.textContent = "사진 목록을 불러오지 못했어요.";
     }
   }
 
-  private async applyPhoto(id: WeaponId, entry: SavedPhoto) {
-    this.applying?.abort();
+  private markSelection(column: PhotoColumn) {
+    const selected = column.target === "bullet" ? this.actions.bulletPhotos().map(photo => photo.libraryPath)
+      : [this.actions.photo(column.target)?.libraryPath];
+    for (const button of column.list.querySelectorAll<HTMLButtonElement>("button"))
+      button.setAttribute("aria-pressed", String(selected.includes(button.dataset.photoPath)));
+  }
+
+  private async applyPhoto(column: PhotoColumn, entry: SavedPhoto) {
+    if (this.applying) return;
     const request = this.applying = new AbortController();
-    this.status.textContent = "사진을 적용하는 중…";
+    const { target, status } = column;
+    status.textContent = "사진을 적용하는 중…";
     try {
+      const bullets = target === "bullet" ? this.actions.bulletPhotos() : [];
+      const remaining = bullets.filter(photo => photo.libraryPath !== entry.path);
+      if (remaining.length < bullets.length) {
+        this.actions.applyBulletPhotos(remaining);
+        this.markSelection(column);
+        status.textContent = "";
+        return;
+      }
+      if (bullets.length >= MAX_BULLET_PHOTOS) throw new Error(`탄알 사진은 최대 ${MAX_BULLET_PHOTOS}장까지 선택할 수 있어요.`);
       const file = await readSavedPhoto(entry, request.signal);
       if (request.signal.aborted) return;
-      const photo = await prepareStoredPhoto(file, entry.path, id, request.signal);
+      const photo = await prepareStoredPhoto(file, entry.path, target, request.signal);
       if (request.signal.aborted) return;
-      this.actions.apply(id, photo);
+      if (target === "bullet") {
+        this.actions.applyBulletPhotos([...bullets, photo]);
+        this.markSelection(column);
+        status.textContent = "";
+        return;
+      }
+      this.actions.apply(target, photo);
       this.close(true);
-      this.actions.notice(`새로 소환하는 ${this.actions.label(id)}에 이 사진을 사용해요.`);
+      this.actions.notice(`새로 소환하는 ${this.actions.label(target)}에 이 사진을 사용해요.`);
     } catch (error) {
       if (!request.signal.aborted) {
         const message = error instanceof Error ? error.message : "사진을 적용하지 못했어요.";
-        this.status.textContent = message;
+        status.textContent = message;
         this.actions.notice(message);
       }
     } finally {

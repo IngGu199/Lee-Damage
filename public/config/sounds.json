@@ -63,6 +63,9 @@
         1
       ]
     },
+    "weapon.bomb.spawn": { "files": ["sfx/kenney-impact/wall-001.ogg"], "volume": 0.5, "cooldownMs": 0, "maxVoices": 2, "priority": 3 },
+    "weapon.bomb.tick": { "files": ["sfx/bomb/tick.wav"], "volume": 0.3, "rateRange": [1, 1], "cooldownMs": 0, "maxVoices": 4, "priority": 1 },
+    "weapon.bomb.explode": { "files": ["sfx/others/BOOM.mp3"], "volume": 0.85, "cooldownMs": 0, "maxVoices": 4, "priority": 10 },
     "death.burst": {
       "files": [
         "sfx/others/BOOM.mp3"

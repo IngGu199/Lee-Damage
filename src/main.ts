@@ -10,8 +10,9 @@ import { DEFAULT_SETTINGS, ROOM, type LabStats } from "./game/config";
 import { weaponFrame, type WeaponPhotoTarget } from "./weapons/WeaponSkins";
 import { emptyDefaultPhotos, loadDefaultImages } from "./photo/DefaultImages";
 import { DEFAULT_WEAPON_CONFIG } from "./weapons/WeaponConfig";
-import { WEAPON_REGISTRY, WEAPON_IDS, isRangedWeapon, toolForShortcut, weaponRegistration } from "./weapons/WeaponRegistry";
+import { WEAPON_REGISTRY, WEAPON_IDS, toolForShortcut, weaponPhotoTargets, weaponRegistration } from "./weapons/WeaponRegistry";
 import { WeaponPicker } from "./weapons/WeaponPicker";
+import { weaponSizeMax } from "./weapons/WeaponTypes";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
@@ -32,12 +33,12 @@ app.innerHTML = `
         </div>
         <div class="toolbar-control weapon-size-panel">
           <label id="weapon-size-label" for="weapon-size">무기 크기</label>
-          <input id="weapon-size" type="range" min="10" max="300" step="1" value="100" aria-label="선택한 무기 크기" title="선택한 무기의 크기를 조절합니다. 탄알 크기는 별도로 조절합니다." disabled>
-          <output id="weapon-size-value" for="weapon-size">100%</output>
+          <input id="weapon-size" type="range" min="10" max="300" step="1" value="100" disabled>
+          <output id="weapon-size-value" for="weapon-size">선택</output>
         </div>
         <div id="bullet-size-panel" class="toolbar-control weapon-size-panel" hidden>
-          <label for="bullet-size">탄알 크기</label>
-          <input id="bullet-size" type="range" min="10" max="1000" step="1" value="100" aria-label="탄알 크기" title="총 크기와 별도로 탄알 크기를 최대 1000%까지 조절합니다." disabled>
+          <label id="bullet-size-label" for="bullet-size">발사체 크기</label>
+          <input id="bullet-size" type="range" min="10" max="300" step="1" value="100" disabled>
           <output id="bullet-size-value" for="bullet-size">100%</output>
         </div>
       </div>
@@ -53,13 +54,8 @@ app.innerHTML = `
           <button type="button" class="weapon-tile" data-tool="hand" aria-pressed="true" disabled title="인형·잔해·바닥에 놓인 무기 잡기"><span class="weapon-tile-label">손</span><kbd>1</kbd></button>
           ${WEAPON_REGISTRY.map(weapon => `<button type="button" class="weapon-tile" data-tool="${weapon.id}" aria-pressed="false" aria-expanded="false" aria-controls="weapon-photo-panel" disabled title="${weapon.behavior.hint(DEFAULT_WEAPON_CONFIG.weapons[weapon.id])}"><img alt="" hidden><span class="weapon-tile-label">${weapon.label}</span><kbd>${weapon.keyLabel}</kbd></button>`).join("")}
         </div>
-        <div class="weapon-photo-panel" id="weapon-photo-panel" role="group" aria-label="무기 사진 선택" hidden>
-          <button type="button" class="weapon-photo-add" aria-label="무기 사진 편집">+</button>
-          <p class="weapon-photo-status" role="status"></p>
-          <div class="weapon-photo-list"></div>
-        </div>
+        <div class="weapon-photo-panel" id="weapon-photo-panel" role="group" aria-label="무기 사진 선택" hidden></div>
         <button id="clear-weapons" disabled title="방 안의 무기와 비행 중인 탄알을 모두 삭제 · 잡은 물건만 삭제하려면 X">무기 모두 삭제 <kbd>C</kbd></button>
-        <button type="button" id="bullet-photo-open" disabled>탄알 사진 편집</button>
       </div>
     </header>
     <div class="canvas-wrap">
@@ -88,10 +84,13 @@ const photoEditor = new PhotoEditor(photoSession, {
   previewSize: () => scene.game.canvas.getBoundingClientRect().width / ROOM.width * Math.max(PHOTO_BASE_SIZE, scene.face.displaySize),
 });
 const weaponEditors = new Map<WeaponPhotoTarget, PhotoEditor>();
+const weaponPhotoLabel = (id: WeaponPhotoTarget) => id === "bullet" ? "탄알"
+  : id === "bomber" ? "폭탄마" : scene.weapons.config.weapons[id].label;
 const weaponPhotoEditor = (id: WeaponPhotoTarget) => {
   let editor = weaponEditors.get(id);
   if (!editor) {
-    const session = new PhotoSession(), label = id === "bullet" ? "탄알" : scene.weapons.config.weapons[id].label;
+    const session = new PhotoSession();
+    const label = weaponPhotoLabel(id);
     session.current = scene.weapons.skins.get(id)?.photo ?? null;
     const shared = {
       begin: () => scene.beginPhotoEdit(), end: () => scene.endPhotoEdit(),
@@ -125,43 +124,47 @@ const weaponPhotoEditor = (id: WeaponPhotoTarget) => {
   return editor;
 };
 let ready = false;
+const sizeControls = [
+  { input: element<HTMLInputElement>("weapon-size"), label: element("weapon-size-label"),
+    output: element("weapon-size-value"), defaultLabel: "무기 크기" },
+  { input: element<HTMLInputElement>("bullet-size"), label: element("bullet-size-label"),
+    output: element("bullet-size-value"), defaultLabel: "발사체 크기" },
+] as const;
+const selectedSizeTargets = () => {
+  const mode = scene.weapons?.mode;
+  return ready && scene.weapons?.loaded && mode && mode !== "hand" ? weaponPhotoTargets(mode) : [] as const;
+};
 const weaponPicker = new WeaponPicker(element("weapon-picker"), {
   select: id => ready && scene.selectTool(id),
   edit: id => weaponPhotoEditor(id).show(scene.weapons.skins.get(id)?.photo ?? null),
   apply: (id, photo) => scene.weapons.applyPhoto(id, photo),
+  applyBulletPhotos: photos => scene.weapons.applyBulletPhotos(photos),
   photo: id => scene.weapons?.skins.get(id)?.photo,
-  label: id => scene.weapons.config.weapons[id].label,
+  bulletPhotos: () => scene.weapons.skins.bulletPhotos(),
+  label: weaponPhotoLabel,
   hint: id => weaponRegistration(id).behavior.hint(scene.weapons.config.weapons[id]),
   notice: message => scene.onNotice(message),
 });
 scene.onToolState = () => {
-  const mode = scene.weapons?.mode, size = element<HTMLInputElement>("weapon-size");
-  weaponPicker.sync(mode, ready && Boolean(scene.weapons?.loaded) && !scene.paused);
-  element<HTMLButtonElement>("bullet-photo-open").disabled = !ready || !scene.weapons?.loaded;
-  const weaponSelected = ready && scene.weapons?.loaded && mode && mode !== "hand";
-  size.disabled = !weaponSelected || scene.paused;
-  if (weaponSelected) {
-    const label = scene.weapons.config.weapons[mode].label, percent = scene.weapons.sizePercent(mode);
-    size.value = String(percent);
-    size.setAttribute("aria-label", `${label} 크기`);
-    size.setAttribute("aria-valuetext", `${percent}%`);
-    element("weapon-size-label").textContent = `${label} 크기`;
-    element("weapon-size-value").textContent = `${percent}%`;
-  } else {
-    element("weapon-size-label").textContent = "무기 크기";
-    element("weapon-size-value").textContent = "선택";
-    size.setAttribute("aria-label", "무기를 선택한 후 크기 조절");
-    size.removeAttribute("aria-valuetext");
-  }
-  const bulletSize = element<HTMLInputElement>("bullet-size"), gunSelected = Boolean(mode && isRangedWeapon(mode) && scene.weapons.loaded);
-  element("bullet-size-panel").hidden = !gunSelected;
-  bulletSize.disabled = !gunSelected || scene.paused;
-  if (gunSelected) {
-    const percent = scene.weapons.sizePercent("bullet");
-    bulletSize.value = String(percent);
-    bulletSize.setAttribute("aria-valuetext", `${percent}%`);
-    element("bullet-size-value").textContent = `${percent}%`;
-  }
+  weaponPicker.sync(scene.weapons?.mode, ready && Boolean(scene.weapons?.loaded) && !scene.paused);
+  const targets = selectedSizeTargets();
+  element("bullet-size-panel").hidden = targets.length < 2;
+  sizeControls.forEach(({ input, label, output, defaultLabel }, index) => {
+    const target = targets[index];
+    input.disabled = !target || scene.paused;
+    if (target) {
+      const percent = scene.weapons.sizePercent(target);
+      input.max = String(weaponSizeMax(target));
+      input.value = String(percent);
+      input.setAttribute("aria-valuetext", `${percent}%`);
+      label.textContent = `${weaponPhotoLabel(target)} 크기`;
+      output.textContent = `${percent}%`;
+    } else {
+      input.removeAttribute("aria-valuetext");
+      label.textContent = defaultLabel;
+      output.textContent = "선택";
+    }
+  });
   element<HTMLButtonElement>("clear-weapons").disabled = !scene.weapons?.loaded || scene.paused || !scene.weapons.hasWeapons;
 };
 scene.onStats = (stats: LabStats) => {
@@ -199,7 +202,7 @@ scene.onReady = () => {
     defaultPhotos = photos;
     photoSession.current = photos.face;
     if (photos.face) scene.applyPhoto(photos.face, false);
-    for (const id of WEAPON_IDS) {
+    for (const id of [...WEAPON_IDS, "bomber"] as const) {
       if (!photos[id]) continue;
       try { scene.weapons.applyPhoto(id, photos[id]); }
       catch (error) { defaultPhotos[id] = null; console.warn(`기본 이미지 ${id}: 기본 도형을 사용합니다.`, error); }
@@ -214,11 +217,6 @@ scene.onReady = () => {
   })();
 };
 element("photo-open").addEventListener("click", () => photoEditor.show());
-element("bullet-photo-open").addEventListener("click", () => {
-  if (!ready || !scene.weapons.loaded) return;
-  weaponPicker.close();
-  weaponPhotoEditor("bullet").show();
-});
 element("spawn").addEventListener("click", () => scene.spawnRagdoll());
 element("force-burst").addEventListener("click", () => scene.forceBurst());
 element("pause").addEventListener("click", () => scene.setPaused(!scene.paused));
@@ -231,14 +229,11 @@ element<HTMLInputElement>("sound-volume").addEventListener("input", event => {
 element<HTMLInputElement>("sound-muted").addEventListener("change", event => {
   if (ready) scene.audio.setMuted((event.target as HTMLInputElement).checked);
 });
-element<HTMLInputElement>("weapon-size").addEventListener("input", event => {
-  const mode = scene.weapons?.mode;
-  if (!ready || !mode || mode === "hand") return;
-  scene.weapons.setSizePercent(mode, Number((event.target as HTMLInputElement).value));
-});
-element<HTMLInputElement>("bullet-size").addEventListener("input", event => {
-  if (!ready || !scene.weapons || !isRangedWeapon(scene.weapons.mode)) return;
-  scene.weapons.setSizePercent("bullet", Number((event.target as HTMLInputElement).value));
+sizeControls.forEach(({ input }, index) => {
+  input.addEventListener("input", () => {
+    const target = selectedSizeTargets()[index];
+    if (target) scene.weapons.setSizePercent(target, input.valueAsNumber);
+  });
 });
 const damageInput = element<HTMLInputElement>("damage-limit");
 const updateDamageLimit = () => {

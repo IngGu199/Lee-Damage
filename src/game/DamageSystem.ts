@@ -60,7 +60,7 @@ export function damageFeedback(hit: DamageHit, maxDamage?: number): DamageFeedba
   return { damage, intensity: damageIntensity(damage) };
 }
 
-/** Shared HP/injury path. Bullets bypass and do not start the collision/melee immunity window. */
+/** Shared HP/injury path. Each projectile or bomb can hit during collision/melee immunity. */
 export class DamageSystem {
   readonly health = new HealthState();
   readonly progression = new InjuryProgression();
@@ -80,15 +80,14 @@ export class DamageSystem {
       !Number.isFinite(hit.position.x + hit.position.y)) return null;
     this.lastHit.set(hit.source, hit.hitId);
     this.lastTime = hit.time;
-    // Gun hits are individual projectiles, consumed on contact by WeaponSystem.
-    // Keep duplicate/stale-hit checks and per-hit damage caps for every source.
-    const projectile = hit.source === "weapon" && Boolean(hit.weaponId && isRangedWeapon(hit.weaponId));
-    if (!projectile && this.invulnerable(hit.time)) return null;
+    const independentHit = hit.source === "weapon" && Boolean(hit.weaponId &&
+      (hit.weaponId === "bomb" || isRangedWeapon(hit.weaponId)));
+    if (!independentHit && this.invulnerable(hit.time)) return null;
     const impact = damageFeedback(hit, maxDamage), amount = impact.damage;
     if (!Number.isFinite(amount) || amount <= 0) return null;
     const lostHp = this.health.lose(amount);
     if (!lostHp) return null;
-    if (!projectile) this.invulnerableUntil = hit.time + DAMAGE_RULES.invulnerabilityMs;
+    if (!independentHit) this.invulnerableUntil = hit.time + DAMAGE_RULES.invulnerabilityMs;
     return { hit, impact, lostHp, hp: this.health.hp, lethal: this.health.dead,
       injuries: this.progression.advance(this.health.totalDamage), variant: this.variant };
   }

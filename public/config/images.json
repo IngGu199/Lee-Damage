@@ -4,5 +4,7 @@
   "bat": "images/bat-테러단.png",
   "hammer": "images/hammer-코스피5000시대돌입.png",
   "gun": "images/gun-젠슨황의크고우람한총.png",
-  "bullet": ["images/bullet-5090.png"]
+  "bullet": ["images/bullet-5090.png"],
+  "bomber": "images/bomber-램혁수단.png",
+  "bomb": "images/bomb-램.png"
 }

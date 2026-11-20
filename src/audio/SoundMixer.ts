@@ -7,7 +7,7 @@ export interface SoundBackend {
 }
 interface Request { events: string[]; owners: Set<number>; time: number; speed: number; debris: boolean; fallback?: string }
 interface Layer { name: string; key: string; event: SoundEventConfig }
-interface Playing { event: string; priority: number; voice: SoundVoice }
+interface Playing { event: string; name: string; owners: Set<number>; priority: number; voice: SoundVoice }
 
 /** Merge duplicate reports and apply each speed band's cooldown independently. */
 export class SoundMixer {
@@ -98,7 +98,8 @@ export class SoundMixer {
         const voice = this.backend.play(file, volume, rate, () => { if (playing) this.active.delete(playing); });
         if (!voice) continue; // Unloaded/locked contexts never build a backlog.
         this.lastPlayed.set(key, request.time);
-        playing = { event: key, priority: event.priority, voice }; this.active.add(playing); started.add(playing);
+        playing = { event: key, name, owners: new Set(request.owners), priority: event.priority, voice };
+        this.active.add(playing); started.add(playing);
         this.lastFiles.set(key, file); this.played++;
         this.recent.push({ event: name, file, volume, rate, speed: Number.isFinite(request.speed) ? request.speed : null });
         if (this.recent.length > 16) this.recent.shift();
@@ -107,6 +108,15 @@ export class SoundMixer {
   }
   private stopVoice(playing: Playing) { this.active.delete(playing); playing.voice.stop(); }
   stop() { this.pending.clear(); for (const playing of [...this.active]) this.stopVoice(playing); }
+  stopSignal(name: string, owner: number) {
+    for (const [key, request] of this.pending) {
+      if (request.events.length === 1 && request.events[0] === name && request.owners.delete(owner) && !request.owners.size)
+        this.pending.delete(key);
+    }
+    for (const playing of this.active) {
+      if (playing.name === name && playing.owners.delete(owner) && !playing.owners.size) this.stopVoice(playing);
+    }
+  }
   reset() { this.stop(); this.lastFiles.clear(); this.lastPlayed.clear(); }
   forget(owner: number) {
     for (const [key, request] of this.pending) { request.owners.delete(owner); if (!request.owners.size) this.pending.delete(key); }

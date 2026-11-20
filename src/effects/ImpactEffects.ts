@@ -45,6 +45,7 @@ export const DEFAULT_EFFECT_CONFIG = parseEffectConfig({ version: 1, events: {
   "weapon.gun.pin": { type: "ring", size: 80, color: 0xf2936a },
   "weapon.gun.finish": { type: "star", size: 80, color: 0xf2936a },
   "weapon.gun.burst": { type: "sparks", size: 220, count: 24, durationMs: 600, color: 0xf2936a },
+  "weapon.bomb.explode": { type: "ring", size: 180, durationMs: 420, color: 0xef8553, lineWidth: 5 },
 } });
 
 /** Bounded shapes and damage labels, advanced only by simulation time. */

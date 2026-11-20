@@ -37,8 +37,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, canvas:focus-visible
 .weapon-tile-label { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; text-align: center; font-weight: 600; }
 .weapon-tile kbd { position: absolute; top: 3px; right: 3px; background: #fffef9ed; }
 .weapon-tile:focus-visible, .weapon-photo-panel button:focus-visible { outline-offset: -3px; }
-.weapon-photo-panel { position: absolute; z-index: 3; display: flex; flex-direction: column; gap: var(--weapon-tile-gap); align-items: flex-start; margin-inline-start: -6px; block-size: calc(3 * var(--weapon-tile-size) + 2 * var(--weapon-tile-gap) + 12px); padding: 5px; overflow: hidden auto; overscroll-behavior-y: contain; border: 1px solid #cbd5bf; border-radius: 8px; background: #fffef9; box-shadow: 0 8px 20px #1928192b; scrollbar-width: thin; scrollbar-color: #a2af93 transparent; }
+.weapon-photo-panel { position: absolute; z-index: 3; display: flex; gap: var(--weapon-tile-gap); align-items: flex-start; margin-inline-start: -6px; inline-size: calc(var(--weapon-tile-size) + 26px); block-size: calc(3 * var(--weapon-tile-size) + 2 * var(--weapon-tile-gap) + 12px); padding: 5px; overflow: hidden auto; overscroll-behavior-y: contain; border: 1px solid #cbd5bf; border-radius: 8px; background: #fffef9; box-shadow: 0 8px 20px #1928192b; scrollbar-width: thin; scrollbar-color: #a2af93 transparent; }
+.weapon-photo-panel[data-columns="2"] { inline-size: calc(2 * var(--weapon-tile-size) + var(--weapon-tile-gap) + 26px); block-size: calc(3 * var(--weapon-tile-size) + 3 * var(--weapon-tile-gap) + 28px); }
 .weapon-photo-panel[hidden] { display: none; }
+.weapon-photo-column { display: flex; flex: none; flex-direction: column; gap: var(--weapon-tile-gap); inline-size: var(--weapon-tile-size); }
+.weapon-photo-title { font-size: 10px; font-weight: 600; line-height: 16px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .weapon-photo-list { display: grid; gap: var(--weapon-tile-gap); }
 .weapon-tools .weapon-photo-add, .weapon-tools .weapon-photo-option { display: grid; flex: none; place-items: center; width: var(--weapon-tile-size); height: var(--weapon-tile-size); padding: 4px; gap: 2px; }
 .weapon-tools .weapon-photo-add { font-size: 30px; line-height: 1; color: #425b31; }

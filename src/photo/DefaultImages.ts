@@ -11,7 +11,9 @@ import { DEFAULT_IMAGE_CONFIG, IMAGE_TARGETS, parseImageConfig, type ImageTarget
 
 export type DefaultPhotos = Record<SingleImageTarget, AppliedPhoto | null> & { bullet: AppliedPhoto[] };
 export function emptyDefaultPhotos(): DefaultPhotos {
-  return { ...Object.fromEntries(IMAGE_TARGETS.map(target => [target, null])), bullet: [] } as DefaultPhotos;
+  const singles = IMAGE_TARGETS.filter(target => target !== "bullet");
+  const photos = Object.fromEntries(singles.map(target => [target, null])) as Record<SingleImageTarget, null>;
+  return { ...photos, bullet: [] };
 }
 
 async function loadPhoto(path: string, signal: AbortSignal, target: ImageTarget): Promise<AppliedPhoto> {

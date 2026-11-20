@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "bomb": { "fuseMs": 5000, "bomberLifetimeMs": 500, "tickIntervalMs": 500, "blastRadius": 180, "bomberSize": 62, "bomberColor": "#788951" },
   "collision": {
     "room": { "maxDamage": 100 },
     "left": { "maxDamage": 100 },
@@ -17,7 +18,7 @@
       "amount": 100, "minSpeed": 800, "referenceSpeed": 1400, "speedExponent": 1.5, "maxDamage": 350,
       "handleMultiplier": 0.25, "tipMultiplier": 1.8, "hitCooldownMs": 180, "knockback": 500, "hitDebris": true
     },
-    "projectile": { "speed": 1100, "radius": 7, "damage": 120, "lifetimeMs": 3500, "fireIntervalMs": 180, "maxCount": 32, "color": "#eab84f", "image": null },
+    "projectile": { "speed": 2000, "radius": 7, "damage": 120, "lifetimeMs": 3500, "fireIntervalMs": 180, "maxCount": 32, "color": "#eab84f", "image": null },
     "finisher": { "speed": 1900, "upwardSpeed": 650, "flightMs": 1800, "scatterSpeed": 1100, "spin": 12, "pinDelayMs": 2000 }
   },
   "weapons": {
@@ -39,6 +40,11 @@
       "damage": { "amount": 0, "knockback": 140 },
       "signals": { "hit": "weapon.gun.hit", "finish": "weapon.gun.finish", "fire": "weapon.gun.fire", "pin": "weapon.gun.pin", "burst": "weapon.gun.burst" },
       "projectile": { "speed": 2000, "radius": 7, "damage": 10, "lifetimeMs": 3500, "fireIntervalMs": 0, "maxCount": 32, "color": "#eab84f"}
+    },
+    "bomb": {
+      "shape": { "length": 40, "width": 40, "angle": 0, "color": "#303d36" },
+      "physics": { "restitution": 0.15, "friction": 0.65 },
+      "damage": { "amount": 300, "knockback": 750 }
     }
   }
 }

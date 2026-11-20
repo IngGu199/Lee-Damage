@@ -105,7 +105,9 @@ export class PhotoEditor {
       this.dialog.setAttribute("aria-labelledby", `${asset.id}-photo-title`);
       this.el("photo-title").textContent = `${asset.label} 사진`;
       this.dialog.querySelector(".eyebrow")!.textContent = "무기 이미지";
-      this.el("photo-copy").textContent = "기본 모형에 맞춰 자르거나 윤곽을 직접 그려 주세요. 복잡한 윤곽은 기본 모형으로 충돌해요.";
+      this.el("photo-copy").textContent = asset.id === "bomber"
+        ? "폭탄이 생성될 때 잠깐 나타나는 사진이에요. 사각형에 맞추거나 윤곽을 직접 그려 주세요."
+        : "기본 모형에 맞춰 자르거나 윤곽을 직접 그려 주세요. 복잡한 윤곽은 기본 모형으로 충돌해요.";
       this.el("photo-mask-circle").textContent = "모형으로 자르기";
       this.el("photo-apply").textContent = `${asset.label}에 적용하기 →`;
       this.el("photo-clear").textContent = "기본 도형으로";

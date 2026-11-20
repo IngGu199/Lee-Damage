@@ -16,7 +16,8 @@ import { WeaponPhysics } from "./WeaponPhysics";
 import { WeaponInput } from "./WeaponInput";
 import { ProjectileSystem } from "./ProjectileSystem";
 import { WeaponRenderer } from "./WeaponRenderer";
-import type { WeaponPhotoTarget } from "./WeaponTypes";
+import { BombSystem } from "./BombSystem";
+import { weaponSizeMax, type WeaponPhotoTarget, type WeaponSizeTarget } from "./WeaponTypes";
 import type { Point } from "./geometry";
 
 /** Scene-facing facade. PhysicsScene remains the only owner of simulation timing. */
@@ -33,6 +34,7 @@ export class WeaponSystem {
   private readonly physics: WeaponPhysics;
   private readonly input: WeaponInput;
   private readonly projectiles: ProjectileSystem;
+  private readonly bombs: BombSystem;
   private readonly renderer: WeaponRenderer;
   onChange: () => void = () => {};
 
@@ -44,14 +46,14 @@ export class WeaponSystem {
   set loaded(value: boolean) { this.state.loaded = value; }
   get body() { return this.state.body; }
   get heldBody() { return this.state.heldBody; }
-  get hasWeapons() { return this.state.hasWeapons; }
+  get hasWeapons() { return this.state.hasWeapons || this.bombs.active; }
   get grip() { return this.state.grip; }
   set grip(value: MatterJS.ConstraintType | undefined) { this.state.grip = value; }
   get target() { return this.state.target; }
   set target(value: Point) { this.state.target = value; }
   get gunOrigin() { return this.state.gunOrigin; }
   get travelDistance() { return this.input.travelDistance; }
-  get motionSpeed() { return this.physics.motionSpeed; }
+  get motionSpeed() { return Math.max(this.physics.motionSpeed, this.bombs.motionSpeed); }
 
   constructor(private readonly scene: PhysicsScene) {
     this.skins = new WeaponSkins(scene);
@@ -66,8 +68,10 @@ export class WeaponSystem {
     this.collisions = new WeaponCollision(this.state, scene, this.combat);
     this.physics = new WeaponPhysics(this.state, scene, this.collisions);
     this.projectiles = new ProjectileSystem(this.state, scene, this.skins, this.combat, this.feedback);
-    this.renderer = new WeaponRenderer(this.state, scene, this.skins, this.finishers, this.effects);
-    this.input = new WeaponInput(this.state, scene, this.physics, () => this.fire(), () => this.onChange(), this.abort.signal);
+    this.bombs = new BombSystem(this.state, scene, this.skins, this.combat, this.feedback,
+      body => this.physics.owns(body), () => this.cancel());
+    this.renderer = new WeaponRenderer(this.state, scene, this.skins, this.finishers, this.effects, this.bombs);
+    this.input = new WeaponInput(this.state, scene, this.physics, this.bombs, () => this.fire(), () => this.onChange(), this.abort.signal);
     this.ready = this.load();
   }
   private async load() {
@@ -93,15 +97,21 @@ export class WeaponSystem {
     this.onChange(); return true;
   }
   cancel() { this.input.cancel(); }
-  pick(point: Point) { return this.physics.pick(point); }
-  owns(body: MatterJS.BodyType) { return this.physics.owns(body); }
-  collisionRestitution(body: MatterJS.BodyType) { return this.physics.collisionRestitution(body); }
+  pick(point: Point) { return this.bombs.pick(point) ?? this.physics.pick(point); }
+  owns(body: MatterJS.BodyType) { return this.bombs.owns(body) || this.physics.owns(body); }
+  collisionRestitution(body: MatterJS.BodyType) {
+    return this.bombs.owns(body) ? this.config.weapons.bomb.physics.restitution : this.physics.collisionRestitution(body);
+  }
+  bombContact(a: MatterJS.BodyType, b: MatterJS.BodyType, ragdollA: boolean, ragdollB: boolean) {
+    this.bombs.contact(a, b, ragdollA, ragdollB);
+  }
   resize(oldWidth: number) {
     this.cancel();
     const ratio = ROOM.width / oldWidth;
     this.state.target.x *= ratio;
     this.projectiles.resize(ratio);
     this.physics.resize(ratio);
+    this.bombs.resizeRoom(ratio);
     this.collisions.clearContacts();
   }
   applyPhoto(id: WeaponPhotoTarget, photo: AppliedPhoto | null) {
@@ -113,15 +123,18 @@ export class WeaponSystem {
     this.render(this.scene.snapshot().simulationTime);
     this.onChange();
   }
-  sizePercent(id: WeaponPhotoTarget) { return this.state.sizePercents[id]; }
-  setSizePercent(id: WeaponPhotoTarget, percent: number) {
+  sizePercent(id: WeaponSizeTarget) { return this.state.sizePercents[id]; }
+  setSizePercent(id: WeaponSizeTarget, percent: number) {
     if (!this.loaded || this.scene.paused || !Object.hasOwn(this.state.sizePercents, id) || !Number.isFinite(percent)) return false;
-    const next = Math.max(10, Math.min(id === "bullet" ? 1000 : 300, Math.round(percent)));
+    const next = Math.max(10, Math.min(weaponSizeMax(id), Math.round(percent)));
     if (next === this.state.sizePercents[id]) return false;
-    if (this.state.activeItem?.id === id) this.cancel();
+    if (this.state.activeItem?.id === id || (id === "bomb" && this.state.heldBomb)) this.cancel();
     const scale = next / 100;
     // Scale from the loaded settings, so 100% restores the configured dimensions.
-    if (id === "bullet") {
+    if (id === "bomber") {
+      this.config.bomb.bomberSize = this.state.baseConfig.bomb.bomberSize * scale;
+      this.skins.resize(this.config, id);
+    } else if (id === "bullet") {
       const current = this.config.weapons[PROJECTILE_WEAPON_ID];
       this.config.weapons[PROJECTILE_WEAPON_ID] = { ...current, projectile: { ...current.projectile,
         radius: this.state.baseConfig.weapons[PROJECTILE_WEAPON_ID].projectile.radius * scale } };
@@ -136,6 +149,7 @@ export class WeaponSystem {
       } };
       this.skins.resize(this.config, id);
       if (isMeleeWeapon(id)) this.physics.rebuildMelee(id);
+      else if (id === "bomb") this.bombs.resizeBombs(next / this.state.sizePercents.bomb);
     }
     this.state.sizePercents[id] = next;
     this.render(this.scene.snapshot().simulationTime); this.onChange();
@@ -149,6 +163,7 @@ export class WeaponSystem {
   afterStep(delta: number, time: number) {
     this.physics.afterStep(item => this.collisions.stepItem(item, delta, time));
     this.projectiles.step(delta, time);
+    this.bombs.step(time);
     this.finishers.step(delta, time);
   }
   flushKnockback() { this.combat.flushKnockback(); }
@@ -168,13 +183,20 @@ export class WeaponSystem {
   }
   forget(actor: RagdollActor) { this.collisions.forget(actor); this.finishers.forget(actor); }
   deleteHeld() {
-    if (this.scene.paused || !this.state.holding || !this.state.activeItem) return false;
+    if (this.scene.paused || !this.state.holding) return false;
+    if (this.state.heldBomb) {
+      const removed = this.bombs.remove(this.state.heldBomb);
+      if (removed) this.onChange();
+      return removed;
+    }
+    if (!this.state.activeItem) return false;
     const item = this.state.activeItem;
     this.cancel(); this.physics.remove(item); this.onChange(); return true;
   }
   clearWeapons() {
     if (this.scene.paused || !this.loaded) return false;
     this.cancel(); this.physics.removeAll(); this.projectiles.reset(); this.renderer.clearImages();
+    this.bombs.reset();
     this.skins.resetImages(); this.combat.reset(); this.state.mode = "hand";
     this.skins.releaseRetiredSkins(new Set(this.finishers.bullets().flatMap(bullet => bullet.skin ? [bullet.skin] : [])));
     this.onChange(); return true;
@@ -182,12 +204,14 @@ export class WeaponSystem {
   reset() {
     this.skins.resetImages();
     this.cancel(); this.physics.removeAll(); this.projectiles.reset(); this.finishers.reset(); this.effects.reset();
+    this.bombs.reset();
     this.skins.releaseRetiredSkins();
     this.combat.reset(); this.collisions.reset(); this.renderer.reset();
     this.state.mode = "hand"; this.onChange();
   }
   destroy() {
     this.abort.abort(); this.cancel(); this.physics.removeAll(); this.projectiles.destroy(); this.finishers.reset();
+    this.bombs.reset();
     this.combat.reset(); this.collisions.reset(); this.effects.destroy(); this.renderer.destroy(); this.skins.destroy();
   }
 }

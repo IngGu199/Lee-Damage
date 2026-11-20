@@ -80,7 +80,7 @@ export class PhysicsScene extends Phaser.Scene {
     this.createActor(false, (ROOM.left + ROOM.right) / 2, true);
     const canvas = this.game.canvas;
     canvas.tabIndex = 0;
-    canvas.setAttribute("aria-label", "물리 실험실. 1 손, 2 방망이 추가, 3 망치 추가, 4 총 추가. 잡은 방망이는 우클릭마다 회전. X 잡은 무기 삭제, C 무기 모두 삭제. T 인형 추가, B 강제 폭파, R 재배치, 스페이스 일시정지.");
+    canvas.setAttribute("aria-label", "물리 실험실. 1 손, 2 방망이 추가, 3 망치 추가, 4 총 추가, 5 폭탄 모드. 폭탄 모드에서는 우클릭으로 폭탄을 생성합니다. 잡은 방망이는 우클릭마다 회전. X 잡은 무기 삭제, C 무기 모두 삭제. T 인형 추가, B 강제 폭파, R 재배치, 스페이스 일시정지.");
     this.pointer = new PointerController(canvas, this.matter.world, () => this.doll,
       () => this.paused || this.photoEditing || Boolean(this.weapons && isRangedWeapon(this.weapons.mode)) || Boolean(this.weapons?.grip),
       doll => {
@@ -319,6 +319,7 @@ export class PhysicsScene extends Phaser.Scene {
       this.softenContact(pair); // New pairs are reported before the velocity solver.
       const { bodyA, bodyB } = pair;
       const a = this.owners.get(bodyA), b = this.owners.get(bodyB);
+      this.weapons.bombContact(bodyA, bodyB, Boolean(a?.lifecycle.interactive), Boolean(b?.lifecycle.interactive));
       // Dispatch to the actual owners; debris also needs contact episodes for quiet collision audio.
       for (const actor of a === b ? [a] : [a, b]) {
         if (!actor) continue;

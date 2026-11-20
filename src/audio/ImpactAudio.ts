@@ -102,6 +102,7 @@ export class ImpactAudio {
   }
   flush() { this.mixer.flush(); }
   stop() { this.mixer.stop(); }
+  stopSignal(name: string, owner: number) { this.mixer.stopSignal(name, owner); }
   reset() { this.mixer.reset(); }
   forget(owner: number) { this.mixer.forget(owner); }
   setVolume(volume: number) {

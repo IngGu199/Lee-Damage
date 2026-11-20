@@ -33,6 +33,9 @@ export const DEFAULT_SOUND_CONFIG = parseSoundConfig({
   events: {
     "collision.normal": { files: ["sfx/others/hard-punch-sound.m4a"], speed: [0, 2400], "sound-size": [0, 1] },
     "collision.wall": { files: [0, 1, 2, 3, 4].map(i => `${pack}wall-00${i}.ogg`), speed: [0, 2400], "sound-size": [0, 1] },
+    "weapon.bomb.spawn": { files: [`${pack}wall-001.ogg`], volume: 0.5, priority: 3 },
+    "weapon.bomb.tick": { files: ["sfx/bomb/tick.wav"], volume: 0.3, rateRange: [1, 1], maxVoices: 4 },
+    "weapon.bomb.explode": { files: ["sfx/others/BOOM.mp3"], volume: 0.85, priority: 10, maxVoices: 4 },
     "death.burst": { files: ["sfx/others/BOOM.mp3"], volume: 0.85, priority: 4 },
   },
   debris: { volumeScale: 0.35 },

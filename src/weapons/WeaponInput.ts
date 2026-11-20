@@ -6,6 +6,7 @@ import { PointerVelocity } from "../game/PointerVelocity";
 import { isRangedWeapon, meleeBehavior } from "./WeaponRegistry";
 import type { WeaponState } from "./WeaponState";
 import type { WeaponPhysics } from "./WeaponPhysics";
+import type { BombSystem } from "./BombSystem";
 import { add, rotate, subtract, type Point } from "./geometry";
 
 /** Browser input and pointer capture; no independent simulation timer. */
@@ -17,8 +18,9 @@ export class WeaponInput {
 
   constructor(
     private readonly state: WeaponState,
-    private readonly scene: Pick<PhysicsScene, "game" | "paused" | "pointer">,
+    private readonly scene: Pick<PhysicsScene, "game" | "paused" | "pointer" | "matter" | "snapshot">,
     private readonly physics: WeaponPhysics,
+    private readonly bombs: BombSystem,
     private readonly fire: () => boolean,
     private readonly changed: () => void,
     signal: AbortSignal,
@@ -27,7 +29,7 @@ export class WeaponInput {
     canvas.addEventListener("pointerdown", this.down, options);
     canvas.addEventListener("contextmenu", event => {
       const item = state.activeItem;
-      if (state.holding && item && meleeBehavior(item.id).grip === "locked") event.preventDefault();
+      if (state.mode === "bomb" || (state.holding && item && meleeBehavior(item.id).grip === "locked")) event.preventDefault();
     }, options);
     window.addEventListener("pointermove", this.move, options);
     for (const name of ["pointerup", "pointercancel", "lostpointercapture"])
@@ -38,30 +40,48 @@ export class WeaponInput {
     return { x: (event.clientX - rect.left) / rect.width * ROOM.width, y: (event.clientY - rect.top) / rect.height * ROOM.height };
   }
   private down = (event: PointerEvent) => {
-    if (event.button !== 0 || this.scene.paused || !this.state.loaded || this.pointerId !== null) return;
+    if (this.scene.paused || !this.state.loaded || this.pointerId !== null) return;
+    if (event.button === 2 && this.state.mode === "bomb") {
+      event.preventDefault();
+      this.scene.game.canvas.focus({ preventScroll: true });
+      this.state.target = this.point(event);
+      if (this.bombs.spawn(this.state.target, this.scene.snapshot().simulationTime)) this.changed();
+      return;
+    }
+    if (event.button !== 0) return;
     this.state.target = this.point(event);
+    const bomb = this.bombs.pick(this.state.target);
+    if (bomb) {
+      this.state.activeItem = undefined;
+      this.bombs.detach(bomb, true);
+      this.state.heldBomb = bomb.body;
+      this.grab(event, bomb.body, false);
+      return;
+    }
     if (isRangedWeapon(this.state.mode)) { event.preventDefault(); this.scene.game.canvas.focus({ preventScroll: true }); this.fire(); return; }
     const item = this.physics.pick(this.state.target);
     if (!item) return;
-    event.preventDefault(); this.scene.game.canvas.focus({ preventScroll: true });
     this.state.mode = item.id; this.state.activeItem = item;
+    this.grab(event, item.body, meleeBehavior(item.id).grip === "locked");
+  };
+  private grab(event: PointerEvent, body: MatterJS.BodyType, lockAngle: boolean) {
+    event.preventDefault(); this.scene.game.canvas.focus({ preventScroll: true });
     this.scene.pointer.cancel();
     this.state.holding = true; this.pointerId = event.pointerId;
     this.scene.game.canvas.setPointerCapture(event.pointerId);
-    const body = item.body;
     // Preserve the actual clicked local point; picking up never teleports the item.
     this.state.gripOffset = rotate(subtract(this.state.target, body.position), -body.angle);
     this.state.heldAngle = body.angle; this.freeInertia = body.inertia;
-    Matter.Body.setInertia(body, meleeBehavior(item.id).grip === "locked" ? Infinity
+    Matter.Body.setInertia(body, lockAngle ? Infinity
       : this.freeInertia + body.mass * (this.state.gripOffset.x ** 2 + this.state.gripOffset.y ** 2)/10);
-    if (meleeBehavior(item.id).grip === "locked") Matter.Body.setAngularVelocity(body, 0);
+    if (lockAngle) Matter.Body.setAngularVelocity(body, 0);
     this.state.grip = Matter.Constraint.create({ pointA: { ...this.state.target }, bodyB: body,
       pointB: rotate(this.state.gripOffset, body.angle), length: 0, stiffness: 1, damping: 0,
-      angularStiffness: meleeBehavior(item.id).grip === "locked" ? 1 : 0, label: "weapon-grip" });
+      angularStiffness: lockAngle ? 1 : 0, label: "weapon-grip" });
     this.scene.matter.world.add(this.state.grip);
     this.pointerMotion.reset(this.state.target, event.timeStamp);
     this.changed();
-  };
+  }
   private move = (event: PointerEvent) => {
     if (this.scene.paused) return;
     // The second button changes pointermove.buttons rather than firing pointerdown.
@@ -105,6 +125,7 @@ export class WeaponInput {
     this.rightPressed = false;
     if (this.state.grip) { this.scene.matter.world.removeConstraint(this.state.grip); this.state.grip = undefined; }
     if (this.state.body && this.freeInertia !== undefined) Matter.Body.setInertia(this.state.body, this.freeInertia);
+    this.state.heldBomb = undefined;
     this.freeInertia = undefined;
     this.pointerMotion.clear();
     if (pointerId !== null && this.scene.game.canvas.hasPointerCapture(pointerId)) this.scene.game.canvas.releasePointerCapture(pointerId);

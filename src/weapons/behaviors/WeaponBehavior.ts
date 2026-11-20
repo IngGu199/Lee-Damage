@@ -22,3 +22,8 @@ export interface RangedWeaponBehavior extends BaseBehavior {
   kind: "ranged";
   knockbackTiming: "immediate";
 }
+
+export interface BombWeaponBehavior extends BaseBehavior {
+  kind: "bomb";
+  knockbackTiming: "immediate";
+}

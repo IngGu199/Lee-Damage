@@ -14,12 +14,11 @@ export interface WeaponSkin extends Frame { readonly target: WeaponPhotoTarget; 
 const MAX_PHOTO_COLLISION_VERTICES = 10;
 
 export function weaponFrame(config: WeaponConfig, id: WeaponPhotoTarget): Frame {
-  const d = config.weapons[id === "bullet" ? PROJECTILE_WEAPON_ID : id];
   let points: Point[];
-  if (id === "bullet") {
-    const r = d.projectile.radius;
+  if (id === "bullet" || id === "bomber") {
+    const r = id === "bullet" ? config.weapons[PROJECTILE_WEAPON_ID].projectile.radius : config.bomb.bomberSize / 2;
     points = [{ x: -r, y: -r }, { x: r, y: -r }, { x: r, y: r }, { x: -r, y: r }];
-  } else points = weaponRegistration(id).behavior.frame(d);
+  } else points = weaponRegistration(id).behavior.frame(config.weapons[id]);
   const xs = points.map(p => p.x), ys = points.map(p => p.y);
   const center = { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: (Math.min(...ys) + Math.max(...ys)) / 2 };
   return { center, size: Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 0.94, points };
@@ -41,7 +40,7 @@ export class WeaponSkins {
       : this.bulletSkins[Math.floor(Math.random() * this.bulletSkins.length)];
   }
   mask(config: WeaponConfig, id: WeaponPhotoTarget): PhotoMask {
-    if (id === "bullet") return { kind: "circle", points: [], closed: false, smooth: false };
+    if (id === "bullet" || id === "bomb") return { kind: "circle", points: [], closed: false, smooth: false };
     const frame = weaponFrame(config, id);
     return { kind: "shape", points: [], closed: false, smooth: false, shape: frame.points.map(p => ({
       x: PHOTO_SIZE * (0.5 + (p.x - frame.center.x) / frame.size),
@@ -61,17 +60,30 @@ export class WeaponSkins {
     } else this.skins.delete(id);
   }
   applyBulletPhotos(config: WeaponConfig, photos: readonly AppliedPhoto[]) {
+    const reusable = new Map<AppliedPhoto, WeaponSkin>();
+    for (const skin of this.retiredSkins) if (skin.target === "bullet") reusable.set(skin.photo, skin);
+    for (const skin of this.bulletSkins) reusable.set(skin.photo, skin);
     const next: WeaponSkin[] = [];
+    const created: WeaponSkin[] = [];
     try {
       for (const photo of photos) {
-        try { next.push(this.createSkin(config, "bullet", photo)); }
+        try {
+          let skin = reusable.get(photo);
+          if (!skin) {
+            skin = this.createSkin(config, "bullet", photo);
+            created.push(skin);
+            reusable.set(photo, skin);
+          }
+          next.push(skin);
+        }
         catch (error) { throw new Error(`${photo.name} · ${error instanceof Error ? error.message : "사진을 적용하지 못했어요."}`); }
       }
     } catch (error) {
-      for (const skin of next) this.scene.textures.remove(skin.texture);
+      for (const skin of created) this.scene.textures.remove(skin.texture);
       throw error;
     }
     for (const skin of this.bulletSkins) this.retiredSkins.add(skin);
+    for (const skin of next) this.retiredSkins.delete(skin);
     this.bulletSkins = next;
   }
   private createSkin(config: WeaponConfig, id: WeaponPhotoTarget, photo: AppliedPhoto): WeaponSkin {
@@ -79,7 +91,7 @@ export class WeaponSkins {
     const pixels = photo.frames[0].getContext("2d")!.getImageData(0, 0, PHOTO_SIZE, PHOTO_SIZE).data;
     if (!pixels.some((alpha, i) => i % 4 === 3 && alpha >= 128)) throw new Error("사진의 보이는 영역이 없어요. 사진과 위치를 확인해 주세요.");
     const source = { x: photo.source.width, y: photo.source.height };
-    const usePhotoOutline = photoOutlineVertexCount(photo.mask, source, photo.edit) <= MAX_PHOTO_COLLISION_VERTICES;
+    const usePhotoOutline = id !== "bomber" && photoOutlineVertexCount(photo.mask, source, photo.edit) <= MAX_PHOTO_COLLISION_VERTICES;
     const pieces = usePhotoOutline ? photoPieces(photo.mask, source, photo.edit).map(piece => piece.map(p => ({
       x: frame.center.x + (p.x / PHOTO_SIZE - 0.5) * frame.size,
       y: frame.center.y + (p.y / PHOTO_SIZE - 0.5) * frame.size,
