@@ -10,10 +10,11 @@ export interface AttachedBullet { position: Point; radius: number; color: number
 export interface Projectile extends AttachedBullet {
   id: number; gunId: number; weaponId: RangedWeaponId; direction: Point; since: number;
 }
-export interface GunItem { id: number; weaponId: RangedWeaponId; position: Point; lastShot: number }
+export interface GunItem { id: number; weaponId: RangedWeaponId; position: Point; lastShot: number; readonly skin?: WeaponSkin }
 export interface Contact {
   actor: RagdollActor; part: number; position: Point; direction: Point; speed: number; damage: number;
 }
 export interface MeleeItem {
   id: MeleeWeaponId; body: MatterJS.BodyType; originOffset: Point; previous?: Pose; motion?: ContactMotion;
+  readonly skin?: WeaponSkin;
 }

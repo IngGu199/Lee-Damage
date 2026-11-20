@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./test";
+import { expect, openPhotoEditor, test, type Page } from "./test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
@@ -30,7 +30,7 @@ async function open(page: Page, target = "face") {
       .find(entry => new URL(entry.name).pathname === "/src/photo/FaceAnalyzer.ts")?.name ?? "/src/photo/FaceAnalyzer.ts";
     const { FaceAnalyzer } = await import(path); FaceAnalyzer.prototype.detect = async () => [];
   });
-  await page.locator("#weapon-photo-target").selectOption(target); await page.locator("#weapon-photo-open").click();
+  await openPhotoEditor(page, target);
 }
 const thumbnail = (page: Page, name: string) => page.locator("dialog[open]")
   .getByRole("button", { name: `저장된 사진 선택: ${name}`, exact: true });
@@ -91,7 +91,7 @@ test("closing a dialog cancels a pending library download", async ({ page }) => 
   });
   await open(page, "bat"); await thumbnail(page, weaponName).click(); await page.locator("#bat-photo-cancel").click();
   await page.waitForTimeout(350);
-  await page.locator("#weapon-photo-open").click();
+  await openPhotoEditor(page, "bat");
   await expect(page.locator("#bat-photo-filename")).toHaveText("JPEG · PNG · WebP / 최대 20MB");
   await expect(page.locator("#bat-photo-apply")).toBeDisabled();
 });

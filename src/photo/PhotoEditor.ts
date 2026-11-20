@@ -392,8 +392,9 @@ export class PhotoEditor {
     this.contourTool = "points"; this.selectedPoint = -1; this.draw();
   }
 
-  show() {
+  show(photo = this.session.current) {
     if (this.open) return;
+    this.session.current = photo;
     if (this.actions.clearLabel) this.el("photo-clear").textContent = this.actions.clearLabel();
     this.actions.begin();
     const batch = this.actions.batch;

@@ -1,13 +1,13 @@
 {
   "version": 1,
   "collision": {
-    "room": { "maxDamage": 180 },
-    "left": { "maxDamage": 180 },
-    "right": { "maxDamage": 180 },
-    "ceiling": { "maxDamage": 180 },
-    "floor": { "maxDamage": 180 },
+    "room": { "maxDamage": 100 },
+    "left": { "maxDamage": 100 },
+    "right": { "maxDamage": 100 },
+    "ceiling": { "maxDamage": 100 },
+    "floor": { "maxDamage": 100 },
     "body": { "maxDamage": 180 },
-    "debris": { "maxDamage": 12 }
+    "debris": { "maxDamage": 10 }
   },
   "defaults": {
     "handling": { "rotateStepDegrees": 15 },
@@ -38,7 +38,7 @@
       "shape": { "length": 64, "width": 22, "angle": 0, "color": "#556274" },
       "damage": { "amount": 0, "knockback": 140 },
       "signals": { "hit": "weapon.gun.hit", "finish": "weapon.gun.finish", "fire": "weapon.gun.fire", "pin": "weapon.gun.pin", "burst": "weapon.gun.burst" },
-      "projectile": { "speed": 2000, "radius": 7, "damage": 120, "lifetimeMs": 3500, "fireIntervalMs": 180, "maxCount": 32, "color": "#eab84f"}
+      "projectile": { "speed": 2000, "radius": 7, "damage": 10, "lifetimeMs": 3500, "fireIntervalMs": 0, "maxCount": 32, "color": "#eab84f"}
     }
   }
 }

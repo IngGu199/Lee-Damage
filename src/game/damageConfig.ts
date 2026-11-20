@@ -6,7 +6,7 @@ export const DAMAGE_RULES = Object.freeze({
   minSpeed: 800,
   referenceSpeed: 1400,
   referenceDamage: 20,
-  maxCollisionDamage: 180,
+  maxCollisionDamage: -1,
   invulnerabilityMs: 300,
   debrisDamageScale: 0.15,
   maxDebrisDamage: 12,

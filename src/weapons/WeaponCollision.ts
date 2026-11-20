@@ -7,7 +7,7 @@ import { meleeDamage } from "./WeaponConfig";
 import { meleeBehavior } from "./WeaponRegistry";
 import type { WeaponState } from "./WeaponState";
 import type { WeaponCombat } from "./WeaponCombat";
-import type { WeaponSkins, WeaponSkin } from "./WeaponSkins";
+import type { WeaponSkin } from "./WeaponSkins";
 import type { Contact, MeleeItem } from "./WeaponTypes";
 import { add, circleContact, closingSpeed, multiply, rotate, subtract, sweepCircle, sweepConvex, unit } from "./geometry";
 
@@ -19,7 +19,6 @@ export class WeaponCollision {
   constructor(
     private readonly state: WeaponState,
     private readonly scene: Pick<PhysicsScene, "actors">,
-    private readonly skins: WeaponSkins,
     private readonly combat: WeaponCombat,
   ) {}
   beforeSolve(targets: ReadonlyMap<MatterJS.BodyType, ContactMotion>) { this.targetMotion = targets; }
@@ -27,8 +26,8 @@ export class WeaponCollision {
     if (item.previous) this.melee(item, delta, time);
   }
   private melee(item: MeleeItem, delta: number, time: number) {
-    const skin = this.skins.getCollisionSkin(item.id);
-    if (skin) { this.meleeSkin(item, skin, delta, time); return; }
+    const skin = item.skin;
+    if (skin?.pieces.length) { this.meleeSkin(item, skin, delta, time); return; }
     const weapon = item.id, definition = this.state.config.weapons[weapon], body = item.body, previous = item.previous!;
     const behavior = meleeBehavior(weapon), samples = behavior.samples(definition);
     const motion = samples.map(sample => {

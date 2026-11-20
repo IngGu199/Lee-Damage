@@ -10,13 +10,14 @@ import { DEFAULT_SETTINGS, ROOM, type LabStats } from "./game/config";
 import { weaponFrame, type WeaponPhotoTarget } from "./weapons/WeaponSkins";
 import { emptyDefaultPhotos, loadDefaultImages } from "./photo/DefaultImages";
 import { DEFAULT_WEAPON_CONFIG } from "./weapons/WeaponConfig";
-import { WEAPON_REGISTRY, WEAPON_IDS, isWeaponId, isRangedWeapon, weaponRegistration, toolForShortcut, type ToolId } from "./weapons/WeaponRegistry";
+import { WEAPON_REGISTRY, WEAPON_IDS, isRangedWeapon, toolForShortcut, weaponRegistration } from "./weapons/WeaponRegistry";
+import { WeaponPicker } from "./weapons/WeaponPicker";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <main class="playground" id="playground" aria-label="충돌 실험실">
     <header class="toolbar">
-      <a class="brand" href="./" aria-label="Lee Damage 홈"><span class="brand-mark">L↗</span><span>LEE DAMAGE</span></a>
+      <a class="brand" href="./" aria-label="Picture Damage 홈"><span class="brand-mark">L↗</span><span>PICTURE DAMAGE</span></a>
       <div class="sliders">
         <div class="toolbar-control sound-panel">
           <label id="sound-title" for="sound-volume">효과음</label>
@@ -27,7 +28,7 @@ app.innerHTML = `
         <div class="toolbar-control damage-panel">
           <label for="damage-limit">최대 데미지</label>
           <input id="damage-limit" type="number" min="-1" step="1" value="${DAMAGE_RULES.maxCollisionDamage}" aria-label="최대 데미지" aria-describedby="damage-limit-value" title="0: 무적 · -1: JSON의 조건별 상한 사용 · 양수: 모든 타격에 우선 적용">
-          <output id="damage-limit-value" for="damage-limit">상한</output>
+          <output id="damage-limit-value" for="damage-limit">JSON</output>
         </div>
         <div class="toolbar-control weapon-size-panel">
           <label id="weapon-size-label" for="weapon-size">무기 크기</label>
@@ -47,15 +48,18 @@ app.innerHTML = `
         <button id="pause" class="icon-button" aria-label="일시정지" disabled>Ⅱ</button>
         <button id="reset" disabled><span aria-hidden="true">↻</span> 재배치 <kbd>R</kbd></button>
       </div>
-      <div class="weapon-tools" role="toolbar" aria-label="무기 선택">
-        <button data-tool="hand" aria-pressed="true" disabled title="인형·잔해·바닥에 놓인 무기 잡기">손 <kbd>1</kbd></button>
-        ${WEAPON_REGISTRY.map(weapon => `<button data-tool="${weapon.id}" aria-pressed="false" disabled title="${weapon.behavior.hint(DEFAULT_WEAPON_CONFIG.weapons[weapon.id])}">${weapon.label} <kbd>${weapon.keyLabel}</kbd></button>`).join("")}
-        <button id="clear-weapons" disabled title="방 안의 무기와 비행 중인 탄알을 모두 삭제 · 잡은 물건만 삭제하려면 X">무기 모두 삭제 <kbd>C</kbd></button>
-        <div class="weapon-photo-controls">
-          <label class="sr-only" for="weapon-photo-target">사진을 적용할 대상</label>
-          <select id="weapon-photo-target"><option value="face">랙돌 얼굴</option>${WEAPON_REGISTRY.map(weapon => `<option value="${weapon.id}">${weapon.label}</option>`).join("")}<option value="bullet">탄알</option></select>
-          <button id="weapon-photo-open" disabled>사진 편집</button>
+      <div class="weapon-tools" id="weapon-picker" role="group" aria-label="무기 도구">
+        <div class="weapon-strip" role="group" aria-label="무기 선택">
+          <button type="button" class="weapon-tile" data-tool="hand" aria-pressed="true" disabled title="인형·잔해·바닥에 놓인 무기 잡기"><span class="weapon-tile-label">손</span><kbd>1</kbd></button>
+          ${WEAPON_REGISTRY.map(weapon => `<button type="button" class="weapon-tile" data-tool="${weapon.id}" aria-pressed="false" aria-expanded="false" aria-controls="weapon-photo-panel" disabled title="${weapon.behavior.hint(DEFAULT_WEAPON_CONFIG.weapons[weapon.id])}"><img alt="" hidden><span class="weapon-tile-label">${weapon.label}</span><kbd>${weapon.keyLabel}</kbd></button>`).join("")}
         </div>
+        <div class="weapon-photo-panel" id="weapon-photo-panel" role="group" aria-label="무기 사진 선택" hidden>
+          <button type="button" class="weapon-photo-add" aria-label="무기 사진 편집">+</button>
+          <p class="weapon-photo-status" role="status"></p>
+          <div class="weapon-photo-list"></div>
+        </div>
+        <button id="clear-weapons" disabled title="방 안의 무기와 비행 중인 탄알을 모두 삭제 · 잡은 물건만 삭제하려면 X">무기 모두 삭제 <kbd>C</kbd></button>
+        <button type="button" id="bullet-photo-open" disabled>탄알 사진 편집</button>
       </div>
     </header>
     <div class="canvas-wrap">
@@ -108,11 +112,11 @@ const weaponPhotoEditor = (id: WeaponPhotoTarget) => {
       },
       clearLabel: () => defaultPhotos.bullet.length ? "기본 이미지로" : "기본 도형으로",
     }, asset) : new PhotoEditor(session, { ...shared,
-      apply: photo => { scene.weapons.applyPhoto(id, photo); scene.onNotice(`${label} 사진을 적용했어요.`); },
+      apply: photo => { scene.weapons.applyPhoto(id, photo); scene.onNotice(`새로 소환하는 ${label}에 이 사진을 사용해요.`); },
       clear: () => {
         session.current = defaultPhotos[id];
         scene.weapons.applyPhoto(id, defaultPhotos[id]);
-        scene.onNotice(`${label}을 기본 ${defaultPhotos[id] ? "이미지" : "도형"}로 되돌렸어요.`);
+        scene.onNotice(`새로 소환하는 ${label}에 기본 ${defaultPhotos[id] ? "이미지" : "도형"}을 사용해요.`);
       },
       clearLabel: () => defaultPhotos[id] ? "기본 이미지로" : "기본 도형으로",
     }, asset);
@@ -121,13 +125,19 @@ const weaponPhotoEditor = (id: WeaponPhotoTarget) => {
   return editor;
 };
 let ready = false;
-const updatePhotoTarget = () => {
-  const face = element<HTMLSelectElement>("weapon-photo-target").value === "face";
-  element<HTMLButtonElement>("weapon-photo-open").disabled = !ready || (!face && !scene.weapons?.loaded);
-};
+const weaponPicker = new WeaponPicker(element("weapon-picker"), {
+  select: id => ready && scene.selectTool(id),
+  edit: id => weaponPhotoEditor(id).show(scene.weapons.skins.get(id)?.photo ?? null),
+  apply: (id, photo) => scene.weapons.applyPhoto(id, photo),
+  photo: id => scene.weapons?.skins.get(id)?.photo,
+  label: id => scene.weapons.config.weapons[id].label,
+  hint: id => weaponRegistration(id).behavior.hint(scene.weapons.config.weapons[id]),
+  notice: message => scene.onNotice(message),
+});
 scene.onToolState = () => {
-  updatePhotoTarget();
   const mode = scene.weapons?.mode, size = element<HTMLInputElement>("weapon-size");
+  weaponPicker.sync(mode, ready && Boolean(scene.weapons?.loaded) && !scene.paused);
+  element<HTMLButtonElement>("bullet-photo-open").disabled = !ready || !scene.weapons?.loaded;
   const weaponSelected = ready && scene.weapons?.loaded && mode && mode !== "hand";
   size.disabled = !weaponSelected || scene.paused;
   if (weaponSelected) {
@@ -151,16 +161,6 @@ scene.onToolState = () => {
     bulletSize.value = String(percent);
     bulletSize.setAttribute("aria-valuetext", `${percent}%`);
     element("bullet-size-value").textContent = `${percent}%`;
-  }
-  for (const button of app.querySelectorAll<HTMLButtonElement>("[data-tool]")) {
-    button.disabled = !ready || !scene.weapons?.loaded || scene.paused;
-    button.setAttribute("aria-pressed", String(button.dataset.tool === scene.weapons?.mode));
-    const id = button.dataset.tool ?? "";
-    if (isWeaponId(id) && scene.weapons?.loaded) {
-      const definition = scene.weapons.config.weapons[id];
-      button.firstChild!.textContent = `${definition.label} `;
-      button.title = weaponRegistration(id).behavior.hint(definition);
-    }
   }
   element<HTMLButtonElement>("clear-weapons").disabled = !scene.weapons?.loaded || scene.paused || !scene.weapons.hasWeapons;
 };
@@ -214,20 +214,17 @@ scene.onReady = () => {
   })();
 };
 element("photo-open").addEventListener("click", () => photoEditor.show());
-element("weapon-photo-open").addEventListener("click", () => {
-  const target = element<HTMLSelectElement>("weapon-photo-target").value;
-  if (target === "face") { if (ready) photoEditor.show(); }
-  else if (ready && scene.weapons.loaded) weaponPhotoEditor(target as WeaponPhotoTarget).show();
+element("bullet-photo-open").addEventListener("click", () => {
+  if (!ready || !scene.weapons.loaded) return;
+  weaponPicker.close();
+  weaponPhotoEditor("bullet").show();
 });
-element("weapon-photo-target").addEventListener("change", updatePhotoTarget);
 element("spawn").addEventListener("click", () => scene.spawnRagdoll());
 element("force-burst").addEventListener("click", () => scene.forceBurst());
 element("pause").addEventListener("click", () => scene.setPaused(!scene.paused));
 element("resume").addEventListener("click", () => scene.setPaused(false));
 element("reset").addEventListener("click", () => scene.reset());
 element("clear-weapons").addEventListener("click", () => scene.weapons.clearWeapons());
-for (const button of app.querySelectorAll<HTMLButtonElement>("[data-tool]"))
-  button.addEventListener("click", () => scene.selectTool(button.dataset.tool as ToolId));
 element<HTMLInputElement>("sound-volume").addEventListener("input", event => {
   if (ready) scene.audio.setVolume(Number((event.target as HTMLInputElement).value) / 100);
 });
@@ -259,7 +256,7 @@ window.addEventListener("keydown", event => {
   const target = event.target as HTMLElement;
   if (!target.closest("input, select, textarea, [contenteditable]")) {
     const tool = toolForShortcut(event.code);
-    if (tool) { event.preventDefault(); scene.selectTool(tool); return; }
+    if (tool) { event.preventDefault(); weaponPicker.select(tool); return; }
     if (event.code === "KeyX") { event.preventDefault(); scene.weapons.deleteHeld(); return; }
     if (event.code === "KeyC") { event.preventDefault(); scene.weapons.clearWeapons(); return; }
   }
@@ -325,6 +322,7 @@ observer.observe(element("game"));
 window.addEventListener("pagehide", event => {
   if (!(event as PageTransitionEvent).persisted) {
     defaultImageAbort.abort();
+    weaponPicker.destroy();
     photoEditor.destroy(); for (const editor of weaponEditors.values()) editor.destroy();
     observer.disconnect(); clearTimeout(noticeTimer);
   }

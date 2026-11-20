@@ -21,7 +21,7 @@ export class WeaponRenderer {
     const g = this.graphics; g.clear();
     this.skins.beginRender();
     for (const item of this.state.items.values()) {
-      if (this.skins.draw(`item:${item.body.id}`, item.id, add(item.body.position, rotate(item.originOffset, item.body.angle)), item.body.angle)) continue;
+      if (this.skins.draw(`item:${item.body.id}`, item.skin, add(item.body.position, rotate(item.originOffset, item.body.angle)), item.body.angle)) continue;
       const definition = this.state.config.weapons[item.id];
       const parts = meleeBehavior(item.id).headOnly ? item.body.parts.slice(1) : [item.body];
       parts.forEach((body, index) => g.fillStyle(index ? definition.shape.headColor : definition.shape.color).fillPoints(body.vertices!, true));
@@ -32,7 +32,7 @@ export class WeaponRenderer {
     }
     for (const gun of this.state.guns) {
       const d = this.state.config.weapons[gun.weaponId], angle = Math.atan2(this.state.target.y - gun.position.y, this.state.target.x - gun.position.x);
-      if (this.skins.draw(`gun:${gun.id}`, gun.weaponId, gun.position, angle)) continue;
+      if (this.skins.draw(`gun:${gun.id}`, gun.skin, gun.position, angle)) continue;
       const points = weaponRegistration(gun.weaponId).behavior.frame(d)
         .map(point => add(gun.position, rotate(point, angle)));
       g.fillStyle(d.shape.color).fillPoints(points, true);
@@ -43,7 +43,7 @@ export class WeaponRenderer {
     for (const [index, bullet] of bullets.entries()) {
       if (bullet.skin) {
         const direction = bullet.direction ?? { x: 1, y: 0 };
-        this.skins.drawBullet(`bullet:${index}`, bullet.skin, bullet.position, Math.atan2(direction.y, direction.x));
+        this.skins.draw(`bullet:${index}`, bullet.skin, bullet.position, Math.atan2(direction.y, direction.x));
         continue;
       }
       if (bullet.texture && this.scene.textures.exists(bullet.texture)) {

@@ -63,8 +63,8 @@ export class WeaponSystem {
         this.feedback.emit(name, owner, position, direction, time, speed, fallback),
     });
     this.combat = new WeaponCombat(this.state, scene, this.finishers, this.feedback);
-    this.collisions = new WeaponCollision(this.state, scene, this.skins, this.combat);
-    this.physics = new WeaponPhysics(this.state, scene, this.skins, this.collisions);
+    this.collisions = new WeaponCollision(this.state, scene, this.combat);
+    this.physics = new WeaponPhysics(this.state, scene, this.collisions);
     this.projectiles = new ProjectileSystem(this.state, scene, this.skins, this.combat, this.feedback);
     this.renderer = new WeaponRenderer(this.state, scene, this.skins, this.finishers, this.effects);
     this.input = new WeaponInput(this.state, scene, this.physics, () => this.fire(), () => this.onChange(), this.abort.signal);
@@ -89,7 +89,7 @@ export class WeaponSystem {
     const anchor = { x: Math.max(ROOM.left + 30, Math.min(ROOM.right - 30, this.target.x)),
       y: Math.max(ROOM.top + 30, Math.min(ROOM.bottom - 30, this.target.y)) };
     if (isRangedWeapon(mode)) this.projectiles.create(mode, anchor);
-    else if (isMeleeWeapon(mode)) this.state.activeItem = this.physics.createMelee(mode, anchor);
+    else if (isMeleeWeapon(mode)) this.state.activeItem = this.physics.createMelee(mode, anchor, this.skins.get(mode));
     this.onChange(); return true;
   }
   cancel() { this.input.cancel(); }
@@ -106,8 +106,6 @@ export class WeaponSystem {
   }
   applyPhoto(id: WeaponPhotoTarget, photo: AppliedPhoto | null) {
     this.skins.apply(this.config, id, photo);
-    this.cancel();
-    this.physics.rebuildMelee(id);
     this.render(this.scene.snapshot().simulationTime); this.onChange();
   }
   applyBulletPhotos(photos: readonly AppliedPhoto[]) {
@@ -178,11 +176,13 @@ export class WeaponSystem {
     if (this.scene.paused || !this.loaded) return false;
     this.cancel(); this.physics.removeAll(); this.projectiles.reset(); this.renderer.clearImages();
     this.skins.resetImages(); this.combat.reset(); this.state.mode = "hand";
+    this.skins.releaseRetiredSkins(new Set(this.finishers.bullets().flatMap(bullet => bullet.skin ? [bullet.skin] : [])));
     this.onChange(); return true;
   }
   reset() {
     this.skins.resetImages();
     this.cancel(); this.physics.removeAll(); this.projectiles.reset(); this.finishers.reset(); this.effects.reset();
+    this.skins.releaseRetiredSkins();
     this.combat.reset(); this.collisions.reset(); this.renderer.reset();
     this.state.mode = "hand"; this.onChange();
   }

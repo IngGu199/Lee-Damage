@@ -1,11 +1,23 @@
 export interface SavedPhoto { path: string; name: string }
 
-function assetUrl(path: string) {
+export function savedPhotoUrl(path: string) {
   return `${import.meta.env.BASE_URL}${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
+export async function readPhotoCatalog(signal: AbortSignal): Promise<SavedPhoto[]> {
+  const response = await fetch(`${import.meta.env.BASE_URL}images/catalog.json`, { cache: "no-store", signal });
+  if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) throw new Error();
+  const catalog = await response.json();
+  if (catalog?.version !== 1 || !Array.isArray(catalog.images)) throw new Error();
+  const images: SavedPhoto[] = catalog.images;
+  if (!images.every(entry => entry && typeof entry.path === "string" && typeof entry.name === "string" &&
+    entry.path.startsWith("images/") && /\.(png|jpe?g|webp)$/i.test(entry.path) && !entry.path.includes("\\") &&
+    entry.path.split("/").every(part => part && part !== "." && part !== ".."))) throw new Error();
+  return images;
+}
+
 export async function readSavedPhoto(entry: SavedPhoto, signal: AbortSignal) {
-  const response = await fetch(assetUrl(entry.path), { cache: "no-store", signal });
+  const response = await fetch(savedPhotoUrl(entry.path), { cache: "no-store", signal });
   if (!response.ok || !response.headers.get("content-type")?.startsWith("image/"))
     throw new Error("저장된 사진이 없어요. 목록을 새로고침해 주세요.");
   const blob = await response.blob();
@@ -49,21 +61,14 @@ export class PhotoLibrary {
     this.listing?.abort(); const request = this.listing = new AbortController();
     this.refreshButton.disabled = true; this.status.textContent = "사진 목록을 불러오고 있어요…";
     try {
-      const response = await fetch(`${import.meta.env.BASE_URL}images/catalog.json`, { cache: "no-store", signal: request.signal });
-      if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) throw new Error();
-      const catalog = await response.json();
-      if (catalog.version !== 1 || !Array.isArray(catalog.images)) throw new Error();
-      const images: SavedPhoto[] = catalog.images;
-      if (!images.every(entry => entry && typeof entry.path === "string" && typeof entry.name === "string" &&
-        entry.path.startsWith("images/") && /\.(png|jpe?g|webp)$/i.test(entry.path) && !entry.path.includes("\\") &&
-        entry.path.split("/").every(part => part && part !== "." && part !== ".."))) throw new Error();
+      const images = await readPhotoCatalog(request.signal);
       if (request.signal.aborted || !this.visible) return;
       images.sort((a, b) => Number(b.name.startsWith(`${this.target}-`)) - Number(a.name.startsWith(`${this.target}-`)));
       const fragment = document.createDocumentFragment();
       for (const entry of images) {
         const button = document.createElement("button"); button.type = "button"; button.dataset.photoPath = entry.path;
         button.title = entry.path; button.setAttribute("aria-label", `저장된 사진 선택: ${entry.name}`);
-        const image = document.createElement("img"); image.src = assetUrl(entry.path); image.alt = ""; image.loading = "lazy"; image.decoding = "async";
+        const image = document.createElement("img"); image.src = savedPhotoUrl(entry.path); image.alt = ""; image.loading = "lazy"; image.decoding = "async";
         const name = document.createElement("span"); name.textContent = entry.name;
         button.append(image, name); button.addEventListener("click", () => void this.choose(entry)); fragment.append(button);
       }

@@ -38,7 +38,7 @@ export class ProjectileSystem {
     }
   }
   create(weaponId: RangedWeaponId, position: Point) {
-    this.state.guns.push({ id: ++this.nextGun, weaponId, position, lastShot: -Infinity });
+    this.state.guns.push({ id: ++this.nextGun, weaponId, position, lastShot: -Infinity, skin: this.skins.get(weaponId) });
   }
   fire() {
     if (!isRangedWeapon(this.state.mode) || this.scene.paused || !this.state.loaded) return false;

@@ -9,5 +9,5 @@ export const GUN_BEHAVIOR: RangedWeaponBehavior = {
       { x: grip, y: s.width / 2 }, { x: grip, y: s.width * 1.5 }, { x: left, y: s.width * 1.5 },
     ];
   },
-  hint: () => "누를 때마다 마우스 위치에 총 생성 · 좌클릭으로 모든 총 발사 · 다른 도구를 선택하면 총 일괄 삭제",
+  hint: () => "사진 목록을 연 뒤 다시 눌러 마우스 위치에 총 소환 · 좌클릭으로 모든 총 발사 · 다른 도구를 선택하면 총 일괄 삭제",
 };

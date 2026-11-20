@@ -10,7 +10,7 @@ import { add, rotate, type Point } from "./geometry";
 
 interface Frame { center: Point; size: number; points: Point[] }
 /** Empty pieces keep the image visible while opting into the weapon's default collider. */
-export interface WeaponSkin extends Frame { texture: string; pieces: Point[][]; photo: AppliedPhoto }
+export interface WeaponSkin extends Frame { readonly target: WeaponPhotoTarget; texture: string; pieces: Point[][]; photo: AppliedPhoto }
 const MAX_PHOTO_COLLISION_VERTICES = 10;
 
 export function weaponFrame(config: WeaponConfig, id: WeaponPhotoTarget): Frame {
@@ -25,20 +25,16 @@ export function weaponFrame(config: WeaponConfig, id: WeaponPhotoTarget): Frame 
   return { center, size: Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 0.94, points };
 }
 
-/** Weapon textures are shared; each projectile keeps the skin chosen at launch. */
+/** Instances share a skin and keep it alive after the selection changes. */
 export class WeaponSkins {
   private readonly skins = new Map<WeaponPhotoTarget, WeaponSkin>();
   private bulletSkins: WeaponSkin[] = [];
-  private readonly retiredBulletSkins = new Set<WeaponSkin>();
-  private readonly visibleBulletSkins = new Set<WeaponSkin>();
+  private readonly retiredSkins = new Set<WeaponSkin>();
+  private readonly drawnSkins = new Set<WeaponSkin>();
   private readonly images = new Map<string, Phaser.GameObjects.Image>();
   private readonly used = new Set<string>();
   constructor(private readonly scene: Phaser.Scene) {}
   get(id: WeaponPhotoTarget) { return id === "bullet" ? this.bulletSkins[0] : this.skins.get(id); }
-  getCollisionSkin(id: WeaponPhotoTarget) {
-    const skin = this.get(id);
-    return skin?.pieces.length ? skin : undefined;
-  }
   bulletPhotos() { return this.bulletSkins.map(skin => skin.photo); }
   chooseBulletSkin() {
     return this.bulletSkins.length <= 1 ? this.bulletSkins[0]
@@ -54,10 +50,15 @@ export class WeaponSkins {
   }
   apply(config: WeaponConfig, id: WeaponPhotoTarget, photo: AppliedPhoto | null) {
     if (id === "bullet") { this.applyBulletPhotos(config, photo ? [photo] : []); return; }
-    const next = photo ? this.createSkin(config, id, photo) : undefined;
-    this.resetImages();
-    const old = this.skins.get(id); if (old) this.scene.textures.remove(old.texture);
-    if (next) this.skins.set(id, next); else this.skins.delete(id);
+    const old = this.skins.get(id);
+    if ((old?.photo ?? null) === photo) return;
+    const next = photo ? [...this.retiredSkins].find(skin => skin.target === id && skin.photo === photo)
+      ?? this.createSkin(config, id, photo) : undefined;
+    if (old) this.retiredSkins.add(old);
+    if (next) {
+      this.retiredSkins.delete(next);
+      this.skins.set(id, next);
+    } else this.skins.delete(id);
   }
   applyBulletPhotos(config: WeaponConfig, photos: readonly AppliedPhoto[]) {
     const next: WeaponSkin[] = [];
@@ -70,7 +71,7 @@ export class WeaponSkins {
       for (const skin of next) this.scene.textures.remove(skin.texture);
       throw error;
     }
-    for (const skin of this.bulletSkins) this.retiredBulletSkins.add(skin);
+    for (const skin of this.bulletSkins) this.retiredSkins.add(skin);
     this.bulletSkins = next;
   }
   private createSkin(config: WeaponConfig, id: WeaponPhotoTarget, photo: AppliedPhoto): WeaponSkin {
@@ -86,12 +87,13 @@ export class WeaponSkins {
     const points = pieces.flat();
     const texture = `weapon-photo-${id}-${Phaser.Utils.String.UUID()}`;
     this.scene.textures.addCanvas(texture, photo.frames[0]);
-    return { ...frame, points, pieces, texture, photo };
+    return { ...frame, target: id, points, pieces, texture, photo };
   }
   /** Scale the existing outline and texture placement without re-uploading image pixels. */
   resize(config: WeaponConfig, id: WeaponPhotoTarget) {
     const skin = this.skins.get(id), frame = weaponFrame(config, id);
-    const variants = id === "bullet" ? [...this.bulletSkins, ...this.retiredBulletSkins] : skin ? [skin] : [];
+    const variants = id === "bullet" ? [...this.bulletSkins] : skin ? [skin] : [];
+    for (const retired of this.retiredSkins) if (retired.target === id) variants.push(retired);
     for (const variant of variants) {
       const ratio = frame.size / variant.size;
       const pieces = variant.pieces.map(piece => piece.map(point => ({
@@ -101,30 +103,26 @@ export class WeaponSkins {
       Object.assign(variant, frame, { pieces, points: pieces.flat() });
     }
   }
-  beginRender() { this.used.clear(); this.visibleBulletSkins.clear(); }
-  draw(key: string, id: WeaponPhotoTarget, origin: Point, angle: number) {
-    const skin = this.get(id);
+  beginRender() { this.used.clear(); this.drawnSkins.clear(); }
+  draw(key: string, skin: WeaponSkin | undefined, origin: Point, angle: number) {
     if (!skin) return false;
-    this.drawSkin(key, skin, origin, angle);
-    return true;
-  }
-  drawBullet(key: string, skin: WeaponSkin, origin: Point, angle: number) {
-    this.visibleBulletSkins.add(skin);
-    this.drawSkin(key, skin, origin, angle);
-  }
-  private drawSkin(key: string, skin: WeaponSkin, origin: Point, angle: number) {
     let image = this.images.get(key);
     if (!image) { image = this.scene.add.image(0, 0, skin.texture).setDepth(51); this.images.set(key, image); }
     const center = add(origin, rotate(skin.center, angle));
     image.setTexture(skin.texture).setPosition(center.x, center.y).setRotation(angle).setDisplaySize(skin.size, skin.size);
     this.used.add(key);
+    this.drawnSkins.add(skin);
+    return true;
   }
   endRender() {
     for (const [key, image] of this.images) if (!this.used.has(key)) { image.destroy(); this.images.delete(key); }
-    for (const skin of this.retiredBulletSkins) {
-      if (this.visibleBulletSkins.has(skin)) continue;
+    this.releaseRetiredSkins(this.drawnSkins);
+  }
+  releaseRetiredSkins(stillUsed?: ReadonlySet<WeaponSkin>) {
+    for (const skin of this.retiredSkins) {
+      if (stillUsed?.has(skin)) continue;
       this.scene.textures.remove(skin.texture);
-      this.retiredBulletSkins.delete(skin);
+      this.retiredSkins.delete(skin);
     }
   }
   snapshot() {
@@ -134,10 +132,14 @@ export class WeaponSkins {
     return { kinds: entries.map(([id]) => id), images: this.images.size,
       pieces: Object.fromEntries(entries.map(([id, skin]) => [id, skin.pieces.length])) };
   }
-  resetImages() { for (const image of this.images.values()) image.destroy(); this.images.clear(); }
+  resetImages() {
+    for (const image of this.images.values()) image.destroy();
+    this.images.clear();
+    this.beginRender();
+  }
   destroy() {
     this.resetImages();
-    for (const skin of [...this.skins.values(), ...this.bulletSkins, ...this.retiredBulletSkins]) this.scene.textures.remove(skin.texture);
-    this.skins.clear(); this.bulletSkins = []; this.retiredBulletSkins.clear(); this.visibleBulletSkins.clear();
+    for (const skin of [...this.skins.values(), ...this.bulletSkins, ...this.retiredSkins]) this.scene.textures.remove(skin.texture);
+    this.skins.clear(); this.bulletSkins = []; this.retiredSkins.clear(); this.drawnSkins.clear();
   }
 }

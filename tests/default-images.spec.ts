@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./test";
+import { expect, openPhotoEditor, summonWeapon, test, type Page } from "./test";
 import { readFileSync } from "node:fs";
 import { IMAGE_TARGETS, parseImageConfig } from "../src/photo/ImageConfig";
 
@@ -37,8 +37,7 @@ test("shipped defaults load a face and all four weapon images with editable tran
   expect(state.hp).toBe(1000);
   for (const id of ["bat", "hammer", "gun", "bullet"] as const) expect(state.photos[id]).toBe(id === "bullet" ? config.bullet[0] : config[id]);
   for (const id of IMAGE_TARGETS) {
-    await page.locator("#weapon-photo-target").selectOption(id);
-    await page.locator("#weapon-photo-open").click();
+    await openPhotoEditor(page, id);
     const dialog = page.locator('dialog[open]');
     const path = id === "bullet" ? config.bullet[0] : config[id];
     await expect(dialog.locator('[id$="photo-filename"]')).toHaveText(path.split("/").at(-1));
@@ -73,11 +72,11 @@ test("restoring the configured face or weapon keeps the default image available 
   await page.locator("#photo-open").click();
   await expect(page.locator('#photo-filename')).toHaveText(config.face.split("/").at(-1));
   await page.locator('#photo-cancel').click();
-  await page.locator("#weapon-photo-target").selectOption("bat"); await page.locator("#weapon-photo-open").click();
+  await openPhotoEditor(page, "bat");
   const dialog = page.locator('dialog[open]');
   await dialog.locator('[id$="photo-clear"]').click();
   expect(await page.evaluate(() => window.__physicsLab.weapons.skins.get("bat")?.photo.libraryPath)).toBe(config.bat);
-  await page.locator("#weapon-photo-open").click();
+  await openPhotoEditor(page, "bat");
   await expect(page.locator('dialog[open] [id$="photo-filename"]')).toHaveText(config.bat.split("/").at(-1));
 });
 
@@ -86,7 +85,7 @@ test("null and omitted targets use shapes, while broken images only disable thei
   await open(page);
   const result = await page.evaluate(() => ({ face: window.__physicsLab.face.active, skins: window.__physicsLab.weapons.skins.snapshot() }));
   expect(result.face).toBe(false); expect(result.skins.kinds).toEqual(["gun"]);
-  await page.locator('[data-tool="bat"]').click();
+  await summonWeapon(page, "bat");
   expect(await page.evaluate(() => window.__physicsLab.weapons.snapshot().items)).toHaveLength(1);
 });
 
@@ -105,7 +104,7 @@ for (const error of ["missing config", "invalid config", "transparent image", "d
     });
     await open(page);
     expect(await page.evaluate(() => window.__physicsLab.face.active)).toBe(error === "delayed config");
-    await page.locator('[data-tool="bat"]').click();
+    await summonWeapon(page, "bat");
     expect(await page.evaluate(() => window.__physicsLab.weapons.snapshot().items)).toHaveLength(1);
   });
 }

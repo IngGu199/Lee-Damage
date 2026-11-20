@@ -12,5 +12,5 @@ export const BAT_BEHAVIOR: MeleeWeaponBehavior = {
       samples.push({ local: { x: s.length * i / count, y: 0 }, radius: s.width / 2, tip: i / count });
     return samples;
   },
-  hint: definition => `누를 때마다 방망이 생성 · 좌클릭을 누른 채 잡기 · 우클릭마다 ${definition.handling.rotateStepDegrees}° 회전 · 잡은 무기 삭제 X`,
+  hint: definition => `사진 목록을 연 뒤 다시 눌러 방망이 소환 · 좌클릭을 누른 채 잡기 · 우클릭마다 ${definition.handling.rotateStepDegrees}° 회전 · 잡은 무기 삭제 X`,
 };

@@ -7,8 +7,8 @@ import { clipPolygon, polygonArea } from "../photo/PhotoGeometry";
 import { meleeBehavior, type MeleeWeaponId } from "./WeaponRegistry";
 import type { WeaponState } from "./WeaponState";
 import type { WeaponCollision } from "./WeaponCollision";
-import type { WeaponSkins } from "./WeaponSkins";
-import type { MeleeItem, WeaponPhotoTarget } from "./WeaponTypes";
+import type { WeaponSkin } from "./WeaponSkins";
+import type { MeleeItem } from "./WeaponTypes";
 import { add, multiply, rotate, subtract, type Point } from "./geometry";
 
 /** Owns Matter bodies and constraints in the scene's single shared world. */
@@ -16,7 +16,6 @@ export class WeaponPhysics {
   constructor(
     private readonly state: WeaponState,
     private readonly scene: Pick<PhysicsScene, "matter">,
-    private readonly skins: WeaponSkins,
     private readonly collisions: WeaponCollision,
   ) {}
   pick(point: Point) {
@@ -31,7 +30,7 @@ export class WeaponPhysics {
       return this.state.config.weapons[item.id].physics.restitution;
     return undefined;
   }
-  createMelee(mode: MeleeWeaponId, anchor: Point, initialAngle = this.state.config.weapons[mode].shape.angle) {
+  createMelee(mode: MeleeWeaponId, anchor: Point, skin: WeaponSkin | undefined, initialAngle = this.state.config.weapons[mode].shape.angle) {
       const behavior = meleeBehavior(mode);
       const d = this.state.config.weapons[mode], { length, width, headWidth, headHeight } = d.shape;
       let body: MatterJS.BodyType;
@@ -40,8 +39,7 @@ export class WeaponPhysics {
         // Zero knockback must also suppress Matter's impulse/position transfer to dolls.
         // Head/body sweeps still detect hits; walls and other weapons remain solid.
         frictionAir: d.physics.frictionAir, collisionFilter: { mask: d.damage.knockback === 0 ? 6 : 7, category: 4, group: 0 } };
-      const skin = this.skins.getCollisionSkin(mode);
-      if (skin) {
+      if (skin?.pieces.length) {
         const edge = length - headWidth / 2;
         const minX = Math.min(edge, ...skin.points.map(p => p.x)) - 1, maxX = Math.max(edge, ...skin.points.map(p => p.x)) + 1;
         const minY = Math.min(...skin.points.map(p => p.y)) - 1, maxY = Math.max(...skin.points.map(p => p.y)) + 1;
@@ -77,19 +75,19 @@ export class WeaponPhysics {
       Matter.Body.setAngle(body, initialAngle);
       Matter.Body.setPosition(body, subtract(anchor, rotate(originOffset, initialAngle)));
       this.keepInside(body);
-      const item: MeleeItem = { id: mode, body, originOffset };
+      const item: MeleeItem = { id: mode, body, originOffset, skin };
       this.state.items.set(body.id, item);
       this.scene.matter.world.add(body);
       return item;
   }
   /** Replace collision bodies together with their displayed dimensions. */
-  rebuildMelee(id: WeaponPhotoTarget) {
+  rebuildMelee(id: MeleeWeaponId) {
     for (const old of [...this.state.items.values()]) {
       if (old.id !== id) continue;
       const anchor = add(old.body.position, rotate(old.originOffset, old.body.angle));
       const { angle, angularVelocity } = old.body, velocity = { ...old.body.velocity }, active = this.state.activeItem === old;
       this.removeItem(old);
-      const item = this.createMelee(old.id, anchor, angle);
+      const item = this.createMelee(old.id, anchor, old.skin, angle);
       Matter.Body.setVelocity(item.body, velocity); Matter.Body.setAngularVelocity(item.body, angularVelocity);
       if (active) this.state.activeItem = item;
     }

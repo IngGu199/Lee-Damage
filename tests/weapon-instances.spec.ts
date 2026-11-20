@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./test";
+import { expect, summonWeapon, test, type Page } from "./test";
 
 async function open(page: Page, weapons?: Record<string, unknown>) {
   if (weapons) await page.route("**/config/weapons.json", route => route.fulfill({ json: { version: 1, weapons } }));
@@ -14,11 +14,16 @@ async function steps(page: Page, count: number) {
   await page.evaluate(count => { for (let i = 0; i < count; i++) window.__physicsLab.update(0, 1000 / 120); }, count);
 }
 
-test("each button and number-key press adds a distinct melee weapon; X deletes only the picked older object", async ({ page }) => {
+test("the first click browses, the second summons, and X deletes only the picked weapon", async ({ page }) => {
   await open(page);
-  await move(page, { x: 140, y: 180 }); await page.locator('[data-tool="bat"]').click();
+  const bat = page.locator('[data-tool="bat"]');
+  await move(page, { x: 140, y: 180 }); await bat.click();
+  await expect(bat).toHaveAttribute("aria-expanded", "true");
+  expect(await page.evaluate(() => window.__physicsLab.weapons.snapshot())).toMatchObject({ mode: "hand", items: [], guns: [] });
+  await bat.click();
+  await expect(page.locator("#weapon-photo-panel")).toBeHidden();
   await move(page, { x: 400, y: 180 }); await page.keyboard.press("Digit2");
-  await move(page, { x: 140, y: 430 }); await page.locator('[data-tool="hammer"]').click();
+  await move(page, { x: 140, y: 430 }); await summonWeapon(page, "hammer");
   await move(page, { x: 400, y: 430 }); await page.keyboard.press("Digit3");
   const items = await page.evaluate(() => window.__physicsLab.weapons.snapshot().items);
   expect(items.map(item => item.id)).toEqual(["bat", "bat", "hammer", "hammer"]);
@@ -79,7 +84,7 @@ test("bat rotation step is configurable in JSON and an obstructed turn preserves
 
 test("multiple guns stay at their creation points and all fire toward the pointer with per-gun bullet limits", async ({ page }) => {
   await open(page, { gun: { projectile: { maxCount: 1 } } });
-  for (const x of [120, 200, 280]) { await move(page, { x, y: 130 }); await page.locator('[data-tool="gun"]').click(); }
+  for (const x of [120, 200, 280]) { await move(page, { x, y: 130 }); await summonWeapon(page, "gun"); }
   const guns = await page.evaluate(() => window.__physicsLab.weapons.snapshot().guns);
   expect(guns).toHaveLength(3);
   for (const [index, gun] of guns.entries()) { expect(gun.position.x).toBeCloseTo(120 + index * 80); expect(gun.position.y).toBeCloseTo(130); }

@@ -14,5 +14,5 @@ export const HAMMER_BEHAVIOR: MeleeWeaponBehavior = {
     const radius = Math.min(s.headWidth, s.headHeight) / 2, span = s.headHeight / 2 - radius;
     return [-span, 0, span].map(y => ({ local: { x: s.length, y }, radius, tip: 1 }));
   },
-  hint: () => "누를 때마다 망치 생성 · 원하는 지점을 클릭해 잡기 · 잡은 무기 삭제 X",
+  hint: () => "사진 목록을 연 뒤 다시 눌러 망치 소환 · 원하는 지점을 클릭해 잡기 · 잡은 무기 삭제 X",
 };

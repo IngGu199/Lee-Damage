@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./test";
+import { expect, openPhotoEditor, test, type Page } from "./test";
 import { convexPieces, maskPolygon, photoPieces, polygonArea } from "../src/photo/PhotoGeometry";
 import { inside, sweepConvex } from "../src/weapons/geometry";
 
@@ -23,10 +23,6 @@ async function upload(page: Page, target: string) {
   });
   await page.locator(`#${prefix}-file`).setInputFiles({ name: "weapon.png", mimeType: "image/png", buffer: Buffer.from(data, "base64") });
   await expect(page.locator(`#${prefix}-apply`)).toBeEnabled();
-}
-async function edit(page: Page, target: string) {
-  await page.locator("#weapon-photo-target").selectOption(target);
-  await page.locator("#weapon-photo-open").click();
 }
 async function trace(page: Page, target: string, points = outline) {
   await page.locator(`#${target}-photo-mask-contour`).click();
@@ -54,15 +50,14 @@ test("concave masks keep empty regions empty in collision pieces and continuous 
   expect(islands.some(piece => inside({ x: 256, y: 256 }, piece))).toBe(false);
 });
 
-test("the shared photo selector adds ragdoll faces through the existing editor and preserves them for new dolls", async ({ page }) => {
+test("the face photo button opens the existing editor and preserves faces for new dolls", async ({ page }) => {
   await open(page);
-  await expect(page.locator("#weapon-photo-target")).toHaveValue("face");
   await page.evaluate(async () => {
     const path = performance.getEntriesByType("resource")
       .find(entry => new URL(entry.name).pathname === "/src/photo/FaceAnalyzer.ts")?.name ?? "/src/photo/FaceAnalyzer.ts";
     const { FaceAnalyzer } = await import(path); FaceAnalyzer.prototype.detect = async () => [];
   });
-  await page.locator("#weapon-photo-open").click();
+  await openPhotoEditor(page, "face");
   await expect(page.locator("dialog[open]")).toHaveAttribute("data-photo-target", "face");
   await upload(page, "face");
   await expect(page.locator("#photo-mask-circle")).toBeEnabled();
@@ -79,30 +74,53 @@ test("the shared photo selector adds ragdoll faces through the existing editor a
   expect(await page.evaluate(() => window.__physicsLab.face.active)).toBe(true);
 });
 
-test("weapon photos replace all existing and new instances, survive R and restore their original geometry", async ({ page }) => {
+test("each spawn keeps its own shared photo and collider across photo changes", async ({ page }) => {
   await open(page);
-  await page.evaluate(() => { const s = window.__physicsLab; s.weapons.target = { x: 250, y: 220 }; s.selectTool("bat"); s.selectTool("bat"); });
-  await edit(page, "bat"); await upload(page, "bat");
+  const bareBody = await page.evaluate(() => {
+    const s = window.__physicsLab; s.weapons.target = { x: 250, y: 220 }; s.selectTool("bat");
+    return s.weapons.body!.id;
+  });
+  await openPhotoEditor(page, "bat"); await upload(page, "bat");
   await page.locator("#bat-photo-apply").click();
   await expect(page.locator("dialog[open]")).toHaveCount(0);
   const initial = await page.evaluate(() => {
-    const s = window.__physicsLab; s.update(0, 0); const skin = s.weapons.skins.get("bat")!;
-    return { items: s.weapons.snapshot().items.length, skins: s.weapons.skins.snapshot(),
+    const s = window.__physicsLab, w = s.weapons, skin = w.skins.get("bat")!;
+    const bare = { body: w.body!.id, images: w.skins.snapshot().images };
+    s.selectTool("bat");
+    return { bare, body: w.body!.id, texture: skin.texture,
       alpha: [skin.photo.frames[0].getContext("2d")!.getImageData(256, 10, 1, 1).data[3],
         skin.photo.frames[0].getContext("2d")!.getImageData(256, 256, 1, 1).data[3]] };
   });
-  expect(initial).toMatchObject({ items: 2, skins: { kinds: ["bat"], images: 2, pieces: { bat: 1 } }, alpha: [0, 255] });
+  expect(initial).toMatchObject({ bare: { body: bareBody, images: 0 }, alpha: [0, 255] });
+  await openPhotoEditor(page, "bat"); await upload(page, "bat");
+  await trace(page, "bat", [{ x: 70, y: 245 }, { x: 442, y: 245 }, { x: 442, y: 265 }, { x: 70, y: 265 }]);
+  await page.locator("#bat-photo-apply").click();
+  const replaced = await page.evaluate(() => {
+    const s = window.__physicsLab, w = s.weapons;
+    const existing = w.snapshot().items.map(item => item.bodyId);
+    const selected = w.skins.get("bat")!.texture;
+    s.selectTool("bat"); s.selectTool("bat"); s.update(0, 0);
+    const rendered = s.children.list.filter(object => object.type === "Image")
+      .map(object => (object as Phaser.GameObjects.Image).texture.key).filter(key => key.startsWith("weapon-photo-bat-"));
+    return { existing, rendered, selected };
+  });
+  expect(replaced.existing).toEqual([bareBody, initial.body]);
+  expect(replaced.selected).not.toBe(initial.texture);
+  expect(replaced.rendered.sort()).toEqual([initial.texture, replaced.selected, replaced.selected].sort());
   await page.evaluate(() => { const s = window.__physicsLab; s.reset(); s.selectTool("bat"); s.update(0, 0); });
-  expect(await page.evaluate(() => window.__physicsLab.weapons.skins.snapshot())).toMatchObject({ kinds: ["bat"], images: 1 });
-  await edit(page, "bat"); await page.locator("#bat-photo-clear").click();
+  expect(await page.evaluate(key => window.__physicsLab.textures.exists(key), initial.texture)).toBe(false);
+  await openPhotoEditor(page, "bat"); await page.locator("#bat-photo-clear").click();
   expect(await page.evaluate(() => {
-    const s = window.__physicsLab; s.update(0, 0);
+    const s = window.__physicsLab; s.selectTool("bat"); s.update(0, 0);
     return { skins: s.weapons.skins.snapshot(), width: s.weapons.body!.bounds.max.x - s.weapons.body!.bounds.min.x };
-  })).toMatchObject({ skins: { kinds: [], images: 0 }, width: 190 });
+  })).toMatchObject({ skins: { kinds: [], images: 1 }, width: 190 });
+  expect(await page.evaluate(key => {
+    const s = window.__physicsLab; s.weapons.clearWeapons(); return s.textures.exists(key);
+  }, replaced.selected)).toBe(false);
 });
 
 test("a hand-drawn concave weapon ignores its cutout for picking, physical collision and damage", async ({ page }) => {
-  await open(page); await edit(page, "bat"); await upload(page, "bat"); await trace(page, "bat");
+  await open(page); await openPhotoEditor(page, "bat"); await upload(page, "bat"); await trace(page, "bat");
   await page.locator("#bat-photo-apply").click();
   const result = await page.evaluate(async () => {
     const path = "/src/game/matter.ts", { Matter } = await import(path);
@@ -132,7 +150,7 @@ test("a hand-drawn concave weapon ignores its cutout for picking, physical colli
 });
 
 for (const target of ["hammer", "gun", "bullet"]) test(`${target} has its own image without face analysis and cleanup stays bounded`, async ({ page }) => {
-  await open(page); await edit(page, target); await upload(page, target); await page.locator(`#${target}-photo-apply`).click();
+  await open(page); await openPhotoEditor(page, target); await upload(page, target); await page.locator(`#${target}-photo-apply`).click();
   const result = await page.evaluate(target => {
     const s = window.__physicsLab, w = s.weapons;
     w.target = { x: 220, y: 200 }; s.selectTool(target === "hammer" ? "hammer" : "gun");
@@ -145,12 +163,12 @@ for (const target of ["hammer", "gun", "bullet"]) test(`${target} has its own im
 });
 
 test("weapon editing cancels without changing skin, blocks shortcuts, and reload clears photos", async ({ page }) => {
-  await open(page); await edit(page, "bat"); await upload(page, "bat"); await page.keyboard.press("KeyC"); await page.keyboard.press("Digit3");
+  await open(page); await openPhotoEditor(page, "bat"); await upload(page, "bat"); await page.keyboard.press("KeyC"); await page.keyboard.press("Digit3");
   await page.locator("#bat-photo-cancel").click();
   expect(await page.evaluate(() => ({ skins: window.__physicsLab.weapons.skins.snapshot().kinds,
     items: window.__physicsLab.weapons.snapshot().items.length, paused: window.__physicsLab.paused })))
     .toEqual({ skins: [], items: 0, paused: false });
-  await edit(page, "bat"); await upload(page, "bat"); await page.locator("#bat-photo-apply").click();
+  await openPhotoEditor(page, "bat"); await upload(page, "bat"); await page.locator("#bat-photo-apply").click();
   await page.reload(); await page.waitForFunction(() => window.__physicsLab?.weapons?.loaded);
   expect(await page.evaluate(() => window.__physicsLab.weapons.skins.snapshot().kinds)).toEqual([]);
 });
@@ -165,7 +183,7 @@ test("a thin bullet outline passes above a head where the former round bullet wo
     return s.damage.health.hp;
   });
   expect(await fire()).toBe(880);
-  await edit(page, "bullet"); await upload(page, "bullet");
+  await openPhotoEditor(page, "bullet"); await upload(page, "bullet");
   await trace(page, "bullet", [{ x: 80, y: 230 }, { x: 432, y: 230 }, { x: 432, y: 282 }, { x: 80, y: 282 }]);
   await page.locator("#bullet-photo-apply").click();
   expect(await fire()).toBe(1000);

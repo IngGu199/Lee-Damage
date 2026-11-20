@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "./test";
+import { expect, summonWeapon, test, type Page } from "./test";
 
 async function open(page: Page, weapons: Record<string, unknown> = {}, hammerKnockback = 60) {
   await page.route("**/config/weapons.json", route => route.fulfill({ json: { version: 1, weapons: {
@@ -23,7 +23,7 @@ async function batSwing(page: Page, lethal = false) {
     const s = window.__physicsLab; if (lethal) s.damage.health.lose(999);
     return { ...s.doll.parts[0].body.position };
   }, lethal);
-  await move(page, { x: head.x - 320, y: head.y }); await page.locator('[data-tool="bat"]').click();
+  await move(page, { x: head.x - 320, y: head.y }); await summonWeapon(page, "bat");
   await move(page, { x: head.x - 320, y: head.y }); await page.mouse.down();
   await move(page, { x: head.x - 140, y: head.y }); await steps(page, 1); await page.mouse.up();
 }
@@ -45,7 +45,7 @@ async function shoot(page: Page, lethal = false) {
     const s = window.__physicsLab; if (lethal) s.damage.health.lose(999);
     return { id: s.selectedActor.id, ...s.doll.parts[0].body.position };
   }, lethal);
-  await move(page, { x: target.x - 300, y: target.y }); await page.locator('[data-tool="gun"]').click();
+  await move(page, { x: target.x - 300, y: target.y }); await summonWeapon(page, "gun");
   await move(page, target); await page.mouse.click(...await page.evaluate(point => {
     const r = window.__physicsLab.room, box = document.querySelector("#game canvas")!.getBoundingClientRect();
     return [box.x + point.x / r.width * box.width, box.y + point.y / r.height * box.height] as [number, number];
@@ -68,7 +68,7 @@ test("bat drag keeps its angle fixed, hits once per contact and does not grab th
 test("hammer's weighted head falls around the held handle and sideways motion produces rotation", async ({ page }) => {
   await open(page);
   await page.evaluate(() => window.__physicsLab.matter.world.setGravity(0, 2.5));
-  await move(page, { x: 180, y: 220 }); await page.locator('[data-tool="hammer"]').click();
+  await move(page, { x: 180, y: 220 }); await summonWeapon(page, "hammer");
   await move(page, { x: 180, y: 220 }); await page.mouse.down(); await steps(page, 90);
   const resting = await page.evaluate(() => {
     const w = window.__physicsLab.weapons;
@@ -249,7 +249,7 @@ test("lethal bullet pins a connected doll at the wall for two simulation seconds
 test("zero max damage prevents weapon kills; pause and reset release tools and clear projectiles/effects", async ({ page }) => {
   await open(page); await page.evaluate(() => window.__physicsLab.setMaxDamage(0)); await shoot(page, true); await steps(page, 50);
   expect(await page.evaluate(() => ({ hp: window.__physicsLab.damage.health.hp, finishers: window.__physicsLab.weapons.snapshot().finishers.length }))).toEqual({ hp: 1, finishers: 0 });
-  await page.locator('[data-tool="hammer"]').click();
+  await summonWeapon(page, "hammer");
   await move(page, await page.evaluate(() => ({ ...window.__physicsLab.weapons.body!.parts[1].position })));
   await page.mouse.down(); expect(await page.evaluate(() => Boolean(window.__physicsLab.weapons.grip))).toBe(true);
   await page.evaluate(() => window.__physicsLab.setPaused(true));
