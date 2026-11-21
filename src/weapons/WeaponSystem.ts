@@ -61,8 +61,8 @@ export class WeaponSystem {
     this.feedback = new WeaponFeedback(this.effects, scene.audio);
     this.finishers = new WeaponFinishers({
       replace: actor => scene.replaceAfterWeapon(actor), remove: actor => scene.removeAfterWeapon(actor),
-      signal: (name, owner, position, direction, time, speed, fallback) =>
-        this.feedback.emit(name, owner, position, direction, time, speed, fallback),
+      signal: (name, owner, position, direction, time, speed, fallback, photoPath) =>
+        this.feedback.emit(name, owner, position, direction, time, speed, fallback, photoPath),
     });
     this.combat = new WeaponCombat(this.state, scene, this.finishers, this.feedback);
     this.collisions = new WeaponCollision(this.state, scene, this.combat);

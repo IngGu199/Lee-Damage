@@ -15,6 +15,7 @@ export class ProjectileSystem {
   private nextGun = 0;
   private readonly textures = new Set<string>();
   private bulletTexture?: string;
+  private bulletImage?: string;
   constructor(
     private readonly state: WeaponState,
     private readonly scene: Pick<PhysicsScene, "paused" | "snapshot" | "actors" | "textures" | "audio">,
@@ -34,6 +35,7 @@ export class ProjectileSystem {
         canvas.getContext("2d")!.drawImage(bitmap, 0, 0); bitmap.close();
         const key = `weapon-bullet-${Phaser.Utils.String.UUID()}`;
         this.scene.textures.addCanvas(key, canvas); this.textures.add(key); this.bulletTexture = key;
+        this.bulletImage = image;
       } catch (error) { if (!signal.aborted) console.warn("탄알 이미지: 원형 도형으로 표시합니다.", error); }
     }
   }
@@ -50,9 +52,10 @@ export class ProjectileSystem {
       if (time - gun.lastShot + 1e-6 < p.fireIntervalMs || (counts.get(gun.id) ?? 0) >= p.maxCount) continue;
       gun.lastShot = time;
       const direction = unit(subtract(this.state.target, gun.position)), position = add(gun.position, multiply(direction, definition.shape.length / 2 + p.radius));
+      const skin = this.skins.chooseBulletSkin(), photoPath = skin ? skin.photo.libraryPath : this.bulletImage;
       this.state.projectiles.push({ id: ++this.nextBullet, gunId: gun.id, weaponId: gun.weaponId, position, direction,
-        since: time, radius: p.radius, color: p.color, texture: this.bulletTexture, skin: this.skins.chooseBulletSkin() });
-      this.feedback.emit(definition.signals.fire, -gun.id, position, direction, time, p.speed, "collision.wall");
+        since: time, radius: p.radius, color: p.color, texture: this.bulletTexture, skin, photoPath });
+      this.feedback.emit(definition.signals.fire, -gun.id, position, direction, time, p.speed, "collision.wall", gun.skin?.photo.libraryPath);
       fired = true;
     }
     return fired;
@@ -85,7 +88,8 @@ export class ProjectileSystem {
         });
       }
       if (target) {
-        bullet.position = { ...target.contact.position }; this.combat.hit(bullet.weaponId, target.contact, time, bullet);
+        bullet.position = { ...target.contact.position };
+        this.combat.hit(bullet.weaponId, target.contact, time, bullet, bullet.photoPath);
         this.state.projectiles.splice(this.state.projectiles.indexOf(bullet), 1);
       } else if (wallTime < 1 || time - bullet.since >= settings.lifetimeMs) this.state.projectiles.splice(this.state.projectiles.indexOf(bullet), 1);
       else bullet.position = end;
@@ -103,6 +107,6 @@ export class ProjectileSystem {
   destroy() {
     this.reset();
     for (const key of this.textures) this.scene.textures.remove(key);
-    this.textures.clear(); this.bulletTexture = undefined;
+    this.textures.clear(); this.bulletTexture = undefined; this.bulletImage = undefined;
   }
 }

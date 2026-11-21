@@ -9,23 +9,23 @@ import { add, multiply, unit, type Point } from "./geometry";
 
 interface Finisher {
   actor: RagdollActor; weapon: WeaponId; definition: WeaponDefinition; direction: Point; since: number;
-  phase: "flying" | "pinned"; pinnedAt: number; bullet?: AttachedBullet; masks: number[];
+  phase: "flying" | "pinned"; pinnedAt: number; bullet?: AttachedBullet; photoPath?: string; masks: number[];
 }
 interface Host {
   replace(actor: RagdollActor): void;
   remove(actor: RagdollActor): void;
-  signal(name: string, owner: number, position: Point, direction: Point, time: number, speed: number, fallback: string): void;
+  signal(name: string, owner: number, position: Point, direction: Point, time: number, speed: number, fallback: string, photoPath?: string): void;
 }
 
 /** Finishers own dead actors until their flight/pin completes; ordinary deaths remain unchanged. */
 export class WeaponFinishers {
   private readonly active = new Map<number, Finisher>();
   constructor(private readonly host: Host) {}
-  start(actor: RagdollActor, weapon: WeaponId, definition: WeaponDefinition, direction: Point, time: number, bullet?: AttachedBullet) {
+  start(actor: RagdollActor, weapon: WeaponId, definition: WeaponDefinition, direction: Point, time: number, bullet?: AttachedBullet, photoPath?: string) {
     const normal = unit(direction);
     const state: Finisher = { actor, weapon, definition, direction: normal, since: time, phase: "flying", pinnedAt: 0,
-      bullet, masks: actor.doll.bodies.map(body => body.collisionFilter.mask) };
-    this.host.signal(definition.signals.finish, actor.id, actor.doll.centerOfMass, normal, time, definition.finisher.speed, "death.burst");
+      bullet, photoPath, masks: actor.doll.bodies.map(body => body.collisionFilter.mask) };
+    this.host.signal(definition.signals.finish, actor.id, actor.doll.centerOfMass, normal, time, definition.finisher.speed, "death.burst", photoPath);
     if (weaponRegistration(weapon).behavior.finisher === "burst") this.explode(state, time);
     else {
       actor.landing = undefined; actor.lifecycle.state = "finishing"; actor.doll.setDynamic(false);
@@ -75,11 +75,11 @@ export class WeaponFinishers {
         if (travel >= distance) {
           state.phase = "pinned"; state.pinnedAt = time;
           this.host.signal(state.definition.signals.pin, state.actor.id, state.bullet?.position ?? state.actor.doll.centerOfMass,
-            state.direction, time, definition.speed, "collision.wall");
+            state.direction, time, definition.speed, "collision.wall", state.photoPath);
         }
       } else if (time - state.pinnedAt + 1e-6 >= definition.pinDelayMs) {
         this.host.signal(state.definition.signals.burst, state.actor.id, state.actor.doll.centerOfMass,
-          state.direction, time, definition.scatterSpeed, "death.burst");
+          state.direction, time, definition.scatterSpeed, "death.burst", state.photoPath);
         this.explode(state, time); this.active.delete(state.actor.id);
       }
     }

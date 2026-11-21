@@ -97,8 +97,8 @@ export class ImpactAudio {
     this.mixer.collision(owner, time, speed, contact, debris, target);
   }
   death(owner: number, time: number) { this.mixer.death(owner, time); }
-  signal(name: string, owner: number, time: number, speed: number, fallback?: string) {
-    this.mixer.signal(name, owner, time, speed, fallback);
+  signal(name: string, owner: number, time: number, speed: number, fallback?: string, photoPath?: string) {
+    this.mixer.signal(name, owner, time, speed, fallback, photoPath);
   }
   flush() { this.mixer.flush(); }
   stop() { this.mixer.stop(); }

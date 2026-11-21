@@ -129,7 +129,7 @@ export class WeaponCollision {
     contacts.add(key);
     if (this.touching.has(key) || time - (this.lastHit.get(key) ?? -Infinity) < this.state.config.weapons[item.id].damage.hitCooldownMs) return;
     this.lastHit.set(key, time);
-    this.combat.hit(item.id, contact, time);
+    this.combat.hit(item.id, contact, time, undefined, item.skin?.photo.libraryPath);
   }
   private updateContacts(body: MatterJS.BodyType, contacts: Set<string>) {
     for (const key of this.touching) if (key.startsWith(`${body.id}:`)) this.touching.delete(key);

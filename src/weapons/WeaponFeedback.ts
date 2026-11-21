@@ -5,8 +5,8 @@ import type { Point } from "./geometry";
 /** Presentation consumes weapon signals without owning damage or physical response. */
 export class WeaponFeedback {
   constructor(private readonly effects: ImpactEffects, private readonly audio: Pick<ImpactAudio, "signal">) {}
-  emit(name: string, owner: number, position: Point, direction: Point, time: number, speed: number, fallback?: string) {
+  emit(name: string, owner: number, position: Point, direction: Point, time: number, speed: number, fallback?: string, photoPath?: string) {
     this.effects.emit(name, position, direction, time);
-    this.audio.signal(name, owner, time, speed, fallback);
+    this.audio.signal(name, owner, time, speed, fallback, photoPath);
   }
 }

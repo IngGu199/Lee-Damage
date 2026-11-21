@@ -68,9 +68,10 @@ export class BombSystem {
     this.scene.matter.world.add(bomb.body);
     const id = bomb.body.id;
     this.bombs.set(id, bomb);
-    this.bombers.set(id, { id, position, skin: this.skins.get("bomber"), expiresAt: time + settings.bomberLifetimeMs });
-    this.feedback.emit("weapon.bomb.spawn", this.soundOwner(bomb), position, UP, time, 0);
-    this.scene.audio.signal(TICK_SOUND, this.soundOwner(bomb), time, 0);
+    const bomberSkin = this.skins.get("bomber");
+    this.bombers.set(id, { id, position, skin: bomberSkin, expiresAt: time + settings.bomberLifetimeMs });
+    this.feedback.emit("weapon.bomb.spawn", this.soundOwner(bomb), position, UP, time, 0, undefined, bomberSkin?.photo.libraryPath);
+    this.tick(bomb, time);
     return true;
   }
 
@@ -161,18 +162,20 @@ export class BombSystem {
           bomb.ignoreTarget = undefined;
       }
       if (time + 1e-6 >= bomb.expiresAt) this.explode(bomb, time);
-      else if (time + 1e-6 >= bomb.nextTickAt) {
-        this.scene.audio.signal(TICK_SOUND, this.soundOwner(bomb), time, 0);
-        bomb.nextTickAt = time + this.state.config.bomb.tickIntervalMs;
-      }
+      else if (time + 1e-6 >= bomb.nextTickAt) this.tick(bomb, time);
     }
     this.pendingAttachments.clear();
+  }
+
+  private tick(bomb: Bomb, time: number) {
+    this.scene.audio.signal(TICK_SOUND, this.soundOwner(bomb), time, 0, undefined, bomb.skin?.photo.libraryPath);
+    bomb.nextTickAt = time + this.state.config.bomb.tickIntervalMs;
   }
 
   private explode(bomb: Bomb, time: number) {
     const { position } = this.pose(bomb), owner = this.soundOwner(bomb);
     this.remove(bomb.body);
-    this.feedback.emit("weapon.bomb.explode", owner, position, UP, time, 0, "death.burst");
+    this.feedback.emit("weapon.bomb.explode", owner, position, UP, time, 0, "death.burst", bomb.skin?.photo.libraryPath);
     const { amount, knockback } = this.state.config.weapons.bomb.damage;
     const radius = this.state.config.bomb.blastRadius;
     for (const actor of this.scene.actors) {

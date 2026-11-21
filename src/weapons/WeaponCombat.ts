@@ -30,13 +30,13 @@ export class WeaponCombat {
     const impulse = multiply(contact.direction, contact.speed * REFERENCE_STEP / 1000);
     for (const body of contact.actor.doll.bodies) if (!body.isStatic) Matter.Body.setVelocity(body, add(body.velocity, impulse));
   }
-  hit(weapon: WeaponId, contact: Contact, time: number, bullet?: AttachedBullet) {
+  hit(weapon: WeaponId, contact: Contact, time: number, bullet?: AttachedBullet, photoPath = bullet?.skin?.photo.libraryPath) {
     const definition = this.state.config.weapons[weapon], actor = contact.actor;
-    this.feedback.emit(definition.signals.hit, actor.id, contact.position, contact.direction, time, contact.speed, "collision.normal");
+    this.feedback.emit(definition.signals.hit, actor.id, contact.position, contact.direction, time, contact.speed, "collision.normal", photoPath);
     if (actor.lifecycle.interactive) {
       actor.interact();
       const result = this.damage(weapon, contact, time);
-      if (result?.lethal) { this.finishers.start(actor, weapon, definition, contact.direction, time, bullet); return; }
+      if (result?.lethal) { this.finishers.start(actor, weapon, definition, contact.direction, time, bullet, photoPath); return; }
     }
     if (definition.damage.knockback === 0) return;
     const impulse = multiply(contact.direction, definition.damage.knockback * REFERENCE_STEP / 1000);

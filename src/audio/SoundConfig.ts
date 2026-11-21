@@ -22,11 +22,14 @@ export interface SoundConfig {
   maxConcurrentSounds: number;
   defaults: Omit<SoundEventConfig, "files" | "speed" | "sound-size">;
   events: Record<string, SoundEventDefinition>;
+  photoEvents?: Record<string, Record<string, string>>;
   debris: { volumeScale: number };
 }
 
 const defaults = { volume: 0.6, rateRange: [0.96, 1.04] as [number, number], cooldownMs: 0, maxVoices: 2, priority: 1 };
 const pack = "sfx/kenney-impact/";
+const weaponSignal = /^weapon\.[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$/;
+const photoEvent = /^photo(?:\.[a-z0-9_-]+){2,}$/;
 /** Used only when the user-authored sounds.json is absent or invalid. No JSON is generated. */
 export const DEFAULT_SOUND_CONFIG = parseSoundConfig({
   version: 1, basePath: "assets/audio/", masterVolume: 0.8, maxConcurrentSounds: 8, defaults,
@@ -86,10 +89,10 @@ export function parseSoundConfig(input: unknown): SoundConfig {
   const shared = playback(object(root.defaults ?? {}, "defaults"), defaults, "defaults");
   const definitions = object(root.events, "events"), events: Record<string, SoundEventDefinition> = Object.create(null);
   for (const [name, inputEvent] of Object.entries(definitions)) {
-    const weapon = /^weapon\.[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$/.test(name);
-    if (!["collision.normal", "collision.wall", "death.burst"].includes(name) && !weapon)
-      throw new Error(`events.${name}: 충돌·사망 또는 weapon.무기.신호 이벤트가 필요합니다.`);
-    const collision = name.startsWith("collision."), multiple = (collision || weapon) && Array.isArray(inputEvent);
+    const weaponOrPhoto = weaponSignal.test(name) || photoEvent.test(name);
+    if (!["collision.normal", "collision.wall", "death.burst"].includes(name) && !weaponOrPhoto)
+      throw new Error(`events.${name}: 충돌·사망, weapon.무기.신호 또는 photo.사진.신호 이벤트가 필요합니다.`);
+    const collision = name.startsWith("collision."), multiple = (collision || weaponOrPhoto) && Array.isArray(inputEvent);
     const inputs = multiple ? inputEvent : [inputEvent];
     if (!inputs.length) throw new Error(`events.${name}: 속도 구간 목록은 비어 있을 수 없습니다.`);
     const variants = inputs.map((input, index) => {
@@ -111,11 +114,23 @@ export function parseSoundConfig(input: unknown): SoundConfig {
     }
     events[name] = multiple ? variants : variants[0];
   }
+  const photoEvents = Object.fromEntries(Object.entries(object(root.photoEvents ?? {}, "photoEvents")).map(([file, aliases]) => {
+    const path = `photoEvents.${file}`;
+    relativePath(file, path);
+    if (!/\.(png|jpe?g|webp)$/i.test(file) || file.split("/").some(part => !part))
+      throw new Error(`${path}: PNG·JPEG·WebP 상대 이미지 경로가 필요합니다.`);
+    const signals = Object.entries(object(aliases, path)).map(([signal, event]) => {
+      if (!weaponSignal.test(signal) || typeof event !== "string" || !event.trim())
+        throw new Error(`${path}.${signal}: 무기 신호에 연결할 효과음 이벤트 이름이 필요합니다.`);
+      return [signal, event] as const;
+    });
+    return [file, Object.fromEntries(signals)] as const;
+  }));
   return {
     version: 1, basePath: `${basePath.replace(/\/$/, "")}/`,
     masterVolume: number(root.masterVolume ?? 0.8, "masterVolume", 0, 1),
     maxConcurrentSounds: number(root.maxConcurrentSounds ?? 8, "maxConcurrentSounds", 1, 32, true),
-    defaults: shared, events,
+    defaults: shared, events, photoEvents,
     debris: { volumeScale: number(object(root.debris ?? {}, "debris").volumeScale ?? 0.35, "debris.volumeScale", 0, 1) },
   };
 }

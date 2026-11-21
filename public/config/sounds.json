@@ -3,78 +3,32 @@
   "basePath": "assets/audio/",
   "masterVolume": 0.8,
   "maxConcurrentSounds": 8,
-  "defaults": {
-    "volume": 1,
-    "rateRange": [
-      0.96,
-      1.04
-    ],
-    "cooldownMs": 1000,
-    "maxVoices": 10,
-    "priority": 1
-  },
+  "defaults": { "volume": 1, "rateRange": [ 0.96,1.04],"cooldownMs": 1000,"maxVoices": 10,"priority": 1},
   "events": {
-    "collision.normal": [
-      {
-      "files": [
-        "sfx/others/hard-punch-sound.m4a"
-      ],
-      "volume": 1,
-      "priority": 5,
-      "cooldownMs": 10,
-      "speed": [
-        1000,
-        2500
-      ],
-      "sound-size": [0.1,2]
-    },
-    {
-      "files": [
-        "sfx/others/EX-punch.mp3"
-      ],
-      "volume": 0.3,
-      "priority": 5,
-      "cooldownMs": 2000,
-      "speed": [
-        2500,
-        3000
-      ],
-      "sound-size": [0.5,2]
-    }
-  ],
-    
+    "collision.normal": [ 
+      { "files": [ "sfx/others/hard-punch-sound.m4a" ], "volume": 1, "priority": 5, "cooldownMs": 10, "speed": [ 1000, 2500 ], "sound-size": [0.1,2] },
+      { "files": [ "sfx/others/EX-punch.mp3" ], "volume": 0.3, "priority": 5, "cooldownMs": 2000, "speed": [ 2500, 3000 ], "sound-size": [0.5,2] }
+    ],
     "collision.wall": {
-      "files": [
-        "sfx/kenney-impact/wall-000.ogg",
-        "sfx/kenney-impact/wall-001.ogg",
-        "sfx/kenney-impact/wall-002.ogg",
-        "sfx/kenney-impact/wall-003.ogg",
-        "sfx/kenney-impact/wall-004.ogg"
-      ],
-      "volume": 1,
-      "priority": 1,
-      "cooldownMs": 200,
-      "speed": [
-        1000,
-        2400
-      ],
-      "sound-size": [
-        0.1,
-        1
-      ]
-    },
-    "weapon.bomb.spawn": { "files": ["sfx/kenney-impact/wall-001.ogg"], "volume": 0.5, "cooldownMs": 0, "maxVoices": 2, "priority": 3 },
+      "files": [ 
+        "sfx/kenney-impact/wall-000.ogg", 
+        "sfx/kenney-impact/wall-001.ogg", 
+        "sfx/kenney-impact/wall-002.ogg", 
+        "sfx/kenney-impact/wall-003.ogg", 
+        "sfx/kenney-impact/wall-004.ogg" 
+        ], 
+      "volume": 1, "priority": 1, "cooldownMs": 200, "speed": [ 1000, 2400 ], "sound-size": [ 0.1, 1 ] },
+    "weapon.bomb.spawn": { "files": ["sfx/bomb/allahu.m4a"], "volume": 0.1, "cooldownMs": 0, "maxVoices": 2, "priority": 3 },
     "weapon.bomb.tick": { "files": ["sfx/bomb/tick.wav"], "volume": 0.3, "rateRange": [1, 1], "cooldownMs": 0, "maxVoices": 4, "priority": 1 },
-    "weapon.bomb.explode": { "files": ["sfx/others/BOOM.mp3"], "volume": 0.85, "cooldownMs": 0, "maxVoices": 4, "priority": 10 },
-    "death.burst": {
-      "files": [
-        "sfx/others/BOOM.mp3"
-      ],
-      "volume": 0.85,
-      "cooldownMs": 100,
-      "maxVoices": 2,
-      "priority": 10
-    }
+    "weapon.bomb.explode": { "files": ["sfx/bomb/boom.m4a"], "volume": 0.2, "cooldownMs": 0, "maxVoices": 4, "priority": 10 },
+    "photo.bomber.ram.spawn": { "files": ["sfx/bomb/allahu.m4a"], "volume": 0.1, "cooldownMs": 0, "maxVoices": 2, "priority": 3 },
+    "photo.bomb.ram.explode": { "files": ["sfx/bomb/boom.m4a"], "volume": 0.2, "cooldownMs": 0, "maxVoices": 4, "priority": 10 },
+    "weapon.gun.fire" : { "files": ["sfx/kenney-impact/wall-004.ogg"], "volume": 0.5, "cooldownMs": 0, "maxVoices": 4, "priority": 5 },
+    "death.burst": {"files": ["sfx/others/BOOM.mp3"],"volume": 0.85,"cooldownMs": 100,"maxVoices": 2,"priority": 10}
+  },
+  "photoEvents": {
+    "images/bomber-램혁수단.png": { "weapon.bomb.spawn": "photo.bomber.ram.spawn" },
+    "images/bomb-램.png": { "weapon.bomb.explode": "photo.bomb.ram.explode" }
   },
   "debris": {
     "volumeScale": 0.1

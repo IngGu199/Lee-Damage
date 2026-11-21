@@ -5,7 +5,9 @@ export interface SoundBackend {
   available(file: string): boolean;
   play(file: string, volume: number, rate: number, ended: () => void): SoundVoice | null;
 }
-interface Request { events: string[]; owners: Set<number>; time: number; speed: number; debris: boolean; fallback?: string }
+interface Request {
+  events: string[]; owners: Set<number>; time: number; speed: number; debris: boolean; fallback?: string; photoEvent?: string;
+}
 interface Layer { name: string; key: string; event: SoundEventConfig }
 interface Playing { event: string; name: string; owners: Set<number>; priority: number; voice: SoundVoice }
 
@@ -32,9 +34,12 @@ export class SoundMixer {
       events: ["death.burst"], owners: new Set([owner]), time, speed: Infinity, debris: false,
     });
   }
-  signal(name: string, owner: number, time: number, speed: number, fallback?: string) {
-    if (!this.config.events[name] && !(fallback && this.config.events[fallback])) return;
-    this.queue(`signal:${name}:${owner}:${time}`, { events: [name], owners: new Set([owner]), time, speed, debris: false, fallback });
+  signal(name: string, owner: number, time: number, speed: number, fallback?: string, photoPath?: string) {
+    const alias = photoPath ? this.config.photoEvents?.[photoPath]?.[name] : undefined;
+    const photoEvent = alias && this.config.events[alias] ? alias : undefined;
+    if (!photoEvent && !this.config.events[name] && !(fallback && this.config.events[fallback])) return;
+    this.queue(`signal:${name}:${owner}:${time}:${photoEvent ?? ""}`,
+      { events: [name], owners: new Set([owner]), time, speed, debris: false, fallback, photoEvent });
   }
   private queue(key: string, request: Request) {
     if (this.muted || !Number.isFinite(request.time)) return;
@@ -49,10 +54,14 @@ export class SoundMixer {
 
   private layers(request: Request): Layer[] {
     return request.events.flatMap(name => {
-      const definition = this.config.events[name] ?? (request.fallback ? this.config.events[request.fallback] : undefined);
+      const override = request.photoEvent ? this.config.events[request.photoEvent] : undefined;
+      const hasPhotoAudio = override && soundVariants(override).some(event => event.files.some(file => this.backend.available(file)));
+      const eventName = hasPhotoAudio && request.photoEvent ? request.photoEvent : name;
+      const configured = this.config.events[eventName];
+      const definition = configured ?? (request.fallback ? this.config.events[request.fallback] : undefined);
       if (!definition) return [];
       const variants = soundVariants(definition);
-      const fallback = !this.config.events[name] && Boolean(request.fallback);
+      const fallback = !configured && Boolean(request.fallback);
       const index = !fallback && variants.some(event => event.speed)
         ? variants.findIndex(event => event.speed && request.speed >= event.speed[0] && request.speed < event.speed[1]) : 0;
       if (index < 0) return [];
@@ -60,7 +69,7 @@ export class SoundMixer {
       // Collision speed limits remain specific to collision events; explicit
       // weapon definitions apply their own ranges normally.
       const event = fallback ? { ...variants[index], speed: undefined, "sound-size": undefined } : variants[index];
-      return [{ name, key: Array.isArray(definition) ? `${name}[${index}]` : name, event }];
+      return [{ name, key: Array.isArray(definition) ? `${eventName}[${index}]` : eventName, event }];
     });
   }
 

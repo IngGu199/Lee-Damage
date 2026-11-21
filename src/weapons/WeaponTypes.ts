@@ -14,7 +14,7 @@ export function weaponSizeMax(id: WeaponSizeTarget) {
 export interface Pose { position: Point; angle: number }
 export interface AttachedBullet { position: Point; radius: number; color: number; texture?: string; skin?: WeaponSkin; direction?: Point }
 export interface Projectile extends AttachedBullet {
-  id: number; gunId: number; weaponId: RangedWeaponId; direction: Point; since: number;
+  id: number; gunId: number; weaponId: RangedWeaponId; direction: Point; since: number; photoPath?: string;
 }
 export interface GunItem { id: number; weaponId: RangedWeaponId; position: Point; lastShot: number; readonly skin?: WeaponSkin }
 export interface Contact {
